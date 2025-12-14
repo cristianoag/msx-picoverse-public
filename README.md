@@ -1,0 +1,60 @@
+# PicoVerse for MSX
+
+PicoVerse is a community-driven effort to build versatile MSX cartridges powered by Raspberry Pi Pico development boards. The project pairs accessible hardware designs with ready-to-flash firmware so MSX users can jump straight into loading games, tools, and Nextor without having to compile sources.
+
+## Project Highlights
+- Multi-ROM loader with an on-screen menu and mapper auto-detection.
+- Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
+- PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
+- Open hardware schematics, BOMs, and production-ready Gerbers.
+- Active development roadmap covering RP2040 and RP2350-based cartridges.
+
+## Hardware Variants
+
+### PicoVerse 2040 Cartridge
+
+![alt text](../images/2025-12-02_20-05.png)
+
+- Based on RP2040 boards exposing 30 GPIO pins (not compatible with stock Raspberry Pi Pico pinout).
+- Up to 16 MB of flash for MSX ROMs with support for Plain16/32, Linear0, Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
+- USB-C port doubles as a bridge for Nextor mass storage.
+- Optional firmware modes provide Sunrise IDE-style Nextor drivers and a 240 KB RAM mapper.
+
+### PicoVerse 2350 Cartridge
+- Targets RP2350 boards exposing all 48 GPIO pins (not compatible with standard Pico 2 boards).
+- Adds microSD storage, ESP8266 WiFi header, and I2S audio expansion alongside 16 MB flash space.
+- Ships with a Nextor-first menu so you can boot straight into SofaRun or other disk-based tools.
+- Shares the same ROM mapper support list as the 2040 build.
+
+## Repository Contents
+- `hardware/` – Production-ready Gerbers, fabrication notes, and BOMs for each supported dev board.
+- `software/` – MultiROM PC utilities (`multirom.exe`) and menu ROM assets for both cartridge families.
+- `docs/` – Feature lists, usage walkthroughs, and revision history for each cartridge family.
+- `images/` – Board renders and build photos for quick identification.
+
+For design source files, firmware code, and ongoing development discussions, see the private engineering repository.
+
+## Quick Start
+1. **Pick your target board**: Select the hardware revision that matches the RP2040 or RP2350 carrier you own, then grab the corresponding Gerber/BOM pack.
+2. **Manufacture or assemble**: Send the Gerbers to your PCB house or build from an ordered kit. Follow the assembly notes included in each hardware bundle.
+3. **Generate the UF2 image**:
+   - Place your `.rom` files beside the MultiROM tool for your cartridge family (`2040/software/multirom/multirom.exe` or `2350/software/multirom/multirom.exe`).
+   - Run `multirom.exe` to build a new `multirom.uf2`; no prebuilt UF2 images are distributed.
+4. **Flash the firmware**:
+   - Hold BOOTSEL while connecting the cartridge to your PC via USB-C.
+   - Copy the freshly generated `multirom.uf2` (or alternate UF2 you produced) to the RPI-RP2 drive that appears.
+   - Eject the drive; the board reboots and stores the image in flash.
+5. **Enjoy on MSX**: Insert the cartridge, power on the computer, pick a ROM from the menu, or launch Nextor to access USB or microSD storage.
+
+## Compatibility & Requirements
+- Works with MSX, MSX2, and MSX2+ systems. Mapper support covers the most common game and utility formats.
+- Requires Windows or Linux to run the PC-side UF2 builder utilities.
+- Ensure your development board matches the pinout documented for each hardware revision before soldering.
+
+## License & Usage
+All hardware and firmware binaries in this repository are released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International license. Personal builds and community tinkering are encouraged, but commercial use or resale requires explicit authorization from the author.
+
+## Feedback & Community
+Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.
+
+**Remember:** PicoVerse exists for the retro community. Please keep derivatives open, share improvements, and do not sell the project without permission.
