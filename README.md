@@ -1,5 +1,7 @@
 # PicoVerse for MSX
 
+**The MSX experience driven by the RaspBerry Pi Pico family of microcontrollers.**
+
 PicoVerse is a community-driven effort to build versatile MSX cartridges powered by Raspberry Pi Pico development boards. The project pairs accessible hardware designs with ready-to-flash firmware so MSX users can jump straight into loading games, tools, and Nextor without having to compile sources.
 
 ## Project Highlights
@@ -13,18 +15,38 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 ### PicoVerse 2040 Cartridge
 
-![alt text](images/2025-12-02_20-05.png)
+![alt text](/images/2025-12-02_20-05.png)
 
 - Based on RP2040 boards exposing 30 GPIO pins (not compatible with stock Raspberry Pi Pico pinout).
 - Up to 16 MB of flash for MSX ROMs with support for Plain16/32, Linear0, Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
 - USB-C port doubles as a bridge for Nextor mass storage.
 - Optional firmware modes provide Sunrise IDE-style Nextor drivers and a 240 KB RAM mapper.
 
+#### Bill of Materials
+
+Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2040/hardware/MSX_PicoVerse_2040_1.3_bom.html)
+
+| Reference | Description | Quantity | Link |
+| --- | --- | --- | --- |
+| U1 | RP2040 Dev Board 30 GPIO pins exposed | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4MuM9st) |
+| C1 | 0603 0.1 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2w5e36V) |
+| C2 | 0603 10 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2w5e36V)|
+| R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13| 0603 10 kΩ Resistor | 12 | [AliExpress](https://s.click.aliexpress.com/e/_c3XBv4od)|
+| R1 | 0603 2 KΩ Resistor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3XBv4od)|
+| D1 | 1N5819 SOD-123 Diode | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4WEKCuz) |
+| Q1, Q2, Q3, Q4, Q5 | BSS138 SOT-23 Transistor | 5 | [AliExpress](https://s.click.aliexpress.com/e/_c2veWxcD)|
+
+
 ### PicoVerse 2350 Cartridge
 - Targets RP2350 boards exposing all 48 GPIO pins (not compatible with standard Pico 2 boards).
 - Adds microSD storage, ESP8266 WiFi header, and I2S audio expansion alongside 16 MB flash space.
 - Ships with a Nextor-first menu so you can boot straight into SofaRun or other disk-based tools.
 - Shares the same ROM mapper support list as the 2040 build.
+
+#### Bill of Materials
+| Reference | Description | Quantity | Link |
+| --- | --- | --- | --- |
+| U1 | RP2350 Dev Board 48 GPIO pins exposed | 1 | |
 
 ## Repository Contents
 - `hardware/` – Production-ready Gerbers, fabrication notes, and BOMs for each supported dev board.
@@ -52,9 +74,10 @@ For design source files, firmware code, and ongoing development discussions, see
 - Ensure your development board matches the pinout documented for each hardware revision before soldering.
 
 ## License & Usage
+
+![Creative Commons Attribution-NonCommercial-ShareAlike 4.0](/images/ccans.png)
+
 All hardware and firmware binaries in this repository are released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International license. Personal builds and community tinkering are encouraged, but commercial use or resale requires explicit authorization from the author.
 
 ## Feedback & Community
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.
-
-**Remember:** PicoVerse exists for the retro community. Please keep derivatives open, share improvements, and do not sell the project without permission.

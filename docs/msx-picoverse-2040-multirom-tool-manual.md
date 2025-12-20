@@ -31,13 +31,13 @@ Depending on the options provided, `multirom` can also produce UF2 images that b
 
 If executed without any options, the `multirom.exe` tool scans the current working directory for MSX ROM files (`.ROM` or `.rom`), analyses each ROM to guess the mapper type, builds a configuration table describing each ROM (name, mapper byte, size, offset) and embeds this table into an MSX menu ROM slice. The tool then concatenates the Pico firmware blob, the menu slice, the configuration area and the ROM payloads and serializes the whole image into a UF2 file named `multirom.uf2`.
 
-![alt text](../images/2025-11-29_20-49.png)
+![alt text](/images/2025-11-29_20-49.png)
 
 The UF2 file (usually multirom.uf2) can then be copied to a Pico's USB mass storage device to flash the combined image. You need to connect the Pico while pushing the BOOTSEL button to enter UF2 flashing mode. Then a new USB drive named `RPI-RP2` appears, and you can copy `multirom.uf2` to it. After the copy completes, you can disconnect the Pico and insert the cartridge into your MSX to boot the MultiROM menu.
 
 ROM file names are used to name the entries in the MSX menu. There is a limit of 50 characters per name. A rolling effect is used to show longer names on the MSX menu, but if the name exceeds 50 characters it will be truncated.
 
-![alt text](../images/multirom_2040_menu.png)
+![alt text](/images/multirom_2040_menu.png)
 
 If you want to use Nextor with your PicoVerse 2040 cartridge you need to run the tool with the `-s1` or `-s2` option to include the embedded Nextor ROM in the image. The `-s1` option includes the standard Nextor ROM without memory mapper support, while `-s2` includes a Nextor ROM with +240 KB memory mapper support. The embedded Nextor ROM will be the single firmwware loaded at boot, and the MultiROM menu will not be available. You can then use SofaRun to load ROMs and DSKs from the Pico's USB mass storage.
 
@@ -165,13 +165,26 @@ To prepare a USB thumb drive for use with Nextor on the PicoVerse 2040 cartridge
 
 The PicoVerse 2040 cartridge with MultiROM firmware has been tested on the following MSX models:
 
-| Model | Status | Comments |
-| --- | --- | --- |
-|MSX1|||
-| Sharp HotBit HB8000 (MSX1) | OK | MSX1 system — verified operation |
-| MSX2+|||
-| TRHMSX (MSX2+, FPGA clone) | OK | FPGA MSX2+ clone — verified |
-| uMSX (MSX2+, FPGA clone) | OK | FPGA MSX2+ clone — verified |
+| Model | Type | Status | Comments |
+| --- | --- | --- | --- |
+| Adermir Carchano Expert 4 | MSX2+ | OK | Verified operation |
+| Gradiente Expert | MSX1 | OK | Verified operation |
+| JFF MSX | MSX1 | OK | Verified operation |
+| MSX Book | MSX2+ (FPGA clone) | OK | Verified operation |
+| MSX One | MSX1 | Not OK | Cartridge not recognized |
+| National FS-4500 | MSX1 | OK | Verified operation |
+| Panasonic FS-A1GT | TurboR | OK | Verified operation |
+| Panasonic FS-A1ST | TurboR | OK | Verified operation |
+| Panasonic FS-A1WX | MSX2+ | OK | Verified operation |
+| Panasonic FS-A1WSX | MSX2+ | OK | Verified operation |
+| Sharp HotBit HB8000 | MSX1 | OK | Verified operation |
+| SMX-HB | MSX2+ (FPGA clone) | OK | Verified operation |
+| Sony HB-F1XD | MSX2 | OK | Verified operation |
+| Sony HB-F1XDJ | MSX2 | OK | Verified operation |
+| Sony HB-F1XV | MSX2+ | OK | Verified operation |
+| TRHMSX | MSX2+ (FPGA clone) | OK | Verified operation |
+| uMSX | MSX2+ (FPGA clone) | OK | Verified operation |
+| Yamaha YIS604 | MSX1 | OK | Verified operation |
 
 The PicoVerse 2040 cartridge with Sunrise Nextor +240K firmware has been tested on the following MSX models:
 
@@ -180,8 +193,8 @@ The PicoVerse 2040 cartridge with Sunrise Nextor +240K firmware has been tested 
 |MSX1|||
 | Sharp HotBit HB8000 (MSX1) | Not OK | Memory mapper not working then Nextor not functional |
 |MSX2+|||
-| TRHMSX (MSX2+, FPGA clone) | OK | FPGA MSX2+ clone — verified |
-| uMSX (MSX2+, FPGA clone) | OK | FPGA MSX2+ clone — verified |
+| TRHMSX (MSX2+, FPGA clone) | OK | Verified operation |
+| uMSX (MSX2+, FPGA clone) | OK | Verified operation |
 
 
 
