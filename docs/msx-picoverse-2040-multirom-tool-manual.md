@@ -118,11 +118,15 @@ At any time while in the menu, you can press H key read the help screen with bas
 
 ## Using Nextor with the PicoVerse 2040 cartridge
 
-If you flashed the cartridge with a Nextor firmware (using the `-s1` or `-s2` options), the cartridge will boot directly into Nextor instead of the MultiROM menu.
+If you flashed the cartridge with a Nextor firmware (using the `-s1` or `-s2` options), the cartridge will boot directly into Nextor instead of the MultiROM menu. Those options communicate with the MSX using memory-mapped I/O thus requiring the cartridge to be inserted into a standard cartridge slot. 
 
-You may need a USB OTG adapter or cable to connect standard USB-A thumb drives to the cartridge's USB-C port.
+Once Nextor is running, you can use SofaRun or any other Nextor-compatible launcher to load ROMs and DSKs from the Pico's USB mass-storage device. You may need a USB OTG adapter or cable to connect standard USB-A thumb drives to the cartridge's USB-C port.
 
-In MSX2 or MSX2+ systems with the +240 KB memory version of Nextor, the cartridge will add the extra memory to the system and the BIOS sequence will reflect the increased RAM. Some MSX models display the total expanded memory during boot.
+In MSX2 or MSX2+ systems with the +240 KB memory version of Nextor (S2 option), the cartridge will add the extra memory to the system and the BIOS sequence will reflect the increased RAM. Some MSX models display the total expanded memory during boot.
+
+The -n option of the multirom tool includes an experimental embedded Nextor ROM that can be used on specific MSX2 models. However, this option is still under development and may not work on all systems. This version uses a different method (IO port based) to communicate with the MSX, allowing it to work on systems where the cartridge slot is not standard/expanded. 
+
+More details on the protocol used to communicate with the MSX computer can be found in the Nextor-Pico-Bridge-Protocol.md document. The details of the communication with the Sunrise IDE Nextor firmware can be found in the Sunrise-Nextor.md document.
 
 ### How to prepare a thumb drive for Nextor
 
@@ -194,9 +198,5 @@ The PicoVerse 2040 cartridge with Sunrise Nextor +240K firmware has been tested 
 | Sharp HotBit HB8000 (MSX1) | Not OK | Memory mapper not working then Nextor not functional |
 |MSX2+|||
 | TRHMSX (MSX2+, FPGA clone) | OK | Verified operation |
-| uMSX (MSX2+, FPGA clone) | OK | Verified operation |
-
-
-
-Author: Cristiano Almeida Goncalves
-Last updated: December 2, 2025
+| uMSX (MSX2+, FPGA clone) | OK | Verified operationAuthor: Cristiano Almeida Goncalves
+Last updated: 12/20/2025
