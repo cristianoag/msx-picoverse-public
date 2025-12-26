@@ -101,7 +101,7 @@ En cualquier momento mientras esté en el menú, puede presionar la tecla H para
 
 La opción -n de la herramienta multirom incluye una ROM Nextor integrada experimental que se puede usar en modelos específicos de MSX2. Sin embargo, esta opción aún está en desarrollo y puede no funcionar en todos los sistemas. Esta versión utiliza un método diferente (basado en puertos de E/S) para comunicarse con el MSX, lo que le permite funcionar en sistemas donde la ranura del cartucho no es primaria, por ejemplo con expansores de ranuras.
 
-Se pueden encontrar más detalles sobre el protocolo utilizado para comunicarse con el ordenador MSX en el documento Nextor-Pico-Bridge-Protocol.md. Los detalles de la comunicación con el firmware Nextor de Sunrise IDE se pueden encontrar en el documento Sunrise-Nextor.md.
+Se pueden encontrar más detalles sobre el protocolo utilizado para comunicarse con el ordenador MSX en el documento Nextor-Pico-Bridge-Protocol.md. 
 
 ### Cómo preparar una memoria USB para Nextor
 

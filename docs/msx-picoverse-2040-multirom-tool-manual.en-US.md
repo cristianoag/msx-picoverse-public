@@ -102,7 +102,7 @@ At any time while in the menu, you can press H key read the help screen with bas
 
 The -n option of the multirom tool includes an experimental embedded Nextor ROM that can be used on specific MSX2 models. However, this option is still under development and may not work on all systems. This version uses a different method (IO port based) to communicate with the MSX, allowing it to work on systems where the cartridge slot is not primary, for example with slot expanders. 
 
-More details on the protocol used to communicate with the MSX computer can be found in the Nextor-Pico-Bridge-Protocol.md document. The details of the communication with the Sunrise IDE Nextor firmware can be found in the Sunrise-Nextor.md document.
+More details on the protocol used to communicate with the MSX computer can be found in the Nextor-Pico-Bridge-Protocol.md document. 
 
 ### How to prepare a thumb drive for Nextor
 
