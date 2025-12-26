@@ -1,6 +1,6 @@
 # PicoVerse for MSX
 
-**The MSX experience driven by the RaspBerry Pi Pico family of microcontrollers.**
+**The MSX experience driven by the Raspberry Pi Pico family of microcontrollers.**
 
 PicoVerse is a community-driven effort to build versatile MSX cartridges powered by Raspberry Pi Pico development boards. The project pairs accessible hardware designs with ready-to-flash firmware so MSX users can jump straight into loading games, tools, and Nextor without having to compile sources.
 
@@ -23,7 +23,7 @@ PicoVerse is designed as an open-source, independent, well-documented MSX cartri
 
 - [PicoVerse 2040 MultiROM Guide, English version](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
 - [Guia MultiROM do PicoVerse 2040, versão em português](/docs/msx-picoverse-2040-multirom-tool-manual.pt-BR.md)
-- [PicoVerse 2040 マルチROMガイド（日本語版)](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
+- [PicoVerse 2040 マルチROMガイド（日本語版）](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
 - [Guía MultiROM PicoVerse 2040, versión en español](/docs/msx-picoverse-2040-multirom-tool-manual.es-ES.md)
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
