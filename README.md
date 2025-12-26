@@ -10,7 +10,7 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 The MultiROM tool and menu firmware were developed from scratch, with support to a wide number of mappers and features not found in other similar projects. The hardware designs, implementation strategy, documentation, and PC-side tooling are all original work by the author. The wiring was thought to ensure the best compatibility with the MSX bus and to allow easy assembly using widely available RP2040 and RP2350 boards. 
 
-PicoVerse is designed as an independent, well-documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and design files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
+PicoVerse is designed as an open-source, independent, well-documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and design files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
 
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
@@ -23,7 +23,7 @@ PicoVerse is designed as an independent, well-documented MSX cartridge platform.
 
 - [PicoVerse 2040 MultiROM Guide, English version](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
 - [Guia MultiROM do PicoVerse 2040, versão em português](/docs/msx-picoverse-2040-multirom-tool-manual.pt-BR.md)
-- [PicoVerse 2040 マルチROMガイド（日本語版](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
+- [PicoVerse 2040 マルチROMガイド（日本語版)](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
 - [Guía MultiROM PicoVerse 2040, versión en español](/docs/msx-picoverse-2040-multirom-tool-manual.es-ES.md)
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
