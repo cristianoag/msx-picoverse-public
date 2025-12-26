@@ -1,0 +1,13 @@
+; msx_output_data.pio
+; This program gets a byte from the TX FIFO and outputs it to the data bus (GPIO16–23).
+.program msx_output_data
+.wrap_target
+    wait 0 pin 24    ; Stall until /RD is low (active low)
+    pull block       ; Wait for a new data byte in the TX FIFO (autopull mode could also be enabled)
+    ;mov isr osr     ; Move the byte from the ISR to the OSR - debug
+    ;set pindirs, 0b11111111 ; Set GPIO16–23 as outputs
+    out pins, 8      ; Output the byte to the data bus (GPIO 16–23)
+    ;set pindirs, 0b00000000 ; Revert GPIO16–23 to inputs
+    wait 1 pin 24    ; Stall until /RD is high
+    ;push block      ; Push the captured 16-bit value to the RX FIFO - debug
+.wrap

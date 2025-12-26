@@ -1,0 +1,14 @@
+; msx_capture_addr.pio
+; This program assumes the address bus is connected to GPIOs 0–15.
+; It simply reads 16 bits from the pins and pushes them to the RX FIFO.
+; This program runs only if both /RD (GPIO24) and /SLTSL (GPIO27) are low.
+.program msx_capture_addr
+.wrap_target
+    wait 0 pin 27   ; Stall until /SLTSL is low (active low)
+    wait 0 pin 24   ; Stall until /RD is low (active low)
+    ;wait 0 pin 24   ; Stall until /RD is low (active low)
+    in pins, 16     ; Capture 16 bits from address bus (GPIO 0–15)
+    push block      ; Push the captured 16-bit value to the RX FIFO
+    ;wait 1 pin 24   ; Stall until /RD is high 
+    wait 1 pin 27   ; Stall until /SLTSL is high
+.wrap
