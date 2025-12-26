@@ -4,6 +4,14 @@
 
 PicoVerse is a community-driven effort to build versatile MSX cartridges powered by Raspberry Pi Pico development boards. The project pairs accessible hardware designs with ready-to-flash firmware so MSX users can jump straight into loading games, tools, and Nextor without having to compile sources.
 
+![alt text](/images/multirom_2040_menu.png)
+
+> **Note:** There are reports that the PicoVerse is a copy of other projects. To avoid speculation, I am now making the source code publicly available on the software folders of this repository.
+
+The MultiROM tool and menu firmware were developed from scratch, with support to a wide number of mappers and features not found in other similar projects. The hardware designs, implementation strategy, documentation, and PC-side tooling are all original work by the author. The wiring was thought to ensure the best compatibility with the MSX bus and to allow easy assembly using widely available RP2040 and RP2350 boards. 
+
+PicoVerse is designed as an independent, well-documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and design files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
+
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
@@ -25,14 +33,17 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 ### PicoVerse 2040 Cartridge
 
-![alt text](/images/2025-12-02_20-05.png)
+| Prototype PCB (front) | Prototype PCB (back) |
+|---------|---------|
+| ![Image 1](/images/20241230_001854885_iOS.jpg) | ![Image 2](/images/20241230_001901504_iOS.jpg) | 
 
 - Based on RP2040 boards exposing 30 GPIO pins (not compatible with stock Raspberry Pi Pico pinout).
 - Up to 16 MB of flash for MSX ROMs with support for Plain16/32, Linear0, Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
 - USB-C port doubles as a bridge for Nextor mass storage.
-- Optional firmware modes provide Sunrise IDE-style Nextor drivers and a 240 KB RAM mapper.
 
 #### Bill of Materials
+
+![alt text](/images/2025-12-02_20-05.png)
 
 Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2040/hardware/MSX_PicoVerse_2040_1.3_bom.html)
 
@@ -48,6 +59,11 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 
 
 ### PicoVerse 2350 Cartridge
+
+| Prototype PCB (front) | Prototype PCB (back) |
+|---------|---------|
+| ![Image 1](/images/20250208_180923511_iOS.jpg) | ![Image 2](/images/20250208_181032059_iOS.jpg) |
+
 - Targets RP2350 boards exposing all 48 GPIO pins (not compatible with standard Pico 2 boards).
 - Adds microSD storage, ESP8266 WiFi header, and I2S audio expansion alongside 16 MB flash space.
 - Extra RAM to support advanced emulation features in future firmware releases.

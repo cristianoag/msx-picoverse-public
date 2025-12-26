@@ -8,12 +8,10 @@ The PicoVerse 2040 is a Raspberry Pi Pico based cartridge for MSX that uses repl
 
 The cartridge can also expose the Pico’s USB‑C port as a mass‑storage device, allowing you to copy ROMs, DSKs, and other files directly from a PC with Windows or Linux to the cartridge.
 
-Additionally, you can use a Nextor firmware variant with +240 KB memory mapper support to take full advantage of the PicoVerse 2040 hardware on MSX systems with limited memory.
-
 Those are the features available in the current version of the PicoVerse 2040 cartridge:
 
 * MultiROM menu system for selecting and launching MSX ROMs.
-* Nextor OS support with optional +240 KB memory mapper.
+* Inline Menu option with Nextor OS support.
 * USB mass-storage device support for loading ROMs and DSKs.
 * Support for various MSX ROM mappers (PL-16, PL-32, KonSCC, Linear, ASC-08, ASC-16, Konami, NEO-8, NEO-16).
 * Compatibility with MSX, MSX2, and MSX2+ systems.
