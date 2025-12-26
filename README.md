@@ -7,7 +7,7 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 | PicoVerse 2040 Label | PicoVerse 2350 Label |
 |---------|---------|
 ![PicoVerse 2040 Label](/labels/PicoVerse_2040_Label_1.png) | ![PicoVerse 2350 Label](/labels/PicoVerse_2350_Label_1.png) |
-|![alt text](/images/multirom_2040_menu.png)|![alt text](/images/picoverse_2350_menu.png)|
+
 
 > **Note:** There are reports that the PicoVerse is a copy of other projects. To avoid speculation, I am now making the source code publicly available on the software folders of this repository.
 
@@ -97,6 +97,20 @@ For design source files, firmware code, and ongoing development discussions, see
    - Copy the freshly generated `multirom.uf2` (or alternate UF2 you produced) to the RPI-RP2 drive that appears.
    - Eject the drive; the board reboots and stores the image in flash.
 5. **Enjoy on MSX**: Insert the cartridge, power on the computer, pick a ROM from the menu, or launch Nextor to access USB or microSD storage.
+
+## MultiROM Menu
+
+| PicoVerse 2040 MultiRom | PicoVerse 2350 MultiRom |
+|---------|---------|
+|![alt text](/images/multirom_2040_menu.png)|![alt text](/images/multirom_2350_menu.png)|
+
+To use the MultiROM menu, insert the PicoVerse 2040 cartridge into your MSX and power it on. The system will boot directly into the MultiROM menu, which displays a list of all ROMs embedded in the cartridge. Each entry is named after the ROM filename (up to 50 characters), and longer names are shown using a scrolling effect.
+
+Navigate the menu using the keyboard arrow keys. Use the Up and Down keys to move through the list of ROMs, and if more than 19 ROMs are present, use the Left and Right keys to switch between pages. To start a game or application, select it and press Enter or Space; the MSX will boot the ROM using the appropriate mapper configuration automatically.
+
+While in the menu, pressing the H key opens a help screen with basic instructions; press any key to return to the main menu. Once a ROM is launched, control is handed over entirely to the selected software, just as if it were a physical cartridge inserted into the MSX.
+
+Check the detailed MultiROM guide in the documentation folder for advanced features, troubleshooting tips, and mapper support details.
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, and MSX2+ systems. Mapper support covers the most common game and utility formats.
