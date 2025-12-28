@@ -40,10 +40,6 @@ extern unsigned char __flash_binary_end;
 static uint8_t rom_sram[CACHE_SIZE];
 static uint32_t active_rom_size = 0;
 
-// Nextor related variables
-volatile uint8_t nextor_secondary_slot_reg = 0x00;
-volatile uint8_t nextor_mapper_segments[4] = {0, 1, 2, 3};
-
 //pointer to the custom data
 const uint8_t *rom = (const uint8_t *)&__flash_binary_end;
 
@@ -335,7 +331,9 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset, bool cach
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -423,7 +421,9 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset, bool cache_e
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16);
@@ -509,7 +509,9 @@ void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset, bool cache_e
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -590,7 +592,9 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -657,7 +661,12 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 13) + (addr & 0x1FFF); // Calculate ROM offset
-                        gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+
+                        gpio_put(PIN_WAIT, 0);
+                        uint8_t data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                        
+                        gpio_put_masked(0xFF0000, data << 16); // Place data on data bus
                     }
                     else
                     {
@@ -783,7 +792,12 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 14) + (addr & 0x3FFF); // Calculate ROM offset
-                        gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+
+                        gpio_put(PIN_WAIT, 0);
+                        uint8_t data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+
+                        gpio_put_masked(0xFF0000, data << 16); // Place data on data bus
                     }
                     else
                     {
@@ -855,7 +869,6 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 }
 
 // loadrom_nextor - Load a Nextor ROM into the MSX directly from the pico flash
-// test with 128K memory mapper in slot 3
 void __no_inline_not_in_flash_func(loadrom_nextor)(uint32_t offset)
 {
     //runs the IO code in the second core
@@ -864,9 +877,10 @@ void __no_inline_not_in_flash_func(loadrom_nextor)(uint32_t offset)
     //Test copying to RAM to check performance gains
     gpio_init(PIN_WAIT); // Init wait signal pin
     gpio_set_dir(PIN_WAIT, GPIO_OUT); // Set the WAIT signal as output
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, 131072); // Clear the SRAM buffer
-    memcpy(rom_sram, rom + offset, 131072); //for 32KB ROMs we start at 0x4000
+    // Load the entire ROM into SRAM cache - testing performance
+    //gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
+    //memset(rom_sram, 0, 131072); // Clear the SRAM buffer
+    //memcpy(rom_sram, rom + offset, 131072); //for 32KB ROMs we start at 0x4000
     gpio_put(PIN_WAIT, 1); // Lets go!
 
     uint8_t bank_registers[2] = {0, 1}; // Initial banks 0 and 1 mapped
@@ -884,9 +898,15 @@ void __no_inline_not_in_flash_func(loadrom_nextor)(uint32_t offset)
             {
                 if (rd) {
                     gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
+                    // Loading directly from flash
+                    // Calculate the ROM offset
                     uint32_t rom_offset = offset + (bank_registers[(addr >> 15) & 1] << 14) + (addr & 0x3FFF);
-                    gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Write the data to the data bus
-                    //Sram - Tests
+                    gpio_put(PIN_WAIT, 0);
+                    uint8_t data = rom[rom_offset];
+                    gpio_put(PIN_WAIT, 1);
+                    gpio_put_masked(0xFF0000, data << 16); // Write the data to the data bus (read from flash)
+                    
+                    // Loading from SRAM cache
                     //uint32_t rom_offset = (bank_registers[(addr >> 15) & 1] << 14) + (addr & 0x3FFF);
                     //gpio_put_masked(0xFF0000, rom_sram[rom_offset] << 16); // Write the data to the data bus
 

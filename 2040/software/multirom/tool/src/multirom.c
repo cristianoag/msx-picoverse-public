@@ -446,7 +446,7 @@ int main(int argc, char *argv[])
     // Include embedded Nextor ROM if requested
     if (include_nextor) {
         char nextor_rom_name[MAX_FILE_NAME_LENGTH] = {0};
-        strncpy(nextor_rom_name, "Nextor (Custom Driver)", MAX_FILE_NAME_LENGTH);
+        strncpy(nextor_rom_name, "Nextor USB (IO)", MAX_FILE_NAME_LENGTH);
         memcpy(config_buffer + config_offset, nextor_rom_name, MAX_FILE_NAME_LENGTH);
         config_offset += MAX_FILE_NAME_LENGTH;
         config_buffer[config_offset++] = 10;
@@ -457,7 +457,7 @@ int main(int argc, char *argv[])
         memcpy(config_buffer + config_offset, &nextor_offset, sizeof(nextor_offset));
         config_offset += sizeof(nextor_offset);
         printf("File %02d: Name = %-50s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s\n",
-               file_index, "Nextor (Custom Driver)", nextor_size, nextor_offset, mapper_description(10));
+               file_index, "Nextor USB (IO)", nextor_size, nextor_offset, mapper_description(10));
         total_rom_size += nextor_size;
         if (total_rom_size > MAX_TOTAL_ROM_SIZE) {
             printf("Total ROM data exceeds maximum supported size of %u bytes.\n", (unsigned)MAX_TOTAL_ROM_SIZE);

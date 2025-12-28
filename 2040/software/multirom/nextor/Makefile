@@ -30,7 +30,7 @@ endif
 HEX2BIN_FLAGS = -l 3fd0 -e rom
 
 # Project metadata
-VERSION ?= 1.00
+VERSION ?= 1.01
 SDCC_DEFINES = -DNEXTOR_DRIVER_VERSION=\"$(VERSION)\"
 
 # Helpers
