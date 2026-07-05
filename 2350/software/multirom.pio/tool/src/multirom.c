@@ -211,8 +211,13 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
         return 0; // unknown mapper
     }
 
-    fread(rom, 1, read_size, file);
+    size_t bytes_read = fread(rom, 1, read_size, file);
     fclose(file);
+    if (bytes_read != read_size) {
+        printf("Failed to read ROM file\n");
+        free(rom);
+        return 0; // unknown mapper
+    }
 
     // SHA1 database lookup (openMSX softwaredb) — checked before heuristics.
     {
@@ -520,8 +525,7 @@ int main(int argc, char *argv[])
     const char *missing_output_option = NULL;
     char uf2_output_filename[MAX_UF2_FILENAME_LENGTH];
 
-    strncpy(uf2_output_filename, UF2FILENAME, sizeof(uf2_output_filename));
-    uf2_output_filename[sizeof(uf2_output_filename) - 1] = '\0';
+    snprintf(uf2_output_filename, sizeof(uf2_output_filename), "%s", UF2FILENAME);
 
     // Parse command line arguments
     for (int i = 1; i < argc; ++i) {
@@ -551,8 +555,7 @@ int main(int argc, char *argv[])
                 break;
             }
             ++i;
-            strncpy(uf2_output_filename, argv[i], sizeof(uf2_output_filename));
-            uf2_output_filename[sizeof(uf2_output_filename) - 1] = '\0';
+            snprintf(uf2_output_filename, sizeof(uf2_output_filename), "%s", argv[i]);
         } else {
             bad_option = argv[i];
             break;
@@ -649,7 +652,7 @@ int main(int argc, char *argv[])
             }
 
             char nextor_rom_name[MAX_FILE_NAME_LENGTH] = {0};
-            strncpy(nextor_rom_name, nextor_entries[ne].name, MAX_FILE_NAME_LENGTH);
+            snprintf(nextor_rom_name, MAX_FILE_NAME_LENGTH, "%s", nextor_entries[ne].name);
             memcpy(config_buffer + config_offset, nextor_rom_name, MAX_FILE_NAME_LENGTH);
             config_offset += MAX_FILE_NAME_LENGTH;
             config_buffer[config_offset++] = mapper_byte;
@@ -756,7 +759,7 @@ int main(int argc, char *argv[])
         if (name_length > MAX_FILE_NAME_LENGTH) {
             name_length = MAX_FILE_NAME_LENGTH;
         }
-        strncpy(rom_name, entry->d_name, name_length);
+        snprintf(rom_name, name_length + 1, "%s", entry->d_name);
         if (name_length < MAX_FILE_NAME_LENGTH) {
             rom_name[name_length] = '\0';
         } else {
@@ -816,8 +819,7 @@ int main(int argc, char *argv[])
                 scc_label, mapper_forced ? " (forced)" : "");
         }
 
-        strncpy(files[file_count].file_name, entry->d_name, sizeof(files[file_count].file_name));
-        files[file_count].file_name[sizeof(files[file_count].file_name) - 1] = '\0';
+        snprintf(files[file_count].file_name, sizeof(files[file_count].file_name), "%s", entry->d_name);
         files[file_count].file_size = rom_size;
         file_count++;
         file_index++;
