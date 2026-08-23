@@ -132,6 +132,10 @@
 #define VDP_FREQ_DEFAULT 0u
 #define VDP_FREQ_60HZ    1u
 #define VDP_FREQ_50HZ    2u
+#define CTRL_CPU_MODE   0xBFA2 // Control: per-ROM CPU speed load read-back (Pico -> MSX)
+#define CPU_MODE_DEFAULT 0u    // Leave the CPU as the BIOS boots it
+#define CPU_MODE_TURBO   1u    // Panasonic MSX2+/turbo R switched-I/O 5.37MHz Z80 turbo
+#define CPU_MODE_R800    2u    // MSX turbo R R800 ROM mode via the CHGCPU BIOS entry
 #define FH_DATA_BASE    0xB900
 #define FH_RECORD_FLAG_OFFSET ROM_NAME_MAX
 #define FH_RECORD_SIZE_OFFSET (FH_RECORD_FLAG_OFFSET + 1u)
@@ -141,8 +145,9 @@
 #define FH_HTTP_BUFFER_SIZE (256u * 1024u)
 #define FH_HTTP_CHUNK_SIZE 2048u
 #define FH_HOST "msxpico.file-hunter.com"
-#define FH_ENDPOINT "/picoverse.php"
-#define FH_DEFAULT_QUERY "1"
+#define FH_ENDPOINT "/picoverse.php"        // Name-filtered catalog, used by the search key
+#define FH_LATEST_ENDPOINT "/new-pico.php"  // Latest releases (newest first), used when File Hunter opens
+                                            // An empty query selects FH_LATEST_ENDPOINT; see fh_build_http_path()
 #define FH_WIFI_CONNECT_WAIT_US 30000000u
 #define FH_STATUS_READY 0xA5
 #define FH_STATUS_BUSY  0x5A
@@ -264,7 +269,8 @@
 #define PVC_OPTIONS_MAPPER_SIZE 7u
 #define PVC_OPTIONS_PARTITION_SIZE 8u
 #define PVC_OPTIONS_VOLUME_SIZE 9u
-#define PVC_OPTIONS_SIZE 10u
+#define PVC_OPTIONS_FREQ_SIZE 10u
+#define PVC_OPTIONS_SIZE 11u
 
 #define PV_CONFIG_MAGIC_0 'P'
 #define PV_CONFIG_MAGIC_1 'V'
@@ -713,6 +719,8 @@ static volatile uint8_t ctrl_sd_partition = 0; // 0=auto/default, 1-4=MBR primar
 static volatile uint8_t ctrl_audio_volume = AUDIO_VOLUME_DEFAULT; // per-ROM audio volume percent
 static volatile uint8_t ctrl_vdp_frequency = VDP_FREQ_DEFAULT; // per-ROM VDP 50/60Hz option (0=default,1=60,2=50)
 static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the launched game's INIT (regular game mappers only)
+static volatile uint8_t ctrl_cpu_mode = CPU_MODE_DEFAULT; // per-ROM CPU speed option (0=default,1=turbo,2=R800)
+static volatile uint8_t cpu_mode_launch = CPU_MODE_DEFAULT; // CPU speed to inject into the launched game's INIT (regular game mappers only)
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
 static char pico_chip_id[CTRL_CHIP_ID_SIZE] = "0000000000000000";
 static bool wavegame_active = false;
@@ -1689,6 +1697,7 @@ static void process_load_options_request(void) {
     ctrl_sd_partition = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
     ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
+    ctrl_cpu_mode = CPU_MODE_DEFAULT;
     memset(ctrl_sd_partition_info, 0, sizeof(ctrl_sd_partition_info));
     quiesce_mp3_core1_before_sd_work();
     if (!sd_mount_card()) {
@@ -1751,8 +1760,11 @@ static void process_load_options_request(void) {
     if (br >= PVC_OPTIONS_VOLUME_SIZE) {
         ctrl_audio_volume = data[8] <= AUDIO_VOLUME_MAX ? data[8] : AUDIO_VOLUME_DEFAULT;
     }
-    if (br >= PVC_OPTIONS_SIZE) {
+    if (br >= PVC_OPTIONS_FREQ_SIZE) {
         ctrl_vdp_frequency = data[9] <= VDP_FREQ_50HZ ? data[9] : VDP_FREQ_DEFAULT;
+    }
+    if (br >= PVC_OPTIONS_SIZE) {
+        ctrl_cpu_mode = data[10] <= CPU_MODE_R800 ? data[10] : CPU_MODE_DEFAULT;
     }
     ctrl_ack_value = 1;
 }
@@ -1779,6 +1791,10 @@ static void process_save_options_request(void) {
     if (vdp_frequency > VDP_FREQ_50HZ) {
         vdp_frequency = VDP_FREQ_DEFAULT;
     }
+    uint8_t cpu_mode = (uint8_t)filter_query[8];
+    if (cpu_mode > CPU_MODE_R800) {
+        cpu_mode = CPU_MODE_DEFAULT;
+    }
     char path[SD_PATH_MAX];
     if (!build_pvc_options_path(record_index, path, sizeof(path))) {
         return;
@@ -1791,7 +1807,7 @@ static void process_save_options_request(void) {
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
         audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4], sd_partition,
-        audio_volume, vdp_frequency
+        audio_volume, vdp_frequency, cpu_mode
     };
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
@@ -1803,6 +1819,7 @@ static void process_save_options_request(void) {
         ctrl_sd_partition = data[7];
         ctrl_audio_volume = data[8];
         ctrl_vdp_frequency = data[9];
+        ctrl_cpu_mode = data[10];
         ctrl_ack_value = 1;
     }
 }
@@ -1999,6 +2016,7 @@ static void process_prepare_quick_run_request(void) {
     ctrl_wavegame_rom = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
     ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
+    ctrl_cpu_mode = CPU_MODE_DEFAULT;
 
     if (index >= total_record_count) {
         return;
@@ -3468,6 +3486,144 @@ static bool fh_prepare_list_region(void)
     return psram_alloc(FH_HTTP_BUFFER_SIZE, &fh_list_region);
 }
 
+// Per-ROM boot patch: the launched game's cartridge INIT is redirected through a
+// small stub that applies the 50/60Hz and CPU speed options before jumping to the
+// original entry point. The menu cannot do this itself because the warm RST 00h
+// reset that boots the ROM re-initialises VDP R9 and returns the turbo R to Z80
+// mode. The stub runs as the cartridge INIT with the BIOS in page 0, so direct
+// calls to the BIOS entries below are valid.
+//
+//   50/60Hz : WRTVDP (0x0047) with B=R9 value / C=9. Using WRTVDP (as the
+//             Carnivore2 boot menu does) writes VDP register 9 *and* updates the
+//             BIOS R9 shadow RG9SAV (0xFFE8) on MSX2, so games that reload R9
+//             from the shadow via a BIOS screen call keep the requested mode.
+//   Turbo   : Panasonic switched-I/O device 8, port 0x41 bit 0 (0 = 5.37MHz).
+//   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED).
+//
+// Both CPU stubs re-verify the machine at run time (MSXVER for the turbo R, the
+// port 0x40 read-back for Panasonic) because the quick-run path replays a stored
+// option without the detail screen's machine check, and the microSD card may
+// have been configured on a different computer.
+#define BOOT_STUB_MAX 24u
+#define BOOT_STUB_HEADER_ROOM 12u // ROM header bytes 0x4004..0x400F
+// Only the first 8 KB of the image may host the relocated stub. That is block 0
+// for every cached mapper, and block 0 is what sits at 0x4000..0x5FFF at INIT
+// time in all of them: the linear 16/32 KB ROMs, Konami/Konami-SCC ({0,1,2,3}),
+// ASCII16 ({0,1}) and ASCII8 -- which resets all four 8 KB windows to block 0,
+// so for ASCII8 the image bytes at 0x2000..0x3FFF are not reachable at boot at
+// all and a stub parked there would never execute.
+#define BOOT_STUB_SEARCH_LIMIT 8192u
+
+static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig_init)
+{
+    uint8_t n = 0;
+
+    if (vdp_freq_launch != VDP_FREQ_DEFAULT)
+    {
+        uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
+        stub[n++] = 0x01u; stub[n++] = 0x09u; stub[n++] = r9;            // ld bc,r9*256+9
+        stub[n++] = 0xCDu; stub[n++] = 0x47u; stub[n++] = 0x00u;         // call 0047h (WRTVDP)
+    }
+
+    if (cpu_mode_launch == CPU_MODE_R800)
+    {
+        stub[n++] = 0x3Au; stub[n++] = 0x2Du; stub[n++] = 0x00u;         // ld a,(002Dh) MSXVER
+        stub[n++] = 0xFEu; stub[n++] = 0x03u;                            // cp 3 (turbo R)
+        stub[n++] = 0x20u; stub[n++] = 0x05u;                            // jr nz,+5
+        stub[n++] = 0x3Eu; stub[n++] = 0x81u;                            // ld a,81h (R800 ROM + LED)
+        stub[n++] = 0xCDu; stub[n++] = 0x80u; stub[n++] = 0x01u;         // call 0180h (CHGCPU)
+    }
+    else if (cpu_mode_launch == CPU_MODE_TURBO)
+    {
+        stub[n++] = 0x3Eu; stub[n++] = 0x08u;                            // ld a,8 (Matsushita id)
+        stub[n++] = 0xD3u; stub[n++] = 0x40u;                            // out (40h),a
+        stub[n++] = 0xDBu; stub[n++] = 0x40u;                            // in a,(40h)
+        stub[n++] = 0xFEu; stub[n++] = 0xF7u;                            // cp ~8
+        stub[n++] = 0x20u; stub[n++] = 0x04u;                            // jr nz,+4
+        stub[n++] = 0x3Eu; stub[n++] = 0x80u;                            // ld a,80h (bit0=0 -> 5.37MHz)
+        stub[n++] = 0xD3u; stub[n++] = 0x41u;                            // out (41h),a
+    }
+
+    stub[n++] = 0xC3u;                                                   // jp orig_init
+    stub[n++] = (uint8_t)(orig_init & 0xFFu);
+    stub[n++] = (uint8_t)(orig_init >> 8);
+    return n;
+}
+
+// Finds a run of `len` padding bytes (0x00 or 0xFF) in block 0 so the stub can
+// be parked outside the 12-byte ROM header when it does not fit there. The scan
+// runs backwards and takes the top of the highest qualifying run, so the stub
+// lands in the trailing padding of block 0 whenever there is any; that is far
+// less likely to be read by the game than a zero-filled table in the middle of
+// its data. Returns 0 when no run is available; offset 0 is never a candidate
+// because the first 16 bytes are the cartridge header.
+static uint32_t __not_in_flash_func(find_boot_stub_slot)(const uint8_t *img, uint32_t limit, uint8_t len)
+{
+    if (len == 0u || limit <= (16u + (uint32_t)len)) return 0;
+
+    uint32_t i = limit;
+    while (i > 16u)
+    {
+        i--;
+        uint8_t b = img[i];
+        if (b != 0x00u && b != 0xFFu) continue;
+
+        uint32_t end = i;
+        while (i > 16u && img[i - 1u] == b) i--;
+        if ((end - i + 1u) >= (uint32_t)len) return end - (uint32_t)len + 1u;
+    }
+    return 0;
+}
+
+static void __not_in_flash_func(copy_boot_stub)(uint8_t *dst, const uint8_t *src, uint8_t len)
+{
+    for (uint8_t i = 0; i < len; i++) dst[i] = src[i];
+}
+
+static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cached_len)
+{
+    if (vdp_freq_launch == VDP_FREQ_DEFAULT && cpu_mode_launch == CPU_MODE_DEFAULT) return;
+    if (cached_len < 16u || img[0] != 'A' || img[1] != 'B') return;
+
+    uint16_t orig_init = (uint16_t)img[2] | ((uint16_t)img[3] << 8);
+    if (orig_init < 0x4000u || orig_init > 0xBFFFu) return;
+
+    uint8_t stub[BOOT_STUB_MAX];
+    uint8_t len = build_boot_stub(stub, orig_init);
+    uint16_t entry = 0x4004u;
+
+    if (len > BOOT_STUB_HEADER_ROOM)
+    {
+        uint32_t limit = (cached_len < BOOT_STUB_SEARCH_LIMIT) ? cached_len : BOOT_STUB_SEARCH_LIMIT;
+        uint32_t slot = find_boot_stub_slot(img, limit, len);
+        if (slot == 0u)
+        {
+            // No padding run to park the full stub in: drop the CPU switch and
+            // fall back to the 50/60Hz-only stub, which always fits the header.
+            if (vdp_freq_launch == VDP_FREQ_DEFAULT) return;
+            cpu_mode_launch = CPU_MODE_DEFAULT;
+            len = build_boot_stub(stub, orig_init);
+            if (len > BOOT_STUB_HEADER_ROOM) return;
+            copy_boot_stub(&img[4], stub, len);
+        }
+        else
+        {
+            uint16_t stub_addr = (uint16_t)(0x4000u + slot);
+            copy_boot_stub(&img[slot], stub, len);
+            img[4] = 0xC3u;                                              // jp stub_addr
+            img[5] = (uint8_t)(stub_addr & 0xFFu);
+            img[6] = (uint8_t)(stub_addr >> 8);
+        }
+    }
+    else
+    {
+        copy_boot_stub(&img[4], stub, len);
+    }
+
+    img[2] = (uint8_t)(entry & 0xFFu);                                   // INIT vector -> stub
+    img[3] = (uint8_t)(entry >> 8);
+}
+
 static inline void __not_in_flash_func(prepare_rom_source)(
     uint32_t offset,
     bool cache_enable,
@@ -3521,36 +3677,12 @@ static inline void __not_in_flash_func(prepare_rom_source)(
             rom_base = rom_sram;
         }
 
-        // Per-ROM 50/60Hz: patch the launched game's cartridge INIT so the VDP
-        // R9 frequency is set right after the BIOS boot, when the ROM's INIT
-        // runs. The menu cannot do this itself because the warm RST 00h reset
-        // that boots the ROM re-initializes R9. An 11-byte stub injected into
-        // the cached header calls the BIOS WRTVDP routine (0x0047) with B=R9
-        // value / C=9, then jumps to the original INIT. Using WRTVDP (as the
-        // Carnivore2 boot menu does) writes VDP register 9 *and* updates the
-        // BIOS R9 shadow RG9SAV (0xFFE8) on MSX2, so games that reload R9 from
-        // the shadow via a BIOS screen call keep the requested refresh mode.
-        // This runs as the cartridge INIT with the BIOS in page 0, so the
-        // direct 0x0047 call is valid. vdp_freq_launch is zeroed for system
-        // ROMs so their loaders are never touched; the menu also zeroes the
-        // per-ROM value on MSX1 (no R9), so no MSX1 guard is needed here.
-        if (vdp_freq_launch != VDP_FREQ_DEFAULT && bytes_to_cache >= 16u &&
-            rom_sram[0] == 'A' && rom_sram[1] == 'B')
-        {
-            uint16_t orig_init = (uint16_t)rom_sram[2] | ((uint16_t)rom_sram[3] << 8);
-            if (orig_init >= 0x4000u && orig_init <= 0xBFFFu)
-            {
-                uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
-                rom_sram[4] = 0x3Eu; rom_sram[5] = r9;                           // ld a,r9
-                rom_sram[6] = 0x47u;                                             // ld b,a
-                rom_sram[7] = 0x0Eu; rom_sram[8] = 0x09u;                        // ld c,9
-                rom_sram[9] = 0xCDu; rom_sram[10] = 0x47u; rom_sram[11] = 0x00u; // call 0047h (WRTVDP)
-                rom_sram[12] = 0xC3u;                                            // jp orig_init
-                rom_sram[13] = (uint8_t)(orig_init & 0xFFu);
-                rom_sram[14] = (uint8_t)(orig_init >> 8);
-                rom_sram[2] = 0x04u; rom_sram[3] = 0x40u;                        // INIT vector -> 0x4004
-            }
-        }
+        // Per-ROM 50/60Hz and CPU speed: patch the launched game's cartridge
+        // INIT so the options are applied right after the BIOS boot, when the
+        // ROM's INIT runs. vdp_freq_launch / cpu_mode_launch are zeroed for
+        // system ROMs so their loaders are never touched; the menu also zeroes
+        // the per-ROM frequency on MSX1 (no R9), so no MSX1 guard is needed.
+        apply_boot_patches(rom_sram, bytes_to_cache);
     }
     else
     {
@@ -6464,21 +6596,30 @@ static bool fh_deliver_http_body(const uint8_t *data, uint16_t len, fh_http_deco
     return true;
 }
 
+// Builds the File Hunter request path. An empty query selects the latest
+// releases endpoint (newest first, no name filter); any other query goes to the
+// name-filtered catalog endpoint. Both return the same packed listing struct and
+// take the same &download=<index> selector against the listing they produced.
 static void fh_build_http_path(char *out, size_t out_size, const char *query, int download_index)
 {
     size_t pos = 0;
-    const char *prefix = FH_ENDPOINT "?base=1BA0&type=rom&msx=&char=";
     const char *suffix = "&download=";
 
-    pos += snprintf(out + pos, out_size - pos, "%s", prefix);
-    if (!query || !*query) query = FH_DEFAULT_QUERY;
-    for (; *query && pos + 4u < out_size; ++query)
+    if (!query || !*query)
     {
-        unsigned char ch = (unsigned char)*query;
-        if (isalnum(ch) || ch == '-' || ch == '_' || ch == '.')
-            out[pos++] = (char)ch;
-        else if (ch == ' ')
-            out[pos++] = '+';
+        pos += snprintf(out + pos, out_size - pos, "%s", FH_LATEST_ENDPOINT "?base=1BA0&type=rom");
+    }
+    else
+    {
+        pos += snprintf(out + pos, out_size - pos, "%s", FH_ENDPOINT "?base=1BA0&type=rom&msx=&char=");
+        for (; *query && pos + 4u < out_size; ++query)
+        {
+            unsigned char ch = (unsigned char)*query;
+            if (isalnum(ch) || ch == '-' || ch == '_' || ch == '.')
+                out[pos++] = (char)ch;
+            else if (ch == ' ')
+                out[pos++] = '+';
+        }
     }
     pos += snprintf(out + pos, out_size - pos, "%s", suffix);
     if (download_index >= 0)
@@ -6807,6 +6948,9 @@ static bool fh_parse_catalog(const uint8_t *data, uint32_t len)
     return true;
 }
 
+// Copies the MSX-supplied query out of the shared buffer. An empty buffer is a
+// meaningful value here: it selects the latest-releases endpoint, so it must not
+// be replaced with a name filter.
 static void fh_copy_query_from_buffer(char *out, size_t out_size)
 {
     size_t i;
@@ -6818,9 +6962,6 @@ static void fh_copy_query_from_buffer(char *out, size_t out_size)
         out[i] = ch;
     }
     out[i] = '\0';
-    if (out[0] == '\0')
-        strncpy(out, FH_DEFAULT_QUERY, out_size - 1u);
-    out[out_size - 1u] = '\0';
 }
 
 static bool fh_fetch_catalog(const char *query)
@@ -7527,8 +7668,7 @@ static int __no_inline_not_in_flash_func(loadrom_filehunter)(void)
     fh_result = 0;
     fh_status = FH_STATUS_READY;
     memset(fh_query, 0, sizeof(fh_query));
-    strncpy((char *)fh_query, FH_DEFAULT_QUERY, sizeof(fh_query) - 1u);
-    strncpy(fh_active_query, FH_DEFAULT_QUERY, sizeof(fh_active_query) - 1u);
+    memset(fh_active_query, 0, sizeof(fh_active_query));
     fh_catalog_count = 0;
     fh_catalog_loaded = false;
     fh_set_catalog_message("Retrieving File Hunter ROMs...");
@@ -7745,6 +7885,10 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
             else if (!fh_menu_window_active && addr == CTRL_VDP_FREQ)
             {
                 data = ctrl_vdp_frequency;
+            }
+            else if (!fh_menu_window_active && addr == CTRL_CPU_MODE)
+            {
+                data = ctrl_cpu_mode;
             }
             else if (addr == CTRL_NET_STATUS)
             {
@@ -12121,6 +12265,7 @@ int __no_inline_not_in_flash_func(main)()
     // The 50/60Hz INIT patch only applies to regular game ROMs; the system ROMs
     // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
     vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
+    cpu_mode_launch = system_mapper ? CPU_MODE_DEFAULT : ctrl_cpu_mode;
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);

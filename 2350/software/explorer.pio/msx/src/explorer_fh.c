@@ -604,8 +604,10 @@ unsigned char explorer_fh_run(void)
     memset(fh_status_right, 0, sizeof(fh_status_right));
 
     fh_render_frame();
-    fh_write_query("1");
-    fh_load_page(0, retrieving_status);
+    // Empty query = File Hunter latest releases. Issued as a search so the Pico
+    // always refetches, instead of reusing a catalog left over from a previous
+    // visit (which would otherwise still hold the last search results).
+    fh_search("", retrieving_status);
     fh_redraw();
 
     while (1) {

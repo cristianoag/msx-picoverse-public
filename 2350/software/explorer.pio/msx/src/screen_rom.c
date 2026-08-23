@@ -19,6 +19,10 @@ static unsigned char send_set_mapper(unsigned int index, unsigned char mapper);
 static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume, unsigned char *vdp_freq);
 static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume, unsigned char vdp_freq);
 static unsigned char read_mapper_value(void);
+static void build_cpu_mode_list(void);
+static void select_cpu_mode(unsigned char cpu_mode);
+static void step_cpu_mode(int dir);
+static void compute_option_selections(unsigned char allow_wifi_support);
 static void render_rom_screen(const ROMRecord *record);
 static void render_rom_prefixed_line(unsigned char row, const char *prefix, const char *text, int selected);
 static void render_rom_mapper_line(const char *mapper_text, int selected);
@@ -26,10 +30,11 @@ static void render_rom_audio_line(const char *audio_text, int selected);
 static void render_rom_volume_line(unsigned char audio_volume, int selected);
 static void render_rom_psg_line(unsigned char psg_enabled, int selected);
 static void render_rom_freq_line(unsigned char row, unsigned char vdp_freq, int selected);
+static void render_rom_cpu_line(unsigned char row, unsigned char cpu_mode, int selected);
 static void render_rom_partition_line(unsigned char row, unsigned char sd_partition, int selected);
 static void render_rom_wifi_line(unsigned char row, unsigned char wifi_enabled, int selected);
 static void render_rom_action_line(unsigned char row, int selected);
-static void render_rom_options_block(const ROMRecord *record, int waiting_mapper, unsigned char audio_profile, unsigned char psg_enabled, unsigned char wifi_enabled, unsigned char allow_mapper_override, unsigned char allow_wifi_support, int selection);
+static void render_rom_options_block(void);
 static void render_rom_footer_line(void);
 static void show_mp3_screen(unsigned int index);
 static void render_mp3_screen(const ROMRecord *record);
@@ -56,6 +61,28 @@ static unsigned char rom_audio_volume = AUDIO_VOLUME_DEFAULT;
 static unsigned char rom_vdp_freq = VDP_FREQ_DEFAULT;
 static unsigned char rom_allow_sd_partition = 0;
 static unsigned char rom_allow_freq = 0;
+/* Per-ROM CPU speed option. cpu_modes[] lists the values this machine can
+   actually deliver (always CPU_MODE_DEFAULT, plus CPU_MODE_TURBO when the
+   Panasonic switched-I/O turbo device answers and CPU_MODE_R800 on a turbo R),
+   so the option row is hidden entirely on machines that support neither. */
+static unsigned char rom_cpu_mode = CPU_MODE_DEFAULT;
+static unsigned char rom_allow_cpu = 0;
+static unsigned char cpu_modes[3];
+static unsigned char cpu_mode_count = 1;
+static unsigned char cpu_mode_index = 0;
+/* Row/selection indices for the option block, computed once per screen so the
+   renderer and the key handler cannot drift apart. */
+static int sel_freq, sel_cpu, sel_part, sel_wifi, sel_action;
+/* Live state of the ROM detail screen. Held here rather than passed on every
+   render call because render_rom_options_block() is invoked from a dozen key
+   handlers and the argument marshalling alone cost hundreds of ROM bytes. */
+static ROMRecord *cur_record;
+static unsigned char cur_waiting_mapper;
+static unsigned char cur_audio_profile;
+static unsigned char cur_psg_enabled;
+static unsigned char cur_wifi_enabled;
+static unsigned char rom_allow_wifi;
+static int cur_selection;
 
 static void write_index_query(unsigned int index) {
     Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFFu));
@@ -142,6 +169,8 @@ static unsigned char send_load_options(unsigned int index, unsigned char *audio_
     if (*vdp_freq > VDP_FREQ_50HZ) {
         *vdp_freq = VDP_FREQ_DEFAULT;
     }
+    rom_cpu_mode = Peek(CTRL_CPU_MODE);
+    select_cpu_mode(rom_cpu_mode);
     sd_partition_count = Peek(CTRL_SD_PARTITION_INFO_BASE);
     sd_partition_mask = Peek(CTRL_SD_PARTITION_INFO_BASE + 1);
     return 1;
@@ -155,13 +184,93 @@ static void send_save_options(unsigned int index, unsigned char audio_profile, u
     Poke(CTRL_QUERY_BASE + 5, sd_partition);
     Poke(CTRL_QUERY_BASE + 6, audio_volume);
     Poke(CTRL_QUERY_BASE + 7, vdp_freq);
-    clear_query_tail(8);
+    Poke(CTRL_QUERY_BASE + 8, rom_allow_cpu ? rom_cpu_mode : CPU_MODE_DEFAULT);
+    clear_query_tail(9);
     Poke(CTRL_CMD, CMD_SAVE_OPTIONS);
     wait_ctrl_cmd();
 }
 
 static unsigned char read_mapper_value(void) {
     return *((unsigned char *)CTRL_MAPPER);
+}
+
+/* Builds the list of CPU speeds this machine can deliver, entirely in assembly
+   to keep the menu ROM small. The Panasonic switched-I/O turbo device answers
+   on port #40 with the complement of the selected manufacturer id (8), and port
+   #41 bit 2 reports whether the 5.37MHz turbo is fitted (0 = available). The
+   previously selected id is saved and restored so the probe is harmless on
+   machines without expanded I/O. MSXVER (main ROM #002D) is 3 on a turbo R,
+   which is the only family with CHGCPU/R800. */
+static void build_cpu_mode_list(void) {
+    __asm
+        ld   hl,#_cpu_modes
+        ld   (hl),#0
+        inc  hl
+        ld   c,#1
+        in   a,(#0x40)
+        cpl
+        push af
+        ld   a,#8
+        out  (#0x40),a
+        in   a,(#0x40)
+        cpl
+        cp   #8
+        jr   nz,cpu_no_pana
+        in   a,(#0x41)
+        bit  2,a
+        jr   nz,cpu_no_pana
+        ld   (hl),#1
+        inc  hl
+        inc  c
+    cpu_no_pana:
+        pop  af
+        cpl
+        out  (#0x40),a
+        ld   a,(#0x002D)
+        cp   #3
+        jr   nz,cpu_no_r800
+        ld   (hl),#2
+        inc  c
+    cpu_no_r800:
+        ld   a,c
+        ld   (_cpu_mode_count),a
+    __endasm;
+}
+
+static void select_cpu_mode(unsigned char cpu_mode) {
+    unsigned char i;
+    cpu_mode_index = 0;
+    for (i = 0; i < cpu_mode_count; i++) {
+        if (cpu_modes[i] == cpu_mode) {
+            cpu_mode_index = i;
+            break;
+        }
+    }
+    rom_cpu_mode = cpu_modes[cpu_mode_index];
+}
+
+static void step_cpu_mode(int dir) {
+    if (dir > 0) {
+        cpu_mode_index++;
+        if (cpu_mode_index >= cpu_mode_count) {
+            cpu_mode_index = 0;
+        }
+    } else {
+        if (cpu_mode_index == 0) {
+            cpu_mode_index = cpu_mode_count;
+        }
+        cpu_mode_index--;
+    }
+    rom_cpu_mode = cpu_modes[cpu_mode_index];
+}
+
+static void compute_option_selections(unsigned char allow_wifi_support) {
+    int n = 4;
+    sel_freq = rom_allow_freq ? n++ : -1;
+    sel_cpu = rom_allow_cpu ? n++ : -1;
+    sel_part = rom_allow_sd_partition ? n++ : -1;
+    sel_wifi = allow_wifi_support ? n++ : -1;
+    sel_action = n;
 }
 
 static void apply_detected_mapper(ROMRecord *record) {
@@ -209,34 +318,40 @@ static void render_rom_screen(const ROMRecord *record) {
 
 void show_rom_screen(unsigned int index) {
     ROMRecord *record = &records[index % FILES_PER_PAGE];
-    unsigned char waiting_mapper = 0;
-    unsigned char audio_profile = AUDIO_PROFILE_NONE;
-    unsigned char psg_enabled = 1;
     unsigned char saved_mapper = 0;
     unsigned char sd_partition = 0;
     unsigned char options_loaded = 0;
     unsigned char allow_mapper_override = !record_is_system_rom(record);
-    unsigned char allow_wifi_support = record_is_wifi_capable_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
     unsigned char allow_psg = !record_is_sunrise_mapper_system_rom(record);
     /* VDP R9 (50/60Hz) exists only on the V9938/V9958 (MSX2+). The MSX version
        byte at main-ROM 0x002D is 0 on MSX1, so the frequency option is offered
        only when it is non-zero. */
     unsigned char allow_freq = !record_is_system_rom(record) && (Peek(0x002D) != 0);
-    unsigned char wifi_enabled = 0;
     int volume_selection = 2;
     int psg_selection = 3;
-    int freq_selection = allow_freq ? 4 : -1;
-    int base_after_freq = 4 + (allow_freq ? 1 : 0);
-    int partition_selection = allow_sd_partition ? base_after_freq : -1;
-    int wifi_selection = allow_wifi_support ? (base_after_freq + (allow_sd_partition ? 1 : 0)) : -1;
-    int action_selection = base_after_freq + (allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
-    int selection = action_selection;
 
+    cur_record = record;
+    cur_waiting_mapper = 0;
+    cur_audio_profile = AUDIO_PROFILE_NONE;
+    cur_psg_enabled = 1;
+    cur_wifi_enabled = 0;
+    rom_allow_wifi = record_is_wifi_capable_system_rom(record);
+
+    build_cpu_mode_list();
     rom_allow_sd_partition = allow_sd_partition;
     rom_allow_freq = allow_freq;
+    /* The CPU speed patch is injected into the launched ROM's cartridge INIT,
+       so it only applies to regular game ROMs; the system ROMs manage their own
+       boot. The row is also hidden when this machine offers no alternative. */
+    rom_allow_cpu = !record_is_system_rom(record) && (cpu_mode_count > 1);
+    compute_option_selections(rom_allow_wifi);
+    cur_selection = sel_action;
+
     rom_audio_volume = AUDIO_VOLUME_DEFAULT;
     rom_vdp_freq = VDP_FREQ_DEFAULT;
+    rom_cpu_mode = CPU_MODE_DEFAULT;
+    cpu_mode_index = 0;
 
     if (record_is_mp3(record)) {
         show_mp3_screen(index);
@@ -250,29 +365,29 @@ void show_rom_screen(unsigned int index) {
         if (mapper_code == 0) {
             wait_ctrl_cmd();
             send_detect_mapper(index);
-            waiting_mapper = 1;
+            cur_waiting_mapper = 1;
         } else if (record_supports_scc_audio(record)) {
-            audio_profile = AUDIO_PROFILE_SCC;
+            cur_audio_profile = AUDIO_PROFILE_SCC;
         }
     } else {
         if (record_supports_scc_audio(record)) {
-            audio_profile = AUDIO_PROFILE_SCC;
+            cur_audio_profile = AUDIO_PROFILE_SCC;
         }
     }
 
-    if (!waiting_mapper) {
-        options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
+    if (!cur_waiting_mapper) {
+        options_loaded = send_load_options(index, &cur_audio_profile, &cur_psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
         if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
                 record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
         }
     }
-    audio_profile = sanitize_audio_profile(record, audio_profile);
+    cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
     if (!allow_psg) {
-        psg_enabled = 0; // PSG Mirror is disabled on Nextor + 1MB mapper (unstable)
+        cur_psg_enabled = 0; // PSG Mirror is disabled on Nextor + 1MB mapper (unstable)
     }
 
     rom_sd_partition = sd_partition;
-    render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+    render_rom_options_block();
 
     while (1) {
         if (bios_chsns()) {
@@ -284,38 +399,38 @@ void show_rom_screen(unsigned int index) {
             if (key == 'h' || key == 'H') {
                 helpMenu();
                 render_rom_screen(record);
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                render_rom_options_block();
             }
             if (key == 27) {
                 break;
             }
             if (key == 13 || key == 32) {
-                if (!waiting_mapper && selection == action_selection) {
-                    audio_profile = sanitize_audio_profile(record, audio_profile);
-                    Poke(CTRL_AUDIO, audio_profile);
-                    Poke(CTRL_PSG_EMULATION, psg_enabled);
-                    Poke(CTRL_WIFI_SUPPORT, allow_wifi_support ? wifi_enabled : 0);
+                if (!cur_waiting_mapper && cur_selection == sel_action) {
+                    cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
+                    Poke(CTRL_AUDIO, cur_audio_profile);
+                    Poke(CTRL_PSG_EMULATION, cur_psg_enabled);
+                    Poke(CTRL_WIFI_SUPPORT, rom_allow_wifi ? cur_wifi_enabled : 0);
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
-                    send_save_options(index, audio_profile, psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
+                    send_save_options(index, cur_audio_profile, cur_psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
                     loadGame((int)index);
                     return;
                 }
             }
             if (key == 30 || key == 31) {
                 int delta = (key == 30) ? -1 : 1;
-                int next = selection + delta;
+                int next = cur_selection + delta;
                 if (next < 0) {
                     next = 0;
-                } else if (next > action_selection) {
-                    next = action_selection;
+                } else if (next > sel_action) {
+                    next = sel_action;
                 }
-                if (selection != next) {
-                    selection = next;
-                    render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                if (cur_selection != next) {
+                    cur_selection = next;
+                    render_rom_options_block();
                 }
             }
-            if ((key == 28 || key == 29) && selection == 0 && !waiting_mapper && allow_mapper_override) {
+            if ((key == 28 || key == 29) && cur_selection == 0 && !cur_waiting_mapper && allow_mapper_override) {
                 static const unsigned char mapper_cycle[] = {1,2,3,4,5,6,7,8,9,12,13,14};
                 const unsigned int mapper_count = (unsigned int)(sizeof(mapper_cycle) / sizeof(mapper_cycle[0]));
                 unsigned char mapper_code = record_mapper_code(record->Mapper);
@@ -341,36 +456,40 @@ void show_rom_screen(unsigned int index) {
                 unsigned char next_mapper = mapper_cycle[next_index];
                 if (send_set_mapper(index, next_mapper)) {
                     record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | next_mapper;
-                    audio_profile = sanitize_audio_profile(record, audio_profile);
-                    render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                    cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
+                    render_rom_options_block();
                 }
             }
-            if ((key == 28 || key == 29) && selection == 1) {
+            if ((key == 28 || key == 29) && cur_selection == 1) {
                 int dir = (key == 28) ? 1 : -1;
-                audio_profile = next_audio_profile(record, audio_profile, dir);
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                cur_audio_profile = next_audio_profile(record, cur_audio_profile, dir);
+                render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && selection == volume_selection) {
+            if ((key == 28 || key == 29) && cur_selection == volume_selection) {
                 if (key == 28) {
                     if (rom_audio_volume < AUDIO_VOLUME_MAX) rom_audio_volume += AUDIO_VOLUME_STEP;
                 } else {
                     if (rom_audio_volume >= AUDIO_VOLUME_STEP) rom_audio_volume -= AUDIO_VOLUME_STEP;
                 }
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && selection == psg_selection && allow_psg) {
-                psg_enabled = psg_enabled ? 0 : 1;
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+            if ((key == 28 || key == 29) && cur_selection == psg_selection && allow_psg) {
+                cur_psg_enabled = cur_psg_enabled ? 0 : 1;
+                render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && allow_freq && selection == freq_selection) {
+            if ((key == 28 || key == 29) && rom_allow_freq && cur_selection == sel_freq) {
                 if (key == 28) {
                     rom_vdp_freq = (rom_vdp_freq >= VDP_FREQ_50HZ) ? VDP_FREQ_DEFAULT : (unsigned char)(rom_vdp_freq + 1);
                 } else {
                     rom_vdp_freq = (rom_vdp_freq == VDP_FREQ_DEFAULT) ? VDP_FREQ_50HZ : (unsigned char)(rom_vdp_freq - 1);
                 }
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && allow_sd_partition && selection == partition_selection && sd_partition_count) {
+            if ((key == 28 || key == 29) && rom_allow_cpu && cur_selection == sel_cpu) {
+                step_cpu_mode((key == 28) ? 1 : -1);
+                render_rom_options_block();
+            }
+            if ((key == 28 || key == 29) && rom_allow_sd_partition && cur_selection == sel_part && sd_partition_count) {
                 int dir = (key == 28) ? 1 : -1;
                 unsigned char next_part = sd_partition;
                 for (unsigned char i = 0; i < 4; i++) {
@@ -387,37 +506,37 @@ void show_rom_screen(unsigned int index) {
                 sd_partition = next_part;
                 rom_sd_partition = sd_partition;
                 Poke(CTRL_SD_PARTITION, sd_partition);
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && allow_wifi_support && selection == wifi_selection) {
-                wifi_enabled = wifi_enabled ? 0 : 1;
-                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+            if ((key == 28 || key == 29) && rom_allow_wifi && cur_selection == sel_wifi) {
+                cur_wifi_enabled = cur_wifi_enabled ? 0 : 1;
+                render_rom_options_block();
             }
             if (key == 'C' || key == 'c') {
                 if (menu_ui_try_toggle_columns()) {
                     render_rom_screen(record);
-                    render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+                    render_rom_options_block();
                 }
             }
         }
 
-        if (waiting_mapper && Peek(CTRL_CMD) == 0) {
+        if (cur_waiting_mapper && Peek(CTRL_CMD) == 0) {
             apply_detected_mapper(record);
-            if (audio_profile == AUDIO_PROFILE_NONE && record_supports_scc_audio(record)) {
-                audio_profile = AUDIO_PROFILE_SCC;
+            if (cur_audio_profile == AUDIO_PROFILE_NONE && record_supports_scc_audio(record)) {
+                cur_audio_profile = AUDIO_PROFILE_SCC;
             } else {
-                audio_profile = sanitize_audio_profile(record, audio_profile);
+                cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
             }
             if (!options_loaded) {
-                options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
+                options_loaded = send_load_options(index, &cur_audio_profile, &cur_psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
                 if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
                     record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
                 }
             }
-            audio_profile = sanitize_audio_profile(record, audio_profile);
-            waiting_mapper = 0;
+            cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
+            cur_waiting_mapper = 0;
             rom_sd_partition = sd_partition;
-            render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+            render_rom_options_block();
         }
 
         delay_ms(10);
@@ -480,6 +599,16 @@ static void render_rom_freq_line(unsigned char row, unsigned char vdp_freq, int 
     render_rom_prefixed_line(row, " Frequency: ", text, selected);
 }
 
+static void render_rom_cpu_line(unsigned char row, unsigned char cpu_mode, int selected) {
+    const char *text = "Default";
+    if (cpu_mode == CPU_MODE_TURBO) {
+        text = "Turbo";
+    } else if (cpu_mode == CPU_MODE_R800) {
+        text = "R800";
+    }
+    render_rom_prefixed_line(row, "       CPU: ", text, selected);
+}
+
 static void render_rom_partition_line(unsigned char row, unsigned char sd_partition, int selected) {
     char label[31];
     unsigned char i;
@@ -502,34 +631,32 @@ static void render_rom_action_line(unsigned char row, int selected) {
     menu_ui_render_selectable_line(row, "    Action: Run", selected);
 }
 
-static void render_rom_options_block(const ROMRecord *record, int waiting_mapper, unsigned char audio_profile, unsigned char psg_enabled, unsigned char wifi_enabled, unsigned char allow_mapper_override, unsigned char allow_wifi_support, int selection) {
+static void render_rom_options_block(void) {
     char mapper_text[48];
     char audio_text[32];
     int volume_selection = 2;
     int psg_selection = 3;
-    int freq_selection = rom_allow_freq ? 4 : -1;
-    int base_after_freq = 4 + (rom_allow_freq ? 1 : 0);
-    int partition_selection = rom_allow_sd_partition ? base_after_freq : -1;
-    int wifi_selection = allow_wifi_support ? (base_after_freq + (rom_allow_sd_partition ? 1 : 0)) : -1;
-    int action_selection = base_after_freq + (rom_allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
     unsigned char row = 11;
 
-    build_mapper_text(record, waiting_mapper, mapper_text, sizeof(mapper_text));
-    build_audio_text(record, audio_profile, audio_text, sizeof(audio_text));
-    render_rom_mapper_line(mapper_text, selection == 0);
-    render_rom_audio_line(audio_text, selection == 1);
-    render_rom_volume_line(rom_audio_volume, selection == volume_selection);
-    render_rom_psg_line(psg_enabled, selection == psg_selection);
+    build_mapper_text(cur_record, cur_waiting_mapper, mapper_text, sizeof(mapper_text));
+    build_audio_text(cur_record, cur_audio_profile, audio_text, sizeof(audio_text));
+    render_rom_mapper_line(mapper_text, cur_selection == 0);
+    render_rom_audio_line(audio_text, cur_selection == 1);
+    render_rom_volume_line(rom_audio_volume, cur_selection == volume_selection);
+    render_rom_psg_line(cur_psg_enabled, cur_selection == psg_selection);
     if (rom_allow_freq) {
-        render_rom_freq_line(row++, rom_vdp_freq, selection == freq_selection);
+        render_rom_freq_line(row++, rom_vdp_freq, cur_selection == sel_freq);
+    }
+    if (rom_allow_cpu) {
+        render_rom_cpu_line(row++, rom_cpu_mode, cur_selection == sel_cpu);
     }
     if (rom_allow_sd_partition) {
-        render_rom_partition_line(row++, rom_sd_partition, selection == partition_selection);
+        render_rom_partition_line(row++, rom_sd_partition, cur_selection == sel_part);
     }
-    if (allow_wifi_support) {
-        render_rom_wifi_line(row++, wifi_enabled, selection == wifi_selection);
+    if (rom_allow_wifi) {
+        render_rom_wifi_line(row++, cur_wifi_enabled, cur_selection == sel_wifi);
     }
-    render_rom_action_line(row, selection == action_selection);
+    render_rom_action_line(row, cur_selection == sel_action);
     render_rom_footer_line();
 }
 

@@ -189,7 +189,7 @@ The File Hunter integration is inspired by NataliaPC's MSX File Hunter Browser p
 
 Press `F3` from the Explorer menu. The menu frame is drawn immediately, then the lower-left status area shows "Retrieving File Hunter" in 80-column mode or "Retrieving..." in 40-column mode while the first page is fetched.
 
-The initial File Hunter query starts with `1`, matching the current Explorer behavior for the first catalog request. After the first page is loaded, the browser shows the File Hunter result list with the same Explorer frame, footer, page counter, and 40/80-column support used by the normal menu.
+Opening File Hunter always lists the latest releases, newest first, so the first page shows what was most recently added to File Hunter. The list is refreshed from the server every time you press `F3`, so returning to File Hunter never leaves you on the results of an earlier search. After the first page is loaded, the browser shows the File Hunter result list with the same Explorer frame, footer, page counter, and 40/80-column support used by the normal menu.
 
 ### File Hunter list screen
 

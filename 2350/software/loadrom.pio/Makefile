@@ -9,7 +9,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.73
+VERSION ?= v2.74
 
 # Paths
 PICO_DIR := pico/loadrom
@@ -18,6 +18,11 @@ PICO_CONFIG := $(PICO_BUILD)/CMakeCache.txt
 OPL4_DIR := pico/opl4
 OPL4_BUILD := $(OPL4_DIR)/build
 OPL4_CONFIG := $(OPL4_BUILD)/CMakeCache.txt
+# Second OPL4 payload: same sources, generated at 22.05 kHz (one chip sample per
+# two native sample periods) for high-polyphony songs that exceed the 44.1 kHz
+# real-time budget. Selected with the tool's --22khz option.
+OPL4_22K_BUILD := $(OPL4_DIR)/build22k
+OPL4_22K_CONFIG := $(OPL4_22K_BUILD)/CMakeCache.txt
 MSXAUDIO_DIR := pico/msxaudio
 MSXAUDIO_BUILD := $(MSXAUDIO_DIR)/build
 MSXAUDIO_CONFIG := $(MSXAUDIO_BUILD)/CMakeCache.txt
@@ -41,9 +46,9 @@ CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CM
 # Make options
 MAKE ?= make
 
-.PHONY: all bios updater firmware opl4 msxaudio tool clean
+.PHONY: all bios updater firmware opl4 opl4_22k msxaudio tool clean
 
-all: bios updater firmware opl4 msxaudio tool
+all: bios updater firmware opl4 opl4_22k msxaudio tool
 
 bios:
 	@echo "Building WiFi BIOS ROM"
@@ -63,6 +68,13 @@ opl4: $(OPL4_CONFIG)
 $(OPL4_CONFIG):
 	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(OPL4_DIR)" -B "$(OPL4_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
+opl4_22k: $(OPL4_22K_CONFIG)
+	@echo "Building standalone OPL4 firmware (22.05 kHz)"
+	@$(CMAKE) --build "$(OPL4_22K_BUILD)"
+
+$(OPL4_22K_CONFIG):
+	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(OPL4_DIR)" -B "$(OPL4_22K_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) -DOPL4_TARGET_NAME=opl4_22k -DOPL4_SAMPLE_RATE=22050 -DOPL4_OUTPUT_STEP=2
+
 msxaudio: $(MSXAUDIO_CONFIG)
 	@echo "Building standalone MSX-AUDIO firmware"
 	@$(CMAKE) --build "$(MSXAUDIO_BUILD)"
@@ -70,7 +82,7 @@ msxaudio: $(MSXAUDIO_CONFIG)
 $(MSXAUDIO_CONFIG):
 	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(MSXAUDIO_DIR)" -B "$(MSXAUDIO_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
-tool: bios opl4 msxaudio
+tool: bios opl4 opl4_22k msxaudio
 	@echo "Building PC tool"
 	@"$(MAKE)" -C "$(TOOL_DIR)" VERSION=$(VERSION)
 

@@ -29,6 +29,7 @@
 #include "esp8266p_rom.h"
 #include "fmpac_bios.h"
 #include "opl4_fw.h"
+#include "opl4_fw_22k.h"
 #include "yrw801_rom.h"
 #include "msxaudio_fw.h"
 #include "msxaudio_bios.h"
@@ -427,6 +428,8 @@ static void print_usage(const char *prog_name) {
     printf("  -4, --opl4         Build UF2 with the standalone OPL4 / YMF278B / MoonSound cartridge firmware (2MB YRW801-M ROM + 2MB PCM sample RAM)\n");
     printf("      --opl4-limit   (with -4) Enable the adaptive PCM voice limiter: sheds PCM voices on extreme-polyphony songs to avoid audio underrun\n");
     printf("      --lowclock     (with -4) Build an OPL4 image that runs the RP2350 at 282 MHz instead of the default 300 MHz\n");
+    printf("      --22khz        (with -4) Build an OPL4 image that renders at 22050 Hz instead of 44100 Hz: halves the CPU cost so\n");
+    printf("                     very dense songs play without dropouts, at the cost of a duller high end\n");
     printf("  -a, --msx-audio    Build UF2 with the standalone MSX-AUDIO / Y8950 cartridge firmware (MSX-Audio BIOS + 256KB ADPCM sample RAM)\n");
     printf("      --4mhz         (with -a) Clock the emulated Y8950 at 4 MHz instead of the standard 3.579545 MHz\n");
     printf("  -w, --wifi         Enable ESP-01 WiFi support for Sunrise IDE Nextor modes (-s1/-m1/-s2/-m2 only)\n");
@@ -613,6 +616,7 @@ int main(int argc, char *argv[])
     bool use_opl4 = false;
     bool opl4_limit = false;
     bool opl4_lowclock = false;
+    bool opl4_22khz = false;
     bool use_msx_audio = false;
     bool msx_audio_4mhz = false;
     bool use_wifi = false;
@@ -647,6 +651,8 @@ int main(int argc, char *argv[])
             opl4_limit = true;
         } else if (strcmp(argv[i], "--lowclock") == 0) {
             opl4_lowclock = true;
+        } else if (strcmp(argv[i], "--22khz") == 0) {
+            opl4_22khz = true;
         } else if ((strcmp(argv[i], "-a") == 0) || (strcmp(argv[i], "--msx-audio") == 0)) {
             use_msx_audio = true;
         } else if (strcmp(argv[i], "--4mhz") == 0) {
@@ -698,6 +704,10 @@ int main(int argc, char *argv[])
     }
     if (opl4_lowclock && !use_opl4) {
         printf("Option --lowclock requires -4/--opl4.\n");
+        return 1;
+    }
+    if (opl4_22khz && !use_opl4) {
+        printf("Option --22khz requires -4/--opl4.\n");
         return 1;
     }
     if (use_opl4 && use_msx_audio) {
@@ -824,8 +834,8 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        const uint8_t *fw_data = ___pico_opl4_dist_opl4_bin;
-        const size_t fw_size = sizeof(___pico_opl4_dist_opl4_bin);
+        const uint8_t *fw_data = opl4_22khz ? ___pico_opl4_dist_opl4_22k_bin : ___pico_opl4_dist_opl4_bin;
+        const size_t fw_size = opl4_22khz ? sizeof(___pico_opl4_dist_opl4_22k_bin) : sizeof(___pico_opl4_dist_opl4_bin);
         const uint8_t *yrw_data = ___resources_YRW801_M___Yamaha___1993_rom;
         const size_t yrw_size = (size_t)___resources_YRW801_M___Yamaha___1993_rom_len;
 
@@ -841,7 +851,7 @@ int main(int argc, char *argv[])
         printf("Mode: OPL4 / YMF278B / MoonSound (dedicated cartridge)\n");
         printf("Firmware Size: %zu bytes\n", fw_size);
         printf("YRW801-M ROM Size: %zu bytes\n", yrw_size);
-        printf("OPL4 sample rate: 44100 Hz\n");
+        printf("OPL4 sample rate: %s\n", opl4_22khz ? "22050 Hz" : "44100 Hz");
         printf("OPL4 RP2350 clock: %s\n", opl4_lowclock ? "282 MHz" : "300 MHz");
         printf("Adaptive voice limiter: %s\n", opl4_limit ? "ON (reduced peak polyphony)" : "OFF (full fidelity)");
         printf("UF2 Output: %s\n", output_filename);

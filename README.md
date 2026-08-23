@@ -56,8 +56,8 @@ If you find any issues, have questions, or want to contribute, please open an is
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
 - [MSX PicoVerse 2350 Dual PSG Implementation](/docs/msx-picoverse-2350-dualpsg.md)
 - [MSX PicoVerse 2350 MSX-MUSIC/FM-PAC Implementation](/docs/msx-picoverse-2350-fmpac.md)
-- [MSX PicoVerse 2350 OPL4 / YMF278B / MoonSound Implementation](/docs/msx-picoverse-2350-opl4.md)
-- [MSX PicoVerse 2350 MSX-AUDIO / Y8950 Implementation](/docs/msx-picoverse-2350-msx-audio.md)
+- [MSX PicoVerse 2350 50/60Hz CPU Speed Implementation](/docs/msx-picoverse-2350-50-60hz.md) 
+- [MSX PicoVerse 2350 CPU Speed Implementation](/docs/msx-picoverse-2350-cpu-speed.md)
 - [MSX PicoVerse 2350 Yamanooto Implementation](/docs/msx-picoverse-2350-yamanooto.md)
 - [MSX PicoVerse 2350 MegaRAM Implementation](/docs/msx-picoverse-2350-megaram.md)
 - [MSX PicoVerse 2350 WAVEGAME Protocol and Support](/docs/msx-picoverse-2350-wavegame.md)
@@ -325,9 +325,11 @@ Those projects remain copyright by Oduvaldo Pavan Junior and their respective co
 
 **The per-ROM 50/60 Hz (VDP frequency) feature** in PicoVerse 2350 Explorer was implemented with reference to the `50-60hz` project by sdsnatcher73, which demonstrates how to switch the V9938/V9958 VDP line frequency (Register #9, PAL/NTSC bit) reliably on MSX without corrupting the screen. That project is licensed under the Apache License 2.0 and could not have been created without the help of gdx, Grauw, and NYRIKKI, as credited by its author. The application technique was further refined after studying the strategy used by the **Carnivore2** cartridge boot menu (`BOOTCMFC.ASM`, by the RBSC group): using the BIOS `WRTVDP` routine (`0x0047`) so the R9 change also updates the `RG9SAV` shadow at `0xFFE8` for better game compatibility, and restricting the frequency change to MSX2 and later machines. Only the publicly available Carnivore2 technique was used as a reference. PicoVerse keeps its own RP2350 cartridge-side implementation (a per-ROM option persisted in `.PVC` files and applied by injecting a small VDP R9 write into the launched game's cartridge INIT), while gratefully acknowledging sdsnatcher73's and RBSC's reference work. Reference repositories: https://github.com/sdsnatcher73/50-60hz and https://github.com/RBSC/Carnivore2
 
+**The per-ROM CPU speed feature** in PicoVerse 2350 Explorer was implemented with reference to two public MSX projects. `Z80-R800` by GDX (https://github.com/gdx-msx/Z80-R800) provides MSX-DOS/BASIC commands that switch the MSX turbo R CPU mode and demonstrates the `CHGCPU` (`#0180`) call convention along with the MSXVER check used to detect a turbo R. `msx-turbo` by Papipapito (https://github.com/Papipapito/msx-turbo), licensed under the MIT License, is a command-line 3.58/5.37 MHz switch for Panasonic MSX2+ machines and documents the switched-I/O device 8 protocol on ports `#40`/`#41` and its polarity. The port and BIOS definitions were cross-checked against the MSX Assembly Page (https://map.grauw.nl). PicoVerse keeps its own RP2350 cartridge-side implementation (a per-ROM option persisted in `.PVC` files and applied by injecting the switch into the launched game's cartridge INIT), while gratefully acknowledging GDX's and Papipapito's reference work.
+
 ## Feedback & Community
 
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.
 
 Author: Cristiano Goncalves
-Last updated: 07/26/2026
+Last updated: 08/22/2026

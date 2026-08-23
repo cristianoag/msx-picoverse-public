@@ -75,6 +75,9 @@
 #define VDP_FREQ_DEFAULT 0
 #define VDP_FREQ_60HZ 1
 #define VDP_FREQ_50HZ 2
+#define CPU_MODE_DEFAULT 0
+#define CPU_MODE_TURBO 1
+#define CPU_MODE_R800 2
 // Per-ROM VDP frequency load read-back byte (Pico -> MSX). Sits in the free gap
 // between the SD partition info buffer (0xBF80..0xBF9F) and the chip-id buffer
 // (0xBFAF..0xBFBF). The save channel reuses query buffer byte 7.
@@ -83,6 +86,9 @@
 // probes the module, so the menu only has to read this byte.
 #define CTRL_NET_STATUS 0xBFA1
 #define NET_STATUS_ONLINE 1
+// Per-ROM CPU mode load read-back byte (Pico -> MSX), next free byte after
+// CTRL_NET_STATUS. The save channel reuses query buffer byte 8.
+#define CTRL_CPU_MODE 0xBFA2
 #define MP3_CTRL_BASE      0xBFE0
 #define MP3_CTRL_CMD       (MP3_CTRL_BASE + 0)
 #define MP3_CTRL_STATUS    (MP3_CTRL_BASE + 1)
