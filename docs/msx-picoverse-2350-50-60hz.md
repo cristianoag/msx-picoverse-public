@@ -150,9 +150,9 @@ already initialized.
 
 ## 7. The solution: Pico-injected INIT stub
 
-When a regular game ROM with a non-default frequency is launched, the Pico **patches the game's
-cartridge header** (in the cached copy it serves at `0x4000`) so that the ROM's `INIT` vector points
-to a tiny stub. The stub writes VDP R9 directly, then jumps to the game's original `INIT`.
+When a regular game ROM with a non-default frequency is launched, the Pico **patches the cached ROM
+image** it serves so that the ROM's `INIT` vector points to a tiny stub. The stub writes VDP R9 and
+its BIOS shadow, then jumps to the game's original `INIT`.
 
 An MSX ROM header is 16 bytes:
 
@@ -165,44 +165,102 @@ An MSX ROM header is 16 bytes:
 10..15 reserved    ┘
 ```
 
-The 9-byte stub is written into the unused header bytes (`4..12`), and the INIT vector (`2..3`) is
-repointed to `0x4004`:
+The stub itself is:
 
 ```asm
-; served at 0x4004 (header offset 4)
-01 09 vv     ld  bc, vv*256+9 ; B = R9 value (0x02 = 50Hz, 0x00 = 60Hz), C = register 9
-CD 47 00     call 0047h       ; BIOS WRTVDP: write R9 and update RG9SAV (0xFFE8)
-C3 ll hh     jp  <orig_init>  ; continue into the game's real INIT
+3A E8 FF     ld  a,(0FFE8h)    ; RG9SAV, the BIOS R9 shadow (current value)
+CB CF        set 1,a           ; 50Hz/PAL   (CB 8F = res 1,a -> 60Hz/NTSC)
+47           ld  b,a           ; B = value
+0E 09        ld  c,9           ; C = register 9
+CD 47 00     call 0047h        ; WRTVDP: applies R9 and updates RG9SAV
+C3 ll hh     jp  <orig_init>   ; continue into the game's real INIT
 ```
 
-Using the BIOS `WRTVDP` routine (`0x0047`) — the same approach as the Carnivore2 boot menu — rather
-than a raw `out (0x99)` port write is deliberate: on MSX2 `WRTVDP` writes VDP register 9 **and**
-updates the BIOS R9 shadow `RG9SAV` at `0xFFE8`. Games that later reload R9 from that shadow through a
-BIOS screen call therefore keep the requested refresh mode. The stub runs as the cartridge `INIT`
-with the BIOS in page 0, so the direct `call 0047h` is valid.
+Only **bit 1** is changed; every other R9 bit (line count, interlace, display control) is carried
+over from the current shadow. This mirrors what the Carnivore2 boot menu does.
 
-Because the stub runs as the cartridge `INIT` — after the BIOS has finished initializing the VDP —
-the requested refresh mode is active by the time the game starts.
+### Why the BIOS `WRTVDP` entry is used
 
-### Sharing the header with the CPU speed option
+On MSX2 `WRTVDP` writes the port itself only for registers 0..7; for every register `>= 8` — which
+includes R9 — it forwards the call to the **SUB-ROM**:
+
+```asm
+061D  cp   8
+061F  jr   c,<direct port write>
+0621  push ix
+0623  ld   ix,#012D
+0627  jr   #0644          ; -> jp #0295 -> EXTROM: ld iy,(EXBRSA) / call CALSLT
+```
+
+That SUB-ROM path performs the full, machine-correct update of both the VDP register and its
+`RG9SAV` shadow. Explorer v2.46 instead wrote port `#99` directly and poked `RG9SAV` by hand; that
+is sufficient in an emulator but had **no effect on real hardware** (verified on a Panasonic
+FS-A1FX and a Philips NMS 8245), so v2.47 returns to the BIOS entry.
+
+A cartridge `INIT` is entered with the BIOS in page 0, so the `call 0047h` is valid there. The
+Carnivore2 boot menu applies the refresh mode from its own pre-start code the same way.
+
+> **Historical note.** The v2.46 notes claimed `WRTVDP` could not be called from a cartridge `INIT`.
+> That was based on a faulty experiment which used `CB CE`/`CB 8E` (`SET`/`RES 1,(HL)`) with an
+> uninitialised `HL` instead of `CB CF`/`CB 8F` (`SET`/`RES 1,A`), so the value passed to `WRTVDP`
+> was never actually modified and the call appeared inert. The genuine cause of the v2.45 boot
+> failure was the corrupted cartridge header described below.
+
+### Why `RG9SAV` matters
+
+Writing the VDP register alone is not enough: the BIOS reloads R9 from its shadow `RG9SAV`
+(`0xFFE8`) whenever a screen call goes through it, so a stub that only touched the port had the
+requested mode reverted within a couple of seconds of the game starting. `WRTVDP` updates the
+shadow as part of the same call.
+
+### Where the stub is placed
+
+The 14-byte frequency stub (longer when a CPU option is combined with it) does not fit the 12
+reserved ROM-header bytes. More importantly, those bytes cannot safely contain executable code:
+offsets 4..9 are the `STATEMENT`, `DEVICE` and `TEXT` words, and unused fields must remain zero.
+The first v2.46 split fallback violated this rule; on a real Panasonic FS-A1FX its nonzero `TEXT`
+word was treated as a tokenized BASIC program pointer, so King's Valley II fell through to the MSX
+logo/BASIC screen.
+
+`apply_boot_patches()` therefore uses only header-safe outcomes:
+
+1. **One padding run** — the whole stub is parked in a `0x00`/`0xFF` run and the `INIT` word points
+   straight at it. Header offsets 4..15 remain byte-for-byte unchanged.
+2. **Two padding runs** — for frequency-only fallback, an 8-byte head loads the R9 value, updates
+   `RG9SAV`, and jumps to a separate 9-byte tail. The tail performs both VDP port writes and jumps to
+   the original INIT. The ranges are explicitly checked for overlap. King's Valley II uses image
+   offsets `0x1948` and `0x1DC8`.
+3. **No safe placement** — the ROM is left untouched. The requested frequency is not applied, but
+   selecting it cannot prevent the game from booting.
+
+`find_boot_stub_slot()` keeps the **largest** qualifying run of `0x00`/`0xFF` and places the stub at
+its top, because the largest run is almost always genuine trailing padding rather than a short gap
+between data tables the game reads.
+
+### The relocation window
+
+The stub must be reachable **when the BIOS calls `INIT`**, and at that moment the BIOS has the
+cartridge enabled in **page 1 only** (`0x4000`..`0x7FFF`). Page 2 still holds RAM until the ROM
+enables its own slot there, which games do from their own `INIT` — King's Valley II calls `ENASLT`
+with `H=0x80` for exactly that. A stub parked in the page-2 half of the image therefore never runs
+correctly.
+
+So the search window is:
+
+| Mapper | Window | Why |
+|---|---|---|
+| ASCII8 | first 8 KB | resets all four 8 KB windows to block 0, so only image `0x0000`..`0x1FFF` is reachable |
+| plain 16/32 KB, linear 48 KB, Konami, Konami-SCC, ASCII16 | first 16 KB | initial blocks are sequential, so image `0x0000`..`0x3FFF` is at `0x4000`..`0x7FFF` |
+
+It is selected at launch time in `main()` (`boot_stub_search_limit`) next to the other launch flags.
+
+### Sharing the stub with the CPU speed option
 
 Since Explorer v2.45 the same mechanism also carries the per-ROM **CPU** option (Panasonic 5.37 MHz
-turbo / turbo R R800). The header only offers 12 writable bytes, which is not enough for both
-stubs, so the builder in `apply_boot_patches()` concatenates the selected fragments and then decides
-where to put the result:
-
-- **Fits in 12 bytes** (frequency alone, 9 bytes) — written straight into header bytes `4..`.
-- **Larger than 12 bytes** (any CPU option, with or without the frequency; up to 23 bytes) — parked
-  in a run of `0x00`/`0xFF` padding found inside the ROM's block 0 (`find_boot_stub_slot()`), with a
-  3-byte `jp <stub>` trampoline left in the header. The search runs backwards and takes the top of
-  the highest qualifying run, so the stub lands in the trailing padding of block 0 whenever there is any.
-- **No padding run available** — the CPU switch is dropped and the frequency-only stub is used,
-  because that one always fits the header.
-
-Only the first 8 KB of the cached image is searched: block 0 is what sits at `0x4000..0x5FFF` at
-INIT time for every supported mapper (ASCII8 resets all four 8 KB windows to block 0, so its image
-offsets `0x2000..0x3FFF` are not reachable at boot), and that is also what the `0x4000`-relative
-stub address assumes.
+turbo / turbo R R800), appended to the frequency fragment by `build_boot_stub()`. `R800` uses
+`call 0180h` (CHGCPU); that is a plain main-ROM entry with no SUB-ROM involvement, so it remains a
+direct call. Since v2.46 the CPU option is only applied when the combined stub can be parked in one
+run (outcome 1); the two-cave fallback drops it.
 
 ### Where it is applied
 
@@ -296,7 +354,10 @@ gratefully acknowledging sdsnatcher73's reference work and the Apache-2.0 licens
 project.
 
 The application technique was further refined after studying the **Carnivore2** boot menu
-(`BOOTCMFC.ASM`, by RBSC): using the BIOS `WRTVDP` routine so the R9 change also updates the
-`RG9SAV` shadow for better game compatibility, and restricting the frequency change to MSX2+
-machines. Carnivore2 is developed by the RBSC group; only its publicly available technique was used
+(`BOOTCMFC.ASM`, by RBSC): keeping the BIOS R9 shadow `RG9SAV` in step with the register so the
+change survives a later BIOS screen call, and restricting the frequency change to MSX2+ machines.
+Explorer v2.41 first did this by calling the BIOS `WRTVDP` routine. v2.46 briefly replaced it with a
+direct port write, which proved ineffective on real hardware, so since v2.47 the stub is back to
+toggling only bit 1 of `RG9SAV` and applying it through `WRTVDP`, as Carnivore2 does.
+Carnivore2 is developed by the RBSC group; only its publicly available technique was used
 as a reference for the PicoVerse implementation.

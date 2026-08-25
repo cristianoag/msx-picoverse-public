@@ -721,6 +721,7 @@ static volatile uint8_t ctrl_vdp_frequency = VDP_FREQ_DEFAULT; // per-ROM VDP 50
 static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the launched game's INIT (regular game mappers only)
 static volatile uint8_t ctrl_cpu_mode = CPU_MODE_DEFAULT; // per-ROM CPU speed option (0=default,1=turbo,2=R800)
 static volatile uint8_t cpu_mode_launch = CPU_MODE_DEFAULT; // CPU speed to inject into the launched game's INIT (regular game mappers only)
+static volatile uint32_t boot_stub_search_limit = 8192u; // image bytes reachable at 0x4000 when the launched ROM's INIT runs
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
 static char pico_chip_id[CTRL_CHIP_ID_SIZE] = "0000000000000000";
 static bool wavegame_active = false;
@@ -3490,29 +3491,41 @@ static bool fh_prepare_list_region(void)
 // small stub that applies the 50/60Hz and CPU speed options before jumping to the
 // original entry point. The menu cannot do this itself because the warm RST 00h
 // reset that boots the ROM re-initialises VDP R9 and returns the turbo R to Z80
-// mode. The stub runs as the cartridge INIT with the BIOS in page 0, so direct
-// calls to the BIOS entries below are valid.
+// mode. The stub runs as the cartridge INIT with the BIOS in page 0, so the one
+// remaining main-ROM call below (CHGCPU) is valid.
 //
-//   50/60Hz : WRTVDP (0x0047) with B=R9 value / C=9. Using WRTVDP (as the
-//             Carnivore2 boot menu does) writes VDP register 9 *and* updates the
-//             BIOS R9 shadow RG9SAV (0xFFE8) on MSX2, so games that reload R9
-//             from the shadow via a BIOS screen call keep the requested mode.
+//   50/60Hz : VDP register 9 written directly through port 0x99 (bit 1 selects
+//             50/60Hz). The BIOS WRTVDP entry (0x0047) must NOT be used here: on
+//             MSX2 it only writes the port itself for registers 0..7 and routes
+//             every register >= 8 (so R9) to the SUB-ROM through an inter-slot
+//             EXTROM/CALSLT call (push ix / ld ix,#012D / jp #0295). Calling the
+//             SUB-ROM from a cartridge INIT, while the BIOS boot slot scan is
+//             still running, depends on boot state that is not guaranteed yet
+//             and is machine dependent -- it is what stopped patched games from
+//             booting. The direct-write stub also mirrors the value into the
+//             BIOS shadow RG9SAV (0xFFE8) so games that reload R9 from the
+//             shadow via a BIOS screen call keep the requested mode. Cartridge
+//             INIT runs inside the BIOS inter-slot call with interrupts disabled.
 //   Turbo   : Panasonic switched-I/O device 8, port 0x41 bit 0 (0 = 5.37MHz).
-//   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED).
+//   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED). That one
+//             is a plain main-ROM entry (no SUB-ROM), so it stays a direct call.
 //
 // Both CPU stubs re-verify the machine at run time (MSXVER for the turbo R, the
 // port 0x40 read-back for Panasonic) because the quick-run path replays a stored
 // option without the detail screen's machine check, and the microSD card may
 // have been configured on a different computer.
-#define BOOT_STUB_MAX 24u
-#define BOOT_STUB_HEADER_ROOM 12u // ROM header bytes 0x4004..0x400F
-// Only the first 8 KB of the image may host the relocated stub. That is block 0
-// for every cached mapper, and block 0 is what sits at 0x4000..0x5FFF at INIT
-// time in all of them: the linear 16/32 KB ROMs, Konami/Konami-SCC ({0,1,2,3}),
-// ASCII16 ({0,1}) and ASCII8 -- which resets all four 8 KB windows to block 0,
-// so for ASCII8 the image bytes at 0x2000..0x3FFF are not reachable at boot at
-// all and a stub parked there would never execute.
-#define BOOT_STUB_SEARCH_LIMIT 8192u
+#define BOOT_STUB_MAX 32u
+// Where the relocated stub may live inside the cached image. When the BIOS calls
+// a cartridge INIT it has the cartridge enabled in page 1 only (0x4000..0x7FFF);
+// page 2 still holds RAM until the ROM enables its own slot there, which games
+// do from their INIT (King's Valley II calls ENASLT with H=0x80 for exactly
+// that). So the stub has to live in the 16 KB seen through page 1. ASCII8 resets
+// all four 8 KB windows to block 0, so only the first 8 KB of its image is
+// reachable; every other cached mapper (plain 16/32 KB, linear 48 KB,
+// Konami/Konami-SCC {0,1,2,3} and ASCII16 {0,1}) starts with sequential blocks,
+// so image 0x0000..0x3FFF is at 0x4000..0x7FFF.
+#define BOOT_STUB_SEARCH_BLOCK0 8192u
+#define BOOT_STUB_SEARCH_PAGE1  16384u
 
 static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig_init)
 {
@@ -3520,9 +3533,18 @@ static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig
 
     if (vdp_freq_launch != VDP_FREQ_DEFAULT)
     {
-        uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
-        stub[n++] = 0x01u; stub[n++] = 0x09u; stub[n++] = r9;            // ld bc,r9*256+9
-        stub[n++] = 0xCDu; stub[n++] = 0x47u; stub[n++] = 0x00u;         // call 0047h (WRTVDP)
+        // Carnivore2's boot menu applies the refresh mode this way and is known to
+        // work on real MSX2/MSX2+ hardware: take the current RG9SAV, flip only bit 1
+        // (0 = 60Hz/NTSC, 1 = 50Hz/PAL) so every other R9 bit is preserved, and let
+        // the BIOS WRTVDP entry apply it. On MSX2 WRTVDP routes register 9 through
+        // the SUB-ROM, which performs the full machine-correct update of both the
+        // VDP register and its RG9SAV shadow -- a raw port 0x99 write does not.
+        uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu; // set/res 1,a
+        stub[n++] = 0x3Au; stub[n++] = 0xE8u; stub[n++] = 0xFFu;             // ld a,(0FFE8h) RG9SAV
+        stub[n++] = 0xCBu; stub[n++] = bitop;                                // set 1,a / res 1,a
+        stub[n++] = 0x47u;                                                   // ld b,a
+        stub[n++] = 0x0Eu; stub[n++] = 0x09u;                                // ld c,9
+        stub[n++] = 0xCDu; stub[n++] = 0x47u; stub[n++] = 0x00u;             // call 0047h WRTVDP
     }
 
     if (cpu_mode_launch == CPU_MODE_R800)
@@ -3550,17 +3572,24 @@ static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig
     return n;
 }
 
-// Finds a run of `len` padding bytes (0x00 or 0xFF) in block 0 so the stub can
-// be parked outside the 12-byte ROM header when it does not fit there. The scan
-// runs backwards and takes the top of the highest qualifying run, so the stub
-// lands in the trailing padding of block 0 whenever there is any; that is far
-// less likely to be read by the game than a zero-filled table in the middle of
-// its data. Returns 0 when no run is available; offset 0 is never a candidate
-// because the first 16 bytes are the cartridge header.
-static uint32_t __not_in_flash_func(find_boot_stub_slot)(const uint8_t *img, uint32_t limit, uint8_t len)
+// Finds a run of at least `len` padding bytes (0x00 or 0xFF) inside the mapped
+// window so the stub can be parked outside the 12-byte ROM header. The largest
+// qualifying run wins (later run on a tie) and the stub is placed at its top:
+// the largest run is the one most likely to be genuine trailing padding rather
+// than a zero-filled table the game reads. Returns 0 when no run is available;
+// offset 0 is never a candidate because the first 16 bytes are the cartridge
+// header.
+static uint32_t __not_in_flash_func(find_boot_stub_slot)(
+    const uint8_t *img,
+    uint32_t limit,
+    uint8_t len,
+    uint32_t excluded_offset,
+    uint8_t excluded_len)
 {
     if (len == 0u || limit <= (16u + (uint32_t)len)) return 0;
 
+    uint32_t best_end = 0;
+    uint32_t best_len = 0;
     uint32_t i = limit;
     while (i > 16u)
     {
@@ -3570,14 +3599,61 @@ static uint32_t __not_in_flash_func(find_boot_stub_slot)(const uint8_t *img, uin
 
         uint32_t end = i;
         while (i > 16u && img[i - 1u] == b) i--;
-        if ((end - i + 1u) >= (uint32_t)len) return end - (uint32_t)len + 1u;
+        uint32_t run = end - i + 1u;
+        if (run < (uint32_t)len) continue;
+        uint32_t candidate = end - (uint32_t)len + 1u;
+        bool overlaps_excluded = excluded_len != 0u &&
+            candidate < excluded_offset + (uint32_t)excluded_len &&
+            end >= excluded_offset;
+        if (!overlaps_excluded && run > best_len)
+        {
+            best_len = run;
+            best_end = end;
+        }
     }
-    return 0;
+    if (best_len == 0u) return 0;
+    return best_end - (uint32_t)len + 1u;
 }
 
 static void __not_in_flash_func(copy_boot_stub)(uint8_t *dst, const uint8_t *src, uint8_t len)
 {
     for (uint8_t i = 0; i < len; i++) dst[i] = src[i];
+}
+
+// The full frequency stub needs 14 bytes, including its jump to the game's INIT.
+// If no single padding run can hold it, split it across two independent caves.
+// This keeps STATEMENT / DEVICE / TEXT and all reserved header bytes zero; putting
+// executable bytes there makes TEXT nonzero, and some BIOSes then interpret it as
+// a tokenized BASIC program pointer after INIT.
+static uint16_t __not_in_flash_func(apply_split_freq_stub)(
+    uint8_t *img,
+    uint32_t limit,
+    uint16_t orig_init)
+{
+    uint32_t tail_slot = find_boot_stub_slot(img, limit, 9u, 0u, 0u);
+    if (tail_slot == 0u) return 0u;
+    uint32_t head_slot = find_boot_stub_slot(img, limit, 8u, tail_slot, 9u);
+    if (head_slot == 0u) return 0u;
+
+    uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu;   // set/res 1,a
+    uint16_t tail_addr = (uint16_t)(0x4000u + tail_slot);
+
+    img[head_slot + 0u] = 0x3Au; img[head_slot + 1u] = 0xE8u;
+    img[head_slot + 2u] = 0xFFu;                                          // ld a,(0FFE8h) RG9SAV
+    img[head_slot + 3u] = 0xCBu; img[head_slot + 4u] = bitop;             // set 1,a / res 1,a
+    img[head_slot + 5u] = 0xC3u;                                          // jp tail
+    img[head_slot + 6u] = (uint8_t)(tail_addr & 0xFFu);
+    img[head_slot + 7u] = (uint8_t)(tail_addr >> 8);
+
+    img[tail_slot + 0u] = 0x47u;                                          // ld b,a
+    img[tail_slot + 1u] = 0x0Eu; img[tail_slot + 2u] = 0x09u;             // ld c,9
+    img[tail_slot + 3u] = 0xCDu; img[tail_slot + 4u] = 0x47u;
+    img[tail_slot + 5u] = 0x00u;                                          // call 0047h WRTVDP
+    img[tail_slot + 6u] = 0xC3u;                                          // jp orig_init
+    img[tail_slot + 7u] = (uint8_t)(orig_init & 0xFFu);
+    img[tail_slot + 8u] = (uint8_t)(orig_init >> 8);
+
+    return (uint16_t)(0x4000u + head_slot);
 }
 
 static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cached_len)
@@ -3589,35 +3665,32 @@ static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cache
     if (orig_init < 0x4000u || orig_init > 0xBFFFu) return;
 
     uint8_t stub[BOOT_STUB_MAX];
-    uint8_t len = build_boot_stub(stub, orig_init);
-    uint16_t entry = 0x4004u;
+    uint16_t entry;
 
-    if (len > BOOT_STUB_HEADER_ROOM)
+    // Preferred placement: a padding run inside the page-1 window, with the INIT
+    // vector pointing straight at the stub. The cartridge header then keeps its
+    // original STATEMENT / DEVICE / TEXT words (all zero on a plain game ROM),
+    // so the BIOS and BASIC still see a well-formed INIT-only cartridge, and
+    // there is room for the safe long form of the 50/60Hz fragment.
+    uint8_t len = build_boot_stub(stub, orig_init);
+    uint32_t window = boot_stub_search_limit;
+    uint32_t limit = (cached_len < window) ? cached_len : window;
+    uint32_t slot = find_boot_stub_slot(img, limit, len, 0u, 0u);
+
+    if (slot != 0u)
     {
-        uint32_t limit = (cached_len < BOOT_STUB_SEARCH_LIMIT) ? cached_len : BOOT_STUB_SEARCH_LIMIT;
-        uint32_t slot = find_boot_stub_slot(img, limit, len);
-        if (slot == 0u)
-        {
-            // No padding run to park the full stub in: drop the CPU switch and
-            // fall back to the 50/60Hz-only stub, which always fits the header.
-            if (vdp_freq_launch == VDP_FREQ_DEFAULT) return;
-            cpu_mode_launch = CPU_MODE_DEFAULT;
-            len = build_boot_stub(stub, orig_init);
-            if (len > BOOT_STUB_HEADER_ROOM) return;
-            copy_boot_stub(&img[4], stub, len);
-        }
-        else
-        {
-            uint16_t stub_addr = (uint16_t)(0x4000u + slot);
-            copy_boot_stub(&img[slot], stub, len);
-            img[4] = 0xC3u;                                              // jp stub_addr
-            img[5] = (uint8_t)(stub_addr & 0xFFu);
-            img[6] = (uint8_t)(stub_addr >> 8);
-        }
+        copy_boot_stub(&img[slot], stub, len);
+        entry = (uint16_t)(0x4000u + slot);
     }
     else
     {
-        copy_boot_stub(&img[4], stub, len);
+        // Never place executable bytes in header fields. For frequency requests,
+        // use two smaller caves and drop the CPU switch; if even those caves are
+        // unavailable, leave the ROM untouched so it still boots normally.
+        if (vdp_freq_launch == VDP_FREQ_DEFAULT) return;
+        cpu_mode_launch = CPU_MODE_DEFAULT;
+        entry = apply_split_freq_stub(img, limit, orig_init);
+        if (entry == 0u) return;
     }
 
     img[2] = (uint8_t)(entry & 0xFFu);                                   // INIT vector -> stub
@@ -3668,7 +3741,6 @@ static inline void __not_in_flash_func(prepare_rom_source)(
             true);
         dma_channel_wait_for_finish_blocking(dma_chan);
         dma_channel_unclaim(dma_chan);
-        gpio_set_dir(PIN_WAIT, GPIO_IN);
 
         rom_cached_size = bytes_to_cache;
         // If we cached everything, we can just point to SRAM
@@ -3683,6 +3755,11 @@ static inline void __not_in_flash_func(prepare_rom_source)(
         // system ROMs so their loaders are never touched; the menu also zeroes
         // the per-ROM frequency on MSX1 (no R9), so no MSX1 guard is needed.
         apply_boot_patches(rom_sram, bytes_to_cache);
+
+        // Release /WAIT only once the cache bookkeeping and the boot patch are
+        // in place. The MSX can be stalled mid-read of the cartridge header, so
+        // releasing earlier lets that read complete against the unpatched image.
+        gpio_set_dir(PIN_WAIT, GPIO_IN);
     }
     else
     {
@@ -12266,6 +12343,11 @@ int __no_inline_not_in_flash_func(main)()
     // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
     vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
     cpu_mode_launch = system_mapper ? CPU_MODE_DEFAULT : ctrl_cpu_mode;
+    // ASCII8 (mapper 5) maps block 0 into all four 8 KB windows at reset, so only
+    // the first 8 KB of its image is reachable when INIT runs. Every other cached
+    // game mapper starts with sequential blocks from 0x4000, so the stub may be
+    // parked anywhere in the first 32 KB.
+    boot_stub_search_limit = (mapper == 5u) ? BOOT_STUB_SEARCH_BLOCK0 : BOOT_STUB_SEARCH_PAGE1;
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);

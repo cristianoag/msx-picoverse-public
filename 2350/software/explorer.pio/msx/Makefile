@@ -30,7 +30,7 @@ CCFLAGS += $(DEBUGFLAGS)
 endif
 
 # Project metadata
-VERSION ?= v2.45
+VERSION ?= v2.47
 CCDEFS = -DEXPLORER_VERSION=\"$(VERSION)\"
 
 SOURCES = menu.c menu_state.c menu_ui.c menu_input.c screen_rom.c explorer_fh.c
