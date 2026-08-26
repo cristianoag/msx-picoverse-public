@@ -224,18 +224,28 @@ logo/BASIC screen.
 
 `apply_boot_patches()` therefore uses only header-safe outcomes:
 
-1. **One padding run** — the whole stub is parked in a `0x00`/`0xFF` run and the `INIT` word points
-   straight at it. Header offsets 4..15 remain byte-for-byte unchanged.
-2. **Two padding runs** — for frequency-only fallback, an 8-byte head loads the R9 value, updates
-   `RG9SAV`, and jumps to a separate 9-byte tail. The tail performs both VDP port writes and jumps to
-   the original INIT. The ranges are explicitly checked for overlap. King's Valley II uses image
-   offsets `0x1948` and `0x1DC8`.
+1. **Chained across padding runs** — `place_boot_stub()` lays the stub into the largest available
+   runs of `0x00`/`0xFF`, splitting it across up to four of them and ending each fragment with a
+   `jp` to the next. A single large run holds the whole stub; otherwise a run as short as 4 bytes
+   still contributes (one code byte plus the jump). The `INIT` word points at the first fragment and
+   header offsets 4..15 stay byte-for-byte unchanged. Fragments are only ever cut at instruction
+   boundaries, and the CPU fragments — which contain relative `jr nz` jumps — are indivisible blocks.
+2. **Compact frequency-only fallback** — when the full stub cannot be laid out, a 9-byte form
+   (`ld bc,r9*256+9` / `call 0047h` / `jp`) is chained instead. It writes R9 outright rather than
+   preserving the register's other bits, which is safe because a cartridge `INIT` runs while the
+   BIOS still has its boot defaults loaded. The CPU option has no compact form and is dropped.
 3. **No safe placement** — the ROM is left untouched. The requested frequency is not applied, but
    selecting it cannot prevent the game from booting.
 
-`find_boot_stub_slot()` keeps the **largest** qualifying run of `0x00`/`0xFF` and places the stub at
-its top, because the largest run is almost always genuine trailing padding rather than a short gap
-between data tables the game reads.
+`find_boot_cave()` returns the **largest** remaining run each time and the stub is written at its
+top, because the largest run is almost always genuine trailing padding rather than a short gap
+between data tables the game reads. Chosen runs are checked against each other so fragments can
+never overlap.
+
+This chaining is what makes **DSK2ROM** images work. They are ASCII8, so only image block 0 is
+reachable at `INIT` time, and a packed dsk2rom block 0 may contain nothing longer than a 6-byte run
+— too small for the 14-byte stub or any two-run split, but enough once the compact form is spread
+over three runs.
 
 ### The relocation window
 
@@ -260,7 +270,7 @@ Since Explorer v2.45 the same mechanism also carries the per-ROM **CPU** option 
 turbo / turbo R R800), appended to the frequency fragment by `build_boot_stub()`. `R800` uses
 `call 0180h` (CHGCPU); that is a plain main-ROM entry with no SUB-ROM involvement, so it remains a
 direct call. Since v2.46 the CPU option is only applied when the combined stub can be parked in one
-run (outcome 1); the two-cave fallback drops it.
+run (outcome 1); the compact frequency-only fallback has no room for it.
 
 ### Where it is applied
 

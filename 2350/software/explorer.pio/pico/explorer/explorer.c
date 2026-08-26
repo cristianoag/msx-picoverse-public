@@ -3527,133 +3527,246 @@ static bool fh_prepare_list_region(void)
 #define BOOT_STUB_SEARCH_BLOCK0 8192u
 #define BOOT_STUB_SEARCH_PAGE1  16384u
 
-static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig_init)
+// The stub is emitted as a byte stream plus the offsets at which it may be cut
+// into fragments. A fragment boundary is only legal at an instruction boundary,
+// and never inside the CPU fragments, whose `jr nz` displacements would no
+// longer reach their target if the code around them were relocated.
+typedef struct {
+    uint8_t bytes[BOOT_STUB_MAX];
+    uint8_t len;
+    uint8_t cuts[BOOT_STUB_MAX];
+    uint8_t cut_count;
+} boot_stub_t;
+
+static void __not_in_flash_func(boot_stub_mark_cut)(boot_stub_t *s)
 {
-    uint8_t n = 0;
+    if (s->cut_count < BOOT_STUB_MAX) s->cuts[s->cut_count++] = s->len;
+}
+
+// Builds the INIT stub. `compact` selects a shorter frequency form used when the
+// ROM has too little padding for the full one: it writes R9 outright instead of
+// preserving the register's other bits, and carries no CPU option.
+static void __not_in_flash_func(build_boot_stub)(boot_stub_t *s, uint16_t orig_init, bool compact)
+{
+    s->len = 0;
+    s->cut_count = 0;
+    boot_stub_mark_cut(s);                                                   // a fragment may start at 0
 
     if (vdp_freq_launch != VDP_FREQ_DEFAULT)
     {
+        if (compact)
+        {
+            uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
+            s->bytes[s->len++] = 0x01u; s->bytes[s->len++] = 0x09u;
+            s->bytes[s->len++] = r9;                                         // ld bc,r9*256+9
+            boot_stub_mark_cut(s);
+            s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x47u;
+            s->bytes[s->len++] = 0x00u;                                      // call 0047h WRTVDP
+            boot_stub_mark_cut(s);
+            s->bytes[s->len++] = 0xC3u;                                      // jp orig_init
+            s->bytes[s->len++] = (uint8_t)(orig_init & 0xFFu);
+            s->bytes[s->len++] = (uint8_t)(orig_init >> 8);
+            return;
+        }
+
         // Carnivore2's boot menu applies the refresh mode this way and is known to
         // work on real MSX2/MSX2+ hardware: take the current RG9SAV, flip only bit 1
         // (0 = 60Hz/NTSC, 1 = 50Hz/PAL) so every other R9 bit is preserved, and let
         // the BIOS WRTVDP entry apply it. On MSX2 WRTVDP routes register 9 through
         // the SUB-ROM, which performs the full machine-correct update of both the
         // VDP register and its RG9SAV shadow -- a raw port 0x99 write does not.
-        uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu; // set/res 1,a
-        stub[n++] = 0x3Au; stub[n++] = 0xE8u; stub[n++] = 0xFFu;             // ld a,(0FFE8h) RG9SAV
-        stub[n++] = 0xCBu; stub[n++] = bitop;                                // set 1,a / res 1,a
-        stub[n++] = 0x47u;                                                   // ld b,a
-        stub[n++] = 0x0Eu; stub[n++] = 0x09u;                                // ld c,9
-        stub[n++] = 0xCDu; stub[n++] = 0x47u; stub[n++] = 0x00u;             // call 0047h WRTVDP
+        uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu;  // set/res 1,a
+        s->bytes[s->len++] = 0x3Au; s->bytes[s->len++] = 0xE8u;
+        s->bytes[s->len++] = 0xFFu;                                          // ld a,(0FFE8h) RG9SAV
+        boot_stub_mark_cut(s);
+        s->bytes[s->len++] = 0xCBu; s->bytes[s->len++] = bitop;              // set 1,a / res 1,a
+        boot_stub_mark_cut(s);
+        s->bytes[s->len++] = 0x47u;                                          // ld b,a
+        boot_stub_mark_cut(s);
+        s->bytes[s->len++] = 0x0Eu; s->bytes[s->len++] = 0x09u;              // ld c,9
+        boot_stub_mark_cut(s);
+        s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x47u;
+        s->bytes[s->len++] = 0x00u;                                          // call 0047h WRTVDP
+        boot_stub_mark_cut(s);
     }
 
+    // The CPU fragments below contain relative jumps, so no cut is marked inside
+    // them: each is emitted as one indivisible block.
     if (cpu_mode_launch == CPU_MODE_R800)
     {
-        stub[n++] = 0x3Au; stub[n++] = 0x2Du; stub[n++] = 0x00u;         // ld a,(002Dh) MSXVER
-        stub[n++] = 0xFEu; stub[n++] = 0x03u;                            // cp 3 (turbo R)
-        stub[n++] = 0x20u; stub[n++] = 0x05u;                            // jr nz,+5
-        stub[n++] = 0x3Eu; stub[n++] = 0x81u;                            // ld a,81h (R800 ROM + LED)
-        stub[n++] = 0xCDu; stub[n++] = 0x80u; stub[n++] = 0x01u;         // call 0180h (CHGCPU)
+        s->bytes[s->len++] = 0x3Au; s->bytes[s->len++] = 0x2Du;
+        s->bytes[s->len++] = 0x00u;                                          // ld a,(002Dh) MSXVER
+        s->bytes[s->len++] = 0xFEu; s->bytes[s->len++] = 0x03u;              // cp 3 (turbo R)
+        s->bytes[s->len++] = 0x20u; s->bytes[s->len++] = 0x05u;              // jr nz,+5
+        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x81u;              // ld a,81h (R800 ROM + LED)
+        s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x80u;
+        s->bytes[s->len++] = 0x01u;                                          // call 0180h (CHGCPU)
+        boot_stub_mark_cut(s);
     }
     else if (cpu_mode_launch == CPU_MODE_TURBO)
     {
-        stub[n++] = 0x3Eu; stub[n++] = 0x08u;                            // ld a,8 (Matsushita id)
-        stub[n++] = 0xD3u; stub[n++] = 0x40u;                            // out (40h),a
-        stub[n++] = 0xDBu; stub[n++] = 0x40u;                            // in a,(40h)
-        stub[n++] = 0xFEu; stub[n++] = 0xF7u;                            // cp ~8
-        stub[n++] = 0x20u; stub[n++] = 0x04u;                            // jr nz,+4
-        stub[n++] = 0x3Eu; stub[n++] = 0x80u;                            // ld a,80h (bit0=0 -> 5.37MHz)
-        stub[n++] = 0xD3u; stub[n++] = 0x41u;                            // out (41h),a
+        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x08u;              // ld a,8 (Matsushita id)
+        s->bytes[s->len++] = 0xD3u; s->bytes[s->len++] = 0x40u;              // out (40h),a
+        s->bytes[s->len++] = 0xDBu; s->bytes[s->len++] = 0x40u;              // in a,(40h)
+        s->bytes[s->len++] = 0xFEu; s->bytes[s->len++] = 0xF7u;              // cp ~8
+        s->bytes[s->len++] = 0x20u; s->bytes[s->len++] = 0x04u;              // jr nz,+4
+        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x80u;              // ld a,80h (bit0=0 -> 5.37MHz)
+        s->bytes[s->len++] = 0xD3u; s->bytes[s->len++] = 0x41u;              // out (41h),a
+        boot_stub_mark_cut(s);
     }
 
-    stub[n++] = 0xC3u;                                                   // jp orig_init
-    stub[n++] = (uint8_t)(orig_init & 0xFFu);
-    stub[n++] = (uint8_t)(orig_init >> 8);
-    return n;
+    s->bytes[s->len++] = 0xC3u;                                              // jp orig_init
+    s->bytes[s->len++] = (uint8_t)(orig_init & 0xFFu);
+    s->bytes[s->len++] = (uint8_t)(orig_init >> 8);
 }
 
-// Finds a run of at least `len` padding bytes (0x00 or 0xFF) inside the mapped
-// window so the stub can be parked outside the 12-byte ROM header. The largest
-// qualifying run wins (later run on a tie) and the stub is placed at its top:
-// the largest run is the one most likely to be genuine trailing padding rather
-// than a zero-filled table the game reads. Returns 0 when no run is available;
-// offset 0 is never a candidate because the first 16 bytes are the cartridge
-// header.
-static uint32_t __not_in_flash_func(find_boot_stub_slot)(
+// A single run of padding bytes chosen to host part of the stub.
+typedef struct { uint32_t off; uint32_t len; } boot_cave_t;
+
+// Up to this many padding runs may be chained together to host one stub. ROMs
+// with a single large run need one; heavily packed ROMs (dsk2rom images in
+// particular) only offer a handful of very short runs.
+#define BOOT_STUB_MAX_CAVES 4u
+
+// Finds the largest run of padding bytes (0x00 or 0xFF) inside the mapped
+// window that is at least `min_len` long and does not overlap a run already
+// chosen. The largest run wins because it is the one most likely to be genuine
+// trailing padding rather than a zero-filled table the game reads. Offsets
+// below 16 are never considered: those are the cartridge header.
+static bool __not_in_flash_func(find_boot_cave)(
     const uint8_t *img,
     uint32_t limit,
-    uint8_t len,
-    uint32_t excluded_offset,
-    uint8_t excluded_len)
+    const boot_cave_t *used,
+    uint8_t used_count,
+    uint32_t min_len,
+    boot_cave_t *out)
 {
-    if (len == 0u || limit <= (16u + (uint32_t)len)) return 0;
+    if (limit <= 16u || min_len == 0u) return false;
 
-    uint32_t best_end = 0;
+    uint32_t best_off = 0;
     uint32_t best_len = 0;
-    uint32_t i = limit;
-    while (i > 16u)
+    uint32_t i = 16u;
+
+    while (i < limit)
     {
-        i--;
         uint8_t b = img[i];
-        if (b != 0x00u && b != 0xFFu) continue;
+        if (b != 0x00u && b != 0xFFu) { i++; continue; }
 
-        uint32_t end = i;
-        while (i > 16u && img[i - 1u] == b) i--;
-        uint32_t run = end - i + 1u;
-        if (run < (uint32_t)len) continue;
-        uint32_t candidate = end - (uint32_t)len + 1u;
-        bool overlaps_excluded = excluded_len != 0u &&
-            candidate < excluded_offset + (uint32_t)excluded_len &&
-            end >= excluded_offset;
-        if (!overlaps_excluded && run > best_len)
+        uint32_t start = i;
+        while (i < limit && img[i] == b) i++;
+        uint32_t run = i - start;
+        if (run < min_len || run <= best_len) continue;
+
+        bool clash = false;
+        for (uint8_t u = 0; u < used_count; u++)
         {
-            best_len = run;
-            best_end = end;
+            if (start < used[u].off + used[u].len && used[u].off < start + run)
+            {
+                clash = true;
+                break;
+            }
         }
+        if (clash) continue;
+
+        best_off = start;
+        best_len = run;
     }
-    if (best_len == 0u) return 0;
-    return best_end - (uint32_t)len + 1u;
+
+    if (best_len == 0u) return false;
+    out->off = best_off;
+    out->len = best_len;
+    return true;
 }
 
-static void __not_in_flash_func(copy_boot_stub)(uint8_t *dst, const uint8_t *src, uint8_t len)
+// Largest legal cut offset that is greater than `pos` and no further than
+// `pos + max_take`. Returns `pos` when the fragment could not hold even one
+// whole instruction.
+static uint8_t __not_in_flash_func(boot_stub_next_cut)(const boot_stub_t *s, uint8_t pos, uint8_t max_take)
 {
-    for (uint8_t i = 0; i < len; i++) dst[i] = src[i];
+    uint8_t best = pos;
+    for (uint8_t i = 0; i < s->cut_count; i++)
+    {
+        uint8_t c = s->cuts[i];
+        if (c > pos && (uint16_t)(c - pos) <= (uint16_t)max_take && c > best) best = c;
+    }
+    return best;
 }
 
-// The full frequency stub needs 14 bytes, including its jump to the game's INIT.
-// If no single padding run can hold it, split it across two independent caves.
-// This keeps STATEMENT / DEVICE / TEXT and all reserved header bytes zero; putting
-// executable bytes there makes TEXT nonzero, and some BIOSes then interpret it as
-// a tokenized BASIC program pointer after INIT.
-static uint16_t __not_in_flash_func(apply_split_freq_stub)(
+// Places the stub into the ROM image, splitting it across as many padding runs
+// as necessary and chaining the pieces with jumps. Fragments are only ever cut
+// at instruction boundaries. Nothing is written to the cartridge header: only
+// the INIT word (bytes 2..3) is retouched by the caller, so STATEMENT / DEVICE /
+// TEXT and the reserved bytes keep their original values. Putting executable
+// bytes there makes TEXT nonzero, and some BIOSes then treat it as a tokenized
+// BASIC program pointer once INIT returns. Returns the address to point INIT at,
+// or 0 when the stub cannot be placed.
+static uint16_t __not_in_flash_func(place_boot_stub)(
     uint8_t *img,
     uint32_t limit,
-    uint16_t orig_init)
+    const boot_stub_t *s)
 {
-    uint32_t tail_slot = find_boot_stub_slot(img, limit, 9u, 0u, 0u);
-    if (tail_slot == 0u) return 0u;
-    uint32_t head_slot = find_boot_stub_slot(img, limit, 8u, tail_slot, 9u);
-    if (head_slot == 0u) return 0u;
+    if (s->len == 0u) return 0u;
 
-    uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu;   // set/res 1,a
-    uint16_t tail_addr = (uint16_t)(0x4000u + tail_slot);
+    boot_cave_t caves[BOOT_STUB_MAX_CAVES];
+    uint8_t count = 0;
 
-    img[head_slot + 0u] = 0x3Au; img[head_slot + 1u] = 0xE8u;
-    img[head_slot + 2u] = 0xFFu;                                          // ld a,(0FFE8h) RG9SAV
-    img[head_slot + 3u] = 0xCBu; img[head_slot + 4u] = bitop;             // set 1,a / res 1,a
-    img[head_slot + 5u] = 0xC3u;                                          // jp tail
-    img[head_slot + 6u] = (uint8_t)(tail_addr & 0xFFu);
-    img[head_slot + 7u] = (uint8_t)(tail_addr >> 8);
+    // A chainable run needs at least one code byte plus its 3-byte jump.
+    while (count < BOOT_STUB_MAX_CAVES)
+    {
+        boot_cave_t c;
+        if (!find_boot_cave(img, limit, caves, count, 4u, &c)) break;
+        caves[count++] = c;
+    }
+    if (count == 0u) return 0u;
 
-    img[tail_slot + 0u] = 0x47u;                                          // ld b,a
-    img[tail_slot + 1u] = 0x0Eu; img[tail_slot + 2u] = 0x09u;             // ld c,9
-    img[tail_slot + 3u] = 0xCDu; img[tail_slot + 4u] = 0x47u;
-    img[tail_slot + 5u] = 0x00u;                                          // call 0047h WRTVDP
-    img[tail_slot + 6u] = 0xC3u;                                          // jp orig_init
-    img[tail_slot + 7u] = (uint8_t)(orig_init & 0xFFu);
-    img[tail_slot + 8u] = (uint8_t)(orig_init >> 8);
+    uint8_t take[BOOT_STUB_MAX_CAVES];
+    uint32_t slot[BOOT_STUB_MAX_CAVES];
+    uint8_t used = 0;
+    uint8_t pos = 0;
 
-    return (uint16_t)(0x4000u + head_slot);
+    for (uint8_t i = 0; i < count && pos < s->len; i++)
+    {
+        uint8_t remaining = (uint8_t)(s->len - pos);
+
+        if ((uint32_t)remaining <= caves[i].len)
+        {
+            // Final fragment: the rest of the stub fits in this run.
+            slot[used] = caves[i].off + caves[i].len - (uint32_t)remaining;
+            take[used] = remaining;
+            pos = s->len;
+            used++;
+            break;
+        }
+
+        uint8_t max_take = (uint8_t)(caves[i].len - 3u);
+        uint8_t cut = boot_stub_next_cut(s, pos, max_take);
+        if (cut == pos) continue;                    // cannot hold a whole instruction
+
+        uint8_t t = (uint8_t)(cut - pos);
+        slot[used] = caves[i].off + caves[i].len - (uint32_t)(t + 3u);
+        take[used] = t;
+        pos = cut;
+        used++;
+    }
+
+    if (pos != s->len) return 0u;
+
+    uint8_t idx = 0;
+    for (uint8_t i = 0; i < used; i++)
+    {
+        for (uint8_t k = 0; k < take[i]; k++) img[slot[i] + k] = s->bytes[idx + k];
+        idx = (uint8_t)(idx + take[i]);
+
+        if (i + 1u < used)
+        {
+            uint16_t next = (uint16_t)(0x4000u + slot[i + 1u]);
+            img[slot[i] + take[i] + 0u] = 0xC3u;                     // jp next
+            img[slot[i] + take[i] + 1u] = (uint8_t)(next & 0xFFu);
+            img[slot[i] + take[i] + 2u] = (uint8_t)(next >> 8);
+        }
+    }
+
+    return (uint16_t)(0x4000u + slot[0]);
 }
 
 static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cached_len)
@@ -3664,34 +3777,28 @@ static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cache
     uint16_t orig_init = (uint16_t)img[2] | ((uint16_t)img[3] << 8);
     if (orig_init < 0x4000u || orig_init > 0xBFFFu) return;
 
-    uint8_t stub[BOOT_STUB_MAX];
-    uint16_t entry;
-
-    // Preferred placement: a padding run inside the page-1 window, with the INIT
-    // vector pointing straight at the stub. The cartridge header then keeps its
-    // original STATEMENT / DEVICE / TEXT words (all zero on a plain game ROM),
-    // so the BIOS and BASIC still see a well-formed INIT-only cartridge, and
-    // there is room for the safe long form of the 50/60Hz fragment.
-    uint8_t len = build_boot_stub(stub, orig_init);
     uint32_t window = boot_stub_search_limit;
     uint32_t limit = (cached_len < window) ? cached_len : window;
-    uint32_t slot = find_boot_stub_slot(img, limit, len, 0u, 0u);
 
-    if (slot != 0u)
+    boot_stub_t stub;
+    build_boot_stub(&stub, orig_init, false);
+    uint16_t entry = place_boot_stub(img, limit, &stub);
+
+    if (entry == 0u && vdp_freq_launch != VDP_FREQ_DEFAULT)
     {
-        copy_boot_stub(&img[slot], stub, len);
-        entry = (uint16_t)(0x4000u + slot);
-    }
-    else
-    {
-        // Never place executable bytes in header fields. For frequency requests,
-        // use two smaller caves and drop the CPU switch; if even those caves are
-        // unavailable, leave the ROM untouched so it still boots normally.
-        if (vdp_freq_launch == VDP_FREQ_DEFAULT) return;
+        // Not enough padding for the full stub. Fall back to the compact
+        // frequency-only form, which writes R9 outright instead of preserving
+        // the register's other bits. At cartridge-INIT time the BIOS still has
+        // its boot defaults loaded, so those bits are the ones we would have
+        // read back anyway. The CPU option has no compact form and is dropped.
         cpu_mode_launch = CPU_MODE_DEFAULT;
-        entry = apply_split_freq_stub(img, limit, orig_init);
-        if (entry == 0u) return;
+        build_boot_stub(&stub, orig_init, true);
+        entry = place_boot_stub(img, limit, &stub);
     }
+
+    // Leave the ROM completely untouched when nothing fits, so choosing a
+    // frequency can never stop a game from booting.
+    if (entry == 0u) return;
 
     img[2] = (uint8_t)(entry & 0xFFu);                                   // INIT vector -> stub
     img[3] = (uint8_t)(entry >> 8);
