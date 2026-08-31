@@ -41,6 +41,7 @@
 #include "pico/audio_i2s.h"
 #include "storage/sunrise_ide.h"
 #include "storage/sunrise_sd.h"
+#include "debug/audio_trace.h"
 
 // config area and buffer for the ROM data
 #define ROM_NAME_MAX    71          // Maximum size of the ROM name on the 80-column detail screen
@@ -201,13 +202,27 @@
 
 #define MSX_MUSIC_SAMPLE_RATE 44100
 #define MSX_MUSIC_CLOCK       3579545
-#define MSX_MUSIC_VOLUME_SHIFT 2
+/* Output gain applied to the raw OPLL sample. emu2413 halves the six melody
+ * slots but not the five rhythm slots, so OPLL_calc() reaches +/-27340 in
+ * practice (structural bound +/-32757, melody-only maximum +/-18500). The
+ * former 4x shift pushed that to +/-109360, more than three times what the
+ * output stage can carry, leaving the soft limiter permanently engaged on dense
+ * music: measured on the host, a nine-channel chord at maximum volume had up to
+ * 21.8% of its samples compressed by as much as 7.0 dB, heard as the FM level
+ * pumping. 56/32 (1.75x) maps the melody-mode maximum onto +/-32375 so ordinary
+ * music never reaches the knee, while loud passages keep almost exactly the peak
+ * level they had before - they were being limited down to it anyway. */
+#define MSX_MUSIC_GAIN_NUM    56
+#define MSX_MUSIC_GAIN_SHIFT  5
+/* The mirrored PSG keeps unity gain. emu2149 output is unipolar, so removing its
+ * DC pedestal (see msx_music_calc_psg_sample) already leaves the same audio
+ * amplitude the separate PSG channel carried before. */
 #define MSX_MUSIC_PSG_VOLUME_SHIFT 0
-/* Soft-knee limiter for the post-gain FM sample: below the knee the output is
- * a pure linear MSX_MUSIC_VOLUME_SHIFT gain (so normal games are unchanged);
- * above the knee, loud/dense OPLL content is smoothly compressed toward the
- * ceiling instead of hard-clipping (which produced a robotic, low-volume tone
- * on heavy arrangements like Aleste Gaiden). */
+/* Soft-knee limiter for the FM + PSG sum: below the knee the mix is bit-exact;
+ * above the knee it is smoothly compressed toward the ceiling instead of
+ * hard-clipping (which produced a robotic, low-volume tone on heavy
+ * arrangements like Aleste Gaiden). With the corrected gain this is a safety net
+ * for the rhythm-mode extreme rather than something normal music sits inside. */
 #define MSX_MUSIC_LIMIT_KNEE  24000
 #define MSX_MUSIC_LIMIT_CEIL  32767
 #define MSX_MUSIC_PORT_REG    0x7Cu
@@ -721,7 +736,6 @@ static volatile uint8_t ctrl_vdp_frequency = VDP_FREQ_DEFAULT; // per-ROM VDP 50
 static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the launched game's INIT (regular game mappers only)
 static volatile uint8_t ctrl_cpu_mode = CPU_MODE_DEFAULT; // per-ROM CPU speed option (0=default,1=turbo,2=R800)
 static volatile uint8_t cpu_mode_launch = CPU_MODE_DEFAULT; // CPU speed to inject into the launched game's INIT (regular game mappers only)
-static volatile uint32_t boot_stub_search_limit = 8192u; // image bytes reachable at 0x4000 when the launched ROM's INIT runs
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
 static char pico_chip_id[CTRL_CHIP_ID_SIZE] = "0000000000000000";
 static bool wavegame_active = false;
@@ -819,12 +833,31 @@ static void esp_link_note_traffic(void)
 }
 
 // SCC emulation state + I2S audio
-#define SCC_VOLUME_SHIFT 2  // Left-shift SCC output for volume boost (4x)
+//
+// SCC output headroom: a channel peaks at volume(15) * wave(-128) = -1920, so
+// all five channels together span +/-9600.  The old 4x shift mapped that to
+// +/-38400 and hard-clipped everything above 32767, which turned a sustained
+// loud chord into continuous buzz.  9600 * 109/32 = 32700 instead fills the
+// output range exactly without the SCC ever clipping on its own.
+#define SCC_GAIN_NUM   109
+#define SCC_GAIN_SHIFT 5
 #define SCC_AUDIO_BUFFER_SAMPLES 256
 static SCC scc_instance;
 static struct audio_buffer_pool *scc_audio_pool;
 static bool scc_audio_started = false;
 static struct audio_buffer_pool *rom_audio_handoff_pool;
+
+#if EXPLORER_AUDIO_TRACE
+// Route every SCC register write in this file through the tracer.  The wrapper
+// is defined before the macro so the call below still reaches the real
+// emulator entry point rather than recursing into itself.
+static inline void __not_in_flash_func(scc_write_traced)(SCC *scc, uint32_t adr, uint32_t val)
+{
+    atrace_note_scc_write((uint16_t)adr, (uint8_t)val);
+    SCC_write(scc, adr, val);
+}
+#define SCC_write(scc, adr, val) scc_write_traced((scc), (adr), (val))
+#endif
 
 static PSG psg_instance;
 static spin_lock_t *dual_psg_lock = NULL;
@@ -920,6 +953,7 @@ static void scc_audio_init_for_type(uint32_t scc_type);
 static inline void __not_in_flash_func(scc_audio_service_buffer)(void);
 static inline void __not_in_flash_func(msx_music_service_io)(void);
 static inline void __not_in_flash_func(msx_music_write_stereo_sample)(int16_t *samples, int index);
+static inline void msx_music_reset_filters(void);
 static inline void __not_in_flash_func(msx_music_audio_service_buffer)(void);
 static void ym2151_init(ym2151_sfg_variant_t variant);
 static void ym2151_audio_init(void);
@@ -1498,6 +1532,110 @@ static bool has_wav_extension(const char *filename) {
     return equals_ignore_case(dot + 1, "WAV");
 }
 
+// --- File timestamps ---------------------------------------------------------
+// The Pico has no battery-backed clock and the MSX does not supply the time, so
+// FatFS would stamp every file the firmware creates with a null date. A wall
+// clock is therefore seeded from the WiFi module: the "Date" header of any File
+// Hunter HTTP response carries the server's current time, and the Pico's own
+// microsecond timer keeps it running from there. Files written before any
+// network access fall back to a related file's date, or to the FAT epoch.
+
+#define FATTIME_EPOCH_1980 0x00210000u // 1980-01-01 00:00:00 in FAT encoding
+
+static bool file_clock_valid = false;
+static uint64_t file_clock_base_secs = 0; // seconds since 1970-01-01 UTC
+static uint64_t file_clock_base_us = 0;   // time_us_64() when the base was set
+
+// days_from_civil / civil_from_days - Proleptic Gregorian date <-> days since
+// 1970-01-01, using only integer arithmetic so the clock does not depend on the
+// C library's time zone handling.
+static int32_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
+    y -= (m <= 2u) ? 1 : 0;
+    int32_t era = (y >= 0 ? y : y - 399) / 400;
+    uint32_t yoe = (uint32_t)(y - era * 400);
+    uint32_t doy = (153u * (m + (m > 2u ? (uint32_t)-3 : 9u)) + 2u) / 5u + d - 1u;
+    uint32_t doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097 + (int32_t)doe - 719468;
+}
+
+static void civil_from_days(int32_t z, int32_t *y, uint32_t *m, uint32_t *d) {
+    z += 719468;
+    int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+    uint32_t doe = (uint32_t)(z - era * 146097);
+    uint32_t yoe = (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
+    uint32_t doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+    uint32_t mp = (5u * doy + 2u) / 153u;
+    *d = doy - (153u * mp + 2u) / 5u + 1u;
+    *m = mp + (mp < 10u ? 3u : (uint32_t)-9);
+    *y = (int32_t)yoe + era * 400 + ((*m <= 2u) ? 1 : 0);
+}
+
+// file_clock_set_from_fattime - Seed the wall clock from an absolute date and
+// time. Implausible values are ignored so a malformed source cannot poison it.
+static void file_clock_set_from_fattime(uint32_t fattime) {
+    uint32_t year = ((fattime >> 25) & 0x7Fu) + 1980u;
+    uint32_t month = (fattime >> 21) & 0x0Fu;
+    uint32_t day = (fattime >> 16) & 0x1Fu;
+    uint32_t hour = (fattime >> 11) & 0x1Fu;
+    uint32_t minute = (fattime >> 5) & 0x3Fu;
+    uint32_t second = (fattime & 0x1Fu) * 2u;
+
+    if (month < 1u || month > 12u || day < 1u || day > 31u ||
+        hour > 23u || minute > 59u || second > 59u) {
+        return;
+    }
+
+    int32_t days = days_from_civil((int32_t)year, month, day);
+    if (days < 0) {
+        return;
+    }
+    file_clock_base_secs = (uint64_t)days * 86400ull + hour * 3600u + minute * 60u + second;
+    file_clock_base_us = time_us_64();
+    file_clock_valid = true;
+}
+
+// file_clock_now_fattime - Current wall clock time, or 0 when it was never set.
+static uint32_t file_clock_now_fattime(void) {
+    if (!file_clock_valid) {
+        return 0u;
+    }
+    uint64_t secs = file_clock_base_secs + (time_us_64() - file_clock_base_us) / 1000000ull;
+    int32_t days = (int32_t)(secs / 86400ull);
+    uint32_t rem = (uint32_t)(secs % 86400ull);
+    int32_t year;
+    uint32_t month;
+    uint32_t day;
+
+    civil_from_days(days, &year, &month, &day);
+    if (year < 1980 || year > 2107) {
+        return 0u;
+    }
+    return ((uint32_t)(year - 1980) << 25) | (month << 21) | (day << 16) |
+           ((rem / 3600u) << 11) | (((rem % 3600u) / 60u) << 5) | ((rem % 60u) / 2u);
+}
+
+// file_write_fattime - Timestamp for a file the firmware is about to create.
+// The WiFi module's time wins, then the caller's fallback (the date of a
+// related file), then the FAT epoch. Never returns 0, which FatFS reads as
+// "no timestamp at all".
+static uint32_t file_write_fattime(uint32_t fallback) {
+    uint32_t stamp = file_clock_now_fattime();
+    if (stamp == 0u) {
+        stamp = fallback;
+    }
+    return stamp != 0u ? stamp : FATTIME_EPOCH_1980;
+}
+
+// file_download_fattime - Timestamp for a downloaded file. The date the server
+// reported for the file itself is more meaningful than the current time, so it
+// takes priority here.
+static uint32_t file_download_fattime(uint32_t reported) {
+    if (reported != 0u) {
+        return reported;
+    }
+    return file_write_fattime(0u);
+}
+
 static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_size) {
     if (!out || out_size == 0 || record_index >= full_record_count) {
         return false;
@@ -1536,6 +1674,47 @@ static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_
 
     int written = snprintf(out, out_size, "/%s.flash.PVC", rec->Name);
     return written > 0 && (size_t)written < out_size;
+}
+
+// build_rom_source_path - Return the microSD path of the ROM a record was
+// loaded from. Flash entries have no file on the card, so they have no path.
+static bool build_rom_source_path(uint16_t record_index, char *out, size_t out_size) {
+    if (!out || out_size == 0 || record_index >= full_record_count) {
+        return false;
+    }
+    ROMRecord *rec = &records[record_index];
+    if ((rec->Mapper & SOURCE_SD_FLAG) == 0 || (rec->Mapper & FOLDER_FLAG) != 0) {
+        return false;
+    }
+    if (sd_path_offsets[record_index] == 0xFFFF) {
+        return false;
+    }
+    const char *rom_path = sd_path_buffer + sd_path_offsets[record_index];
+    size_t len = strlen(rom_path);
+    if (len + 1 > out_size) {
+        return false;
+    }
+    memcpy(out, rom_path, len + 1);
+    return true;
+}
+
+// pvc_options_fattime - Timestamp for the .PVC options file of a record. When
+// the firmware has no network time the options file inherits the date of the
+// ROM it belongs to; flash entries have no file on the card, so they end up on
+// the FAT epoch.
+static uint32_t pvc_options_fattime(uint16_t record_index) {
+    if (file_clock_valid) {
+        return file_write_fattime(0u);
+    }
+    char rom_path[SD_PATH_MAX];
+    if (!build_rom_source_path(record_index, rom_path, sizeof(rom_path))) {
+        return FATTIME_EPOCH_1980;
+    }
+    FILINFO info;
+    if (f_stat(rom_path, &info) != FR_OK || info.fdate == 0) {
+        return FATTIME_EPOCH_1980;
+    }
+    return file_write_fattime(((uint32_t)info.fdate << 16) | info.ftime);
 }
 
 static uint16_t query_filtered_index(void) {
@@ -1802,7 +1981,9 @@ static void process_save_options_request(void) {
     }
 
     FIL fil;
+    fatfs_set_fattime_override(pvc_options_fattime(record_index));
     if (f_open(&fil, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+        fatfs_set_fattime_override(0u);
         return;
     }
     uint8_t data[PVC_OPTIONS_SIZE] = {
@@ -1813,6 +1994,7 @@ static void process_save_options_request(void) {
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
     FRESULT close_fr = f_close(&fil);
+    fatfs_set_fattime_override(0u);
     if (fr == FR_OK && close_fr == FR_OK && written == sizeof(data)) {
         ctrl_audio_selection = data[4];
         ctrl_psg_emulation = data[5];
@@ -1890,7 +2072,9 @@ static void process_save_last_selection_request(void) {
     }
 
     FIL fil;
+    fatfs_set_fattime_override(file_write_fattime(0u));
     if (f_open(&fil, PV_LAST_PATH, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+        fatfs_set_fattime_override(0u);
         return;
     }
     uint8_t header[PV_LAST_HEADER_SIZE] = {
@@ -1903,7 +2087,9 @@ static void process_save_last_selection_request(void) {
     if (ok) {
         ok = f_write(&fil, path, path_len, &written) == FR_OK && written == path_len;
     }
-    if (f_close(&fil) != FR_OK || !ok) {
+    FRESULT close_fr = f_close(&fil);
+    fatfs_set_fattime_override(0u);
+    if (close_fr != FR_OK || !ok) {
         return;
     }
 
@@ -2176,6 +2362,7 @@ static void sd_save_browse_partition(uint8_t selected) {
     if (!count || !sd_mount_partition(parts, count, parts[0].number)) return;
 
     FIL fil;
+    fatfs_set_fattime_override(file_write_fattime(0u));
     if (f_open(&fil, PV_CONFIG_PATH, FA_CREATE_ALWAYS | FA_WRITE) == FR_OK) {
         uint8_t data[PV_CONFIG_SIZE] = {
             PV_CONFIG_MAGIC_0, PV_CONFIG_MAGIC_1, PV_CONFIG_MAGIC_2, PV_CONFIG_MAGIC_3, selected
@@ -2184,6 +2371,7 @@ static void sd_save_browse_partition(uint8_t selected) {
         (void)f_write(&fil, data, sizeof(data), &written);
         f_close(&fil);
     }
+    fatfs_set_fattime_override(0u);
     sd_unmount_card();
 }
 
@@ -3491,317 +3679,193 @@ static bool fh_prepare_list_region(void)
 // small stub that applies the 50/60Hz and CPU speed options before jumping to the
 // original entry point. The menu cannot do this itself because the warm RST 00h
 // reset that boots the ROM re-initialises VDP R9 and returns the turbo R to Z80
-// mode. The stub runs as the cartridge INIT with the BIOS in page 0, so the one
-// remaining main-ROM call below (CHGCPU) is valid.
+// mode. The stub runs as the cartridge INIT with the BIOS in page 0, so the
+// main-ROM calls below are valid.
 //
-//   50/60Hz : VDP register 9 written directly through port 0x99 (bit 1 selects
-//             50/60Hz). The BIOS WRTVDP entry (0x0047) must NOT be used here: on
-//             MSX2 it only writes the port itself for registers 0..7 and routes
-//             every register >= 8 (so R9) to the SUB-ROM through an inter-slot
-//             EXTROM/CALSLT call (push ix / ld ix,#012D / jp #0295). Calling the
-//             SUB-ROM from a cartridge INIT, while the BIOS boot slot scan is
-//             still running, depends on boot state that is not guaranteed yet
-//             and is machine dependent -- it is what stopped patched games from
-//             booting. The direct-write stub also mirrors the value into the
-//             BIOS shadow RG9SAV (0xFFE8) so games that reload R9 from the
-//             shadow via a BIOS screen call keep the requested mode. Cartridge
-//             INIT runs inside the BIOS inter-slot call with interrupts disabled.
+//   50/60Hz : the current RG9SAV (0xFFE8) is read back, only bit 1 is flipped
+//             (0 = 60Hz/NTSC, 1 = 50Hz/PAL) so the register's other bits survive,
+//             and the BIOS WRTVDP entry (0x0047) applies it. On MSX2 WRTVDP
+//             routes register 9 through the SUB-ROM, which performs the full
+//             machine-correct update of the register and its shadow; a raw port
+//             0x99 write does not, and had no effect on real hardware. This is
+//             the sequence the Carnivore2 boot menu uses.
 //   Turbo   : Panasonic switched-I/O device 8, port 0x41 bit 0 (0 = 5.37MHz).
-//   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED). That one
-//             is a plain main-ROM entry (no SUB-ROM), so it stays a direct call.
+//   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED).
 //
-// Both CPU stubs re-verify the machine at run time (MSXVER for the turbo R, the
-// port 0x40 read-back for Panasonic) because the quick-run path replays a stored
-// option without the detail screen's machine check, and the microSD card may
-// have been configured on a different computer.
+// Both CPU fragments re-verify the machine at run time (MSXVER for the turbo R,
+// the port 0x40 read-back for Panasonic) because the quick-run path replays a
+// stored option without the detail screen's machine check, and the microSD card
+// may have been configured on a different computer.
+//
+// The stub is served by the Pico rather than hidden in the ROM's own padding.
+// Earlier releases searched the image for a run of 0x00/0xFF big enough to hold
+// the code, which fails on densely packed ROMs -- DSK2ROM images in particular,
+// whose reachable block 0 may hold nothing longer than a 6-byte run. Instead the
+// stub is now written straight over the bytes that follow the cartridge header,
+// their previous contents are kept in boot_patch_saved[], and the Pico restores
+// them the instant the MSX reads the stub's last byte. The MSX therefore sees
+// the stub only while the BIOS is calling INIT; from the game's first
+// instruction onwards the image is byte-for-byte original, so no padding is
+// needed and any ROM can be patched. This mirrors how SofaRun applies the
+// setting from outside the ROM image, adapted to a cartridge that has to survive
+// the launch reset.
 #define BOOT_STUB_MAX 32u
-// Where the relocated stub may live inside the cached image. When the BIOS calls
-// a cartridge INIT it has the cartridge enabled in page 1 only (0x4000..0x7FFF);
-// page 2 still holds RAM until the ROM enables its own slot there, which games
-// do from their INIT (King's Valley II calls ENASLT with H=0x80 for exactly
-// that). So the stub has to live in the 16 KB seen through page 1. ASCII8 resets
-// all four 8 KB windows to block 0, so only the first 8 KB of its image is
-// reachable; every other cached mapper (plain 16/32 KB, linear 48 KB,
-// Konami/Konami-SCC {0,1,2,3} and ASCII16 {0,1}) starts with sequential blocks,
-// so image 0x0000..0x3FFF is at 0x4000..0x7FFF.
-#define BOOT_STUB_SEARCH_BLOCK0 8192u
-#define BOOT_STUB_SEARCH_PAGE1  16384u
 
-// The stub is emitted as a byte stream plus the offsets at which it may be cut
-// into fragments. A fragment boundary is only legal at an instruction boundary,
-// and never inside the CPU fragments, whose `jr nz` displacements would no
-// longer reach their target if the code around them were relocated.
-typedef struct {
-    uint8_t bytes[BOOT_STUB_MAX];
-    uint8_t len;
-    uint8_t cuts[BOOT_STUB_MAX];
-    uint8_t cut_count;
-} boot_stub_t;
+// Where the stub is written inside the image. Every cached mapper has image
+// block 0 mapped at 0x4000 when the BIOS calls a page-1 INIT (ASCII8 resets all
+// four 8 KB windows to block 0; the linear, Konami/Konami-SCC and ASCII16
+// layouts all start with sequential blocks), so any offset below 8 KB is
+// reachable at 0x4000 + offset, and 0x5FF0 is not a bank-switch address for any
+// of them.
+//
+// The top of that 8 KB is used rather than the bytes just after the header.
+// Offset 0x10 is the conventional cartridge entry-point area -- on a disk ROM,
+// including everything DSK2ROM produces, it holds the driver jump table
+// (INIHRD / INIENV / DRIVES / DSKIO / ...). The stub is only visible between
+// being installed and the BIOS calling INIT, but during that window the BIOS may
+// call one of those entries, which would run stub bytes as a driver routine.
+// Nothing calls into the top of block 0 that early.
+// The stub must lie wholly inside image block 0 (the first 8 KB). ASCII8 maps
+// block 0 into every 8 KB window at reset, so image offset 0x2000 is not what
+// follows 0x1FFF at the bus -- a stub straddling that boundary would run off
+// into the wrong bytes. It is therefore anchored to end exactly at 0x2000,
+// which also keeps it as far from the header entry points as block 0 allows.
+#define BOOT_STUB_BLOCK0_END      0x2000u
+#define BOOT_STUB_FALLBACK_OFFSET 16u
 
-static void __not_in_flash_func(boot_stub_mark_cut)(boot_stub_t *s)
+// Live state for the restore. `boot_patch_trigger_rel` is the image offset of the
+// stub's final byte; read_rom_byte() compares against it on every cartridge read,
+// so it is set to BOOT_PATCH_TRIGGER_OFF (an offset no read can produce) whenever
+// no restore is pending.
+#define BOOT_PATCH_TRIGGER_OFF 0xFFFFFFFFu
+static volatile uint32_t boot_patch_trigger_rel = BOOT_PATCH_TRIGGER_OFF;
+static uint8_t boot_patch_saved[BOOT_STUB_MAX];  // bytes the stub overwrote
+static uint8_t boot_patch_saved_len = 0;
+static uint8_t boot_patch_saved_init[2];         // original INIT vector
+static uint8_t *boot_patch_image = NULL;         // writable cache the stub lives in
+static uint32_t boot_patch_offset = 0;           // image offset the stub was written to
+
+static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig_init)
 {
-    if (s->cut_count < BOOT_STUB_MAX) s->cuts[s->cut_count++] = s->len;
-}
-
-// Builds the INIT stub. `compact` selects a shorter frequency form used when the
-// ROM has too little padding for the full one: it writes R9 outright instead of
-// preserving the register's other bits, and carries no CPU option.
-static void __not_in_flash_func(build_boot_stub)(boot_stub_t *s, uint16_t orig_init, bool compact)
-{
-    s->len = 0;
-    s->cut_count = 0;
-    boot_stub_mark_cut(s);                                                   // a fragment may start at 0
+    uint8_t n = 0;
 
     if (vdp_freq_launch != VDP_FREQ_DEFAULT)
     {
-        if (compact)
-        {
-            uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
-            s->bytes[s->len++] = 0x01u; s->bytes[s->len++] = 0x09u;
-            s->bytes[s->len++] = r9;                                         // ld bc,r9*256+9
-            boot_stub_mark_cut(s);
-            s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x47u;
-            s->bytes[s->len++] = 0x00u;                                      // call 0047h WRTVDP
-            boot_stub_mark_cut(s);
-            s->bytes[s->len++] = 0xC3u;                                      // jp orig_init
-            s->bytes[s->len++] = (uint8_t)(orig_init & 0xFFu);
-            s->bytes[s->len++] = (uint8_t)(orig_init >> 8);
-            return;
-        }
-
-        // Carnivore2's boot menu applies the refresh mode this way and is known to
-        // work on real MSX2/MSX2+ hardware: take the current RG9SAV, flip only bit 1
-        // (0 = 60Hz/NTSC, 1 = 50Hz/PAL) so every other R9 bit is preserved, and let
-        // the BIOS WRTVDP entry apply it. On MSX2 WRTVDP routes register 9 through
-        // the SUB-ROM, which performs the full machine-correct update of both the
-        // VDP register and its RG9SAV shadow -- a raw port 0x99 write does not.
-        uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu;  // set/res 1,a
-        s->bytes[s->len++] = 0x3Au; s->bytes[s->len++] = 0xE8u;
-        s->bytes[s->len++] = 0xFFu;                                          // ld a,(0FFE8h) RG9SAV
-        boot_stub_mark_cut(s);
-        s->bytes[s->len++] = 0xCBu; s->bytes[s->len++] = bitop;              // set 1,a / res 1,a
-        boot_stub_mark_cut(s);
-        s->bytes[s->len++] = 0x47u;                                          // ld b,a
-        boot_stub_mark_cut(s);
-        s->bytes[s->len++] = 0x0Eu; s->bytes[s->len++] = 0x09u;              // ld c,9
-        boot_stub_mark_cut(s);
-        s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x47u;
-        s->bytes[s->len++] = 0x00u;                                          // call 0047h WRTVDP
-        boot_stub_mark_cut(s);
+        uint8_t bitop = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0xCFu : 0x8Fu; // set/res 1,a
+        stub[n++] = 0x3Au; stub[n++] = 0xE8u; stub[n++] = 0xFFu;             // ld a,(0FFE8h) RG9SAV
+        stub[n++] = 0xCBu; stub[n++] = bitop;                                // set 1,a / res 1,a
+        stub[n++] = 0x47u;                                                   // ld b,a
+        stub[n++] = 0x0Eu; stub[n++] = 0x09u;                                // ld c,9
+        stub[n++] = 0xCDu; stub[n++] = 0x47u; stub[n++] = 0x00u;             // call 0047h WRTVDP
     }
 
-    // The CPU fragments below contain relative jumps, so no cut is marked inside
-    // them: each is emitted as one indivisible block.
     if (cpu_mode_launch == CPU_MODE_R800)
     {
-        s->bytes[s->len++] = 0x3Au; s->bytes[s->len++] = 0x2Du;
-        s->bytes[s->len++] = 0x00u;                                          // ld a,(002Dh) MSXVER
-        s->bytes[s->len++] = 0xFEu; s->bytes[s->len++] = 0x03u;              // cp 3 (turbo R)
-        s->bytes[s->len++] = 0x20u; s->bytes[s->len++] = 0x05u;              // jr nz,+5
-        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x81u;              // ld a,81h (R800 ROM + LED)
-        s->bytes[s->len++] = 0xCDu; s->bytes[s->len++] = 0x80u;
-        s->bytes[s->len++] = 0x01u;                                          // call 0180h (CHGCPU)
-        boot_stub_mark_cut(s);
+        stub[n++] = 0x3Au; stub[n++] = 0x2Du; stub[n++] = 0x00u;             // ld a,(002Dh) MSXVER
+        stub[n++] = 0xFEu; stub[n++] = 0x03u;                                // cp 3 (turbo R)
+        stub[n++] = 0x20u; stub[n++] = 0x05u;                                // jr nz,+5
+        stub[n++] = 0x3Eu; stub[n++] = 0x81u;                                // ld a,81h (R800 ROM + LED)
+        stub[n++] = 0xCDu; stub[n++] = 0x80u; stub[n++] = 0x01u;             // call 0180h (CHGCPU)
     }
     else if (cpu_mode_launch == CPU_MODE_TURBO)
     {
-        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x08u;              // ld a,8 (Matsushita id)
-        s->bytes[s->len++] = 0xD3u; s->bytes[s->len++] = 0x40u;              // out (40h),a
-        s->bytes[s->len++] = 0xDBu; s->bytes[s->len++] = 0x40u;              // in a,(40h)
-        s->bytes[s->len++] = 0xFEu; s->bytes[s->len++] = 0xF7u;              // cp ~8
-        s->bytes[s->len++] = 0x20u; s->bytes[s->len++] = 0x04u;              // jr nz,+4
-        s->bytes[s->len++] = 0x3Eu; s->bytes[s->len++] = 0x80u;              // ld a,80h (bit0=0 -> 5.37MHz)
-        s->bytes[s->len++] = 0xD3u; s->bytes[s->len++] = 0x41u;              // out (41h),a
-        boot_stub_mark_cut(s);
+        stub[n++] = 0x3Eu; stub[n++] = 0x08u;                                // ld a,8 (Matsushita id)
+        stub[n++] = 0xD3u; stub[n++] = 0x40u;                                // out (40h),a
+        stub[n++] = 0xDBu; stub[n++] = 0x40u;                                // in a,(40h)
+        stub[n++] = 0xFEu; stub[n++] = 0xF7u;                                // cp ~8
+        stub[n++] = 0x20u; stub[n++] = 0x04u;                                // jr nz,+4
+        stub[n++] = 0x3Eu; stub[n++] = 0x80u;                                // ld a,80h (bit0=0 -> 5.37MHz)
+        stub[n++] = 0xD3u; stub[n++] = 0x41u;                                // out (41h),a
     }
 
-    s->bytes[s->len++] = 0xC3u;                                              // jp orig_init
-    s->bytes[s->len++] = (uint8_t)(orig_init & 0xFFu);
-    s->bytes[s->len++] = (uint8_t)(orig_init >> 8);
+    stub[n++] = 0xC3u;                                                       // jp orig_init
+    stub[n++] = (uint8_t)(orig_init & 0xFFu);
+    stub[n++] = (uint8_t)(orig_init >> 8);
+    return n;
 }
 
-// A single run of padding bytes chosen to host part of the stub.
-typedef struct { uint32_t off; uint32_t len; } boot_cave_t;
-
-// Up to this many padding runs may be chained together to host one stub. ROMs
-// with a single large run need one; heavily packed ROMs (dsk2rom images in
-// particular) only offer a handful of very short runs.
-#define BOOT_STUB_MAX_CAVES 4u
-
-// Finds the largest run of padding bytes (0x00 or 0xFF) inside the mapped
-// window that is at least `min_len` long and does not overlap a run already
-// chosen. The largest run wins because it is the one most likely to be genuine
-// trailing padding rather than a zero-filled table the game reads. Offsets
-// below 16 are never considered: those are the cartridge header.
-static bool __not_in_flash_func(find_boot_cave)(
-    const uint8_t *img,
-    uint32_t limit,
-    const boot_cave_t *used,
-    uint8_t used_count,
-    uint32_t min_len,
-    boot_cave_t *out)
+// Drops any pending patch without touching the image. Called at the start of a
+// launch so state left over from an earlier one can never arm a restore against
+// a cache that has since been refilled with a different ROM.
+static void __not_in_flash_func(boot_patch_disarm)(void)
 {
-    if (limit <= 16u || min_len == 0u) return false;
-
-    uint32_t best_off = 0;
-    uint32_t best_len = 0;
-    uint32_t i = 16u;
-
-    while (i < limit)
-    {
-        uint8_t b = img[i];
-        if (b != 0x00u && b != 0xFFu) { i++; continue; }
-
-        uint32_t start = i;
-        while (i < limit && img[i] == b) i++;
-        uint32_t run = i - start;
-        if (run < min_len || run <= best_len) continue;
-
-        bool clash = false;
-        for (uint8_t u = 0; u < used_count; u++)
-        {
-            if (start < used[u].off + used[u].len && used[u].off < start + run)
-            {
-                clash = true;
-                break;
-            }
-        }
-        if (clash) continue;
-
-        best_off = start;
-        best_len = run;
-    }
-
-    if (best_len == 0u) return false;
-    out->off = best_off;
-    out->len = best_len;
-    return true;
+    boot_patch_trigger_rel = BOOT_PATCH_TRIGGER_OFF;
+    boot_patch_image = NULL;
+    boot_patch_saved_len = 0;
 }
 
-// Largest legal cut offset that is greater than `pos` and no further than
-// `pos + max_take`. Returns `pos` when the fragment could not hold even one
-// whole instruction.
-static uint8_t __not_in_flash_func(boot_stub_next_cut)(const boot_stub_t *s, uint8_t pos, uint8_t max_take)
+// Puts the ROM image back exactly as it was: the bytes the stub overwrote and the
+// original INIT vector. Called from read_rom_byte() the moment the MSX reads the
+// stub's last byte, which is the high half of its `jp orig_init` operand -- the
+// Z80 has the whole jump by then and never reads the stub again. Restoring the
+// INIT vector too means a later soft reset re-runs the untouched game rather than
+// jumping into bytes that are no longer a stub.
+static void __not_in_flash_func(boot_patch_restore)(void)
 {
-    uint8_t best = pos;
-    for (uint8_t i = 0; i < s->cut_count; i++)
+    boot_patch_trigger_rel = BOOT_PATCH_TRIGGER_OFF;
+
+    uint8_t *img = boot_patch_image;
+    if (!img) return;
+
+    for (uint8_t i = 0; i < boot_patch_saved_len; i++)
     {
-        uint8_t c = s->cuts[i];
-        if (c > pos && (uint16_t)(c - pos) <= (uint16_t)max_take && c > best) best = c;
+        img[boot_patch_offset + i] = boot_patch_saved[i];
     }
-    return best;
-}
+    img[2] = boot_patch_saved_init[0];
+    img[3] = boot_patch_saved_init[1];
 
-// Places the stub into the ROM image, splitting it across as many padding runs
-// as necessary and chaining the pieces with jumps. Fragments are only ever cut
-// at instruction boundaries. Nothing is written to the cartridge header: only
-// the INIT word (bytes 2..3) is retouched by the caller, so STATEMENT / DEVICE /
-// TEXT and the reserved bytes keep their original values. Putting executable
-// bytes there makes TEXT nonzero, and some BIOSes then treat it as a tokenized
-// BASIC program pointer once INIT returns. Returns the address to point INIT at,
-// or 0 when the stub cannot be placed.
-static uint16_t __not_in_flash_func(place_boot_stub)(
-    uint8_t *img,
-    uint32_t limit,
-    const boot_stub_t *s)
-{
-    if (s->len == 0u) return 0u;
-
-    boot_cave_t caves[BOOT_STUB_MAX_CAVES];
-    uint8_t count = 0;
-
-    // A chainable run needs at least one code byte plus its 3-byte jump.
-    while (count < BOOT_STUB_MAX_CAVES)
-    {
-        boot_cave_t c;
-        if (!find_boot_cave(img, limit, caves, count, 4u, &c)) break;
-        caves[count++] = c;
-    }
-    if (count == 0u) return 0u;
-
-    uint8_t take[BOOT_STUB_MAX_CAVES];
-    uint32_t slot[BOOT_STUB_MAX_CAVES];
-    uint8_t used = 0;
-    uint8_t pos = 0;
-
-    for (uint8_t i = 0; i < count && pos < s->len; i++)
-    {
-        uint8_t remaining = (uint8_t)(s->len - pos);
-
-        if ((uint32_t)remaining <= caves[i].len)
-        {
-            // Final fragment: the rest of the stub fits in this run.
-            slot[used] = caves[i].off + caves[i].len - (uint32_t)remaining;
-            take[used] = remaining;
-            pos = s->len;
-            used++;
-            break;
-        }
-
-        uint8_t max_take = (uint8_t)(caves[i].len - 3u);
-        uint8_t cut = boot_stub_next_cut(s, pos, max_take);
-        if (cut == pos) continue;                    // cannot hold a whole instruction
-
-        uint8_t t = (uint8_t)(cut - pos);
-        slot[used] = caves[i].off + caves[i].len - (uint32_t)(t + 3u);
-        take[used] = t;
-        pos = cut;
-        used++;
-    }
-
-    if (pos != s->len) return 0u;
-
-    uint8_t idx = 0;
-    for (uint8_t i = 0; i < used; i++)
-    {
-        for (uint8_t k = 0; k < take[i]; k++) img[slot[i] + k] = s->bytes[idx + k];
-        idx = (uint8_t)(idx + take[i]);
-
-        if (i + 1u < used)
-        {
-            uint16_t next = (uint16_t)(0x4000u + slot[i + 1u]);
-            img[slot[i] + take[i] + 0u] = 0xC3u;                     // jp next
-            img[slot[i] + take[i] + 1u] = (uint8_t)(next & 0xFFu);
-            img[slot[i] + take[i] + 2u] = (uint8_t)(next >> 8);
-        }
-    }
-
-    return (uint16_t)(0x4000u + slot[0]);
+    boot_patch_image = NULL;
+    boot_patch_saved_len = 0;
 }
 
 static void __not_in_flash_func(apply_boot_patches)(uint8_t *img, uint32_t cached_len)
 {
+    boot_patch_disarm();
+
     if (vdp_freq_launch == VDP_FREQ_DEFAULT && cpu_mode_launch == CPU_MODE_DEFAULT) return;
     if (cached_len < 16u || img[0] != 'A' || img[1] != 'B') return;
 
     uint16_t orig_init = (uint16_t)img[2] | ((uint16_t)img[3] << 8);
-    if (orig_init < 0x4000u || orig_init > 0xBFFFu) return;
+    // The stub is served from page 1, which the BIOS only has mapped when it
+    // calls an INIT that lives there. A page-2 INIT would run with page 1 still
+    // holding RAM, so those ROMs are left alone.
+    if (orig_init < 0x4000u || orig_init > 0x7FFFu) return;
 
-    uint32_t window = boot_stub_search_limit;
-    uint32_t limit = (cached_len < window) ? cached_len : window;
-
-    boot_stub_t stub;
-    build_boot_stub(&stub, orig_init, false);
-    uint16_t entry = place_boot_stub(img, limit, &stub);
-
-    if (entry == 0u && vdp_freq_launch != VDP_FREQ_DEFAULT)
+    uint8_t stub[BOOT_STUB_MAX];
+    uint8_t len = build_boot_stub(stub, orig_init);
+    // Sit the stub against the end of block 0; fall back to just after the header
+    // on images too small to reach it.
+    uint32_t offset;
+    if (cached_len >= BOOT_STUB_BLOCK0_END)
     {
-        // Not enough padding for the full stub. Fall back to the compact
-        // frequency-only form, which writes R9 outright instead of preserving
-        // the register's other bits. At cartridge-INIT time the BIOS still has
-        // its boot defaults loaded, so those bits are the ones we would have
-        // read back anyway. The CPU option has no compact form and is dropped.
-        cpu_mode_launch = CPU_MODE_DEFAULT;
-        build_boot_stub(&stub, orig_init, true);
-        entry = place_boot_stub(img, limit, &stub);
+        offset = BOOT_STUB_BLOCK0_END - (uint32_t)len;
     }
+    else
+    {
+        offset = BOOT_STUB_FALLBACK_OFFSET;
+        if (cached_len < offset + (uint32_t)len) return;
+    }
+    uint16_t stub_addr = (uint16_t)(0x4000u + offset);
 
-    // Leave the ROM completely untouched when nothing fits, so choosing a
-    // frequency can never stop a game from booting.
-    if (entry == 0u) return;
+    // Keep what the stub is about to cover, including the INIT vector, so the
+    // image can be put back byte-for-byte once the stub has run.
+    for (uint8_t i = 0; i < len; i++)
+    {
+        boot_patch_saved[i] = img[offset + i];
+        img[offset + i] = stub[i];
+    }
+    boot_patch_saved_len = len;
+    boot_patch_saved_init[0] = img[2];
+    boot_patch_saved_init[1] = img[3];
+    boot_patch_image = img;
+    boot_patch_offset = offset;
 
-    img[2] = (uint8_t)(entry & 0xFFu);                                   // INIT vector -> stub
-    img[3] = (uint8_t)(entry >> 8);
+    img[2] = (uint8_t)(stub_addr & 0xFFu);                                   // INIT vector -> stub
+    img[3] = (uint8_t)(stub_addr >> 8);
+
+    // Arm the restore on the stub's final byte. Set last so a read racing this
+    // setup cannot see a trigger for a half-installed stub.
+    boot_patch_trigger_rel = offset + (uint32_t)len - 1u;
 }
 
 static inline void __not_in_flash_func(prepare_rom_source)(
@@ -3811,6 +3875,11 @@ static inline void __not_in_flash_func(prepare_rom_source)(
     const uint8_t **rom_base_out,
     uint32_t *available_length_out)
 {
+    // Clear any pending boot patch up front. apply_boot_patches() below is only
+    // reached on the caching path, so without this a mapper that skips caching
+    // would inherit an armed trigger from a previous launch.
+    boot_patch_disarm();
+
     const uint8_t *rom_base = rom_data + offset;
     uint32_t available_length = active_rom_size;
 
@@ -4050,7 +4119,11 @@ static void msx_pio_io_write_bus_init(void)
 
 static inline uint8_t __not_in_flash_func(read_rom_byte)(const uint8_t *rom_base, uint32_t rel)
 {
-    return (rel < rom_cached_size) ? rom_sram[rel] : rom_base[rel];
+    uint8_t value = (rel < rom_cached_size) ? rom_sram[rel] : rom_base[rel];
+    // Boot-patch restore. Normally a single compare against a sentinel that no
+    // read can match; it only fires on the stub's final byte, once per launch.
+    if (rel == boot_patch_trigger_rel) boot_patch_restore();
+    return value;
 }
 
 static inline uint16_t __not_in_flash_func(pio_build_token)(bool drive, uint8_t data)
@@ -4078,6 +4151,7 @@ static inline bool __not_in_flash_func(pio_try_get_io_write)(uint16_t *addr_out,
     uint32_t sample = pio_sm_get(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
     *addr_out = (uint16_t)(sample & 0xFFFFu);
     *data_out = (uint8_t)((sample >> 16) & 0xFFu);
+    atrace_note_io_write(*addr_out, *data_out);
     return true;
 }
 
@@ -4088,6 +4162,19 @@ static inline bool __not_in_flash_func(pio_try_get_io_read)(uint16_t *addr_out)
 
     *addr_out = (uint16_t)pio_sm_get(msx_io_bus.pio_read, msx_io_bus.sm_io_read);
     return true;
+}
+
+// Called once per audio buffer (never per sample): samples the PIO stall flags
+// that prove whether MSX bus writes were lost, then handles reporting.  Both
+// are far too slow for the per-sample path.
+static inline void audio_trace_service(void)
+{
+#if EXPLORER_AUDIO_TRACE
+    atrace_check_stalls(msx_bus.pio, msx_bus.sm_write,
+                        msx_io_bus.pio_write, msx_io_bus.sm_io_write,
+                        msx_io_bus.sm_io_read);
+    atrace_poll();
+#endif
 }
 
 static inline int16_t __not_in_flash_func(clamp_i16)(int32_t sample)
@@ -4105,6 +4192,32 @@ static inline int32_t __not_in_flash_func(scale_sample_percent_i32)(int32_t samp
 static inline int16_t __not_in_flash_func(apply_audio_volume)(int32_t sample)
 {
     return clamp_i16(scale_sample_percent_i32(sample, ctrl_audio_volume));
+}
+
+static inline int32_t __not_in_flash_func(scc_apply_gain)(int16_t raw)
+{
+    return ((int32_t)raw * SCC_GAIN_NUM) >> SCC_GAIN_SHIFT;
+}
+
+// Soft limiter for the SCC + PSG sum.  Both sources are scaled to fill the
+// output range on their own, so summing them can exceed full scale.  Hard
+// clamping that sum squares off sustained chords and is what the SCC "noise"
+// reports come down to.  Below the threshold the signal is passed through
+// untouched; above it the excess is compressed along an asymptote that
+// approaches, but never reaches, full scale, so no clamp is needed.
+#define AUDIO_LIMIT_THRESHOLD 26000
+#define AUDIO_LIMIT_KNEE      12000
+
+static inline int16_t __not_in_flash_func(soft_limit_i16)(int32_t sample)
+{
+    int32_t mag = (sample < 0) ? -sample : sample;
+    if (mag <= AUDIO_LIMIT_THRESHOLD)
+        return (int16_t)sample;
+
+    int32_t over = mag - AUDIO_LIMIT_THRESHOLD;
+    int32_t headroom = 32767 - AUDIO_LIMIT_THRESHOLD;
+    int32_t limited = AUDIO_LIMIT_THRESHOLD + (headroom * over) / (over + AUDIO_LIMIT_KNEE);
+    return (int16_t)((sample < 0) ? -limited : limited);
 }
 
 static void __not_in_flash_func(dual_psg_init)(void)
@@ -4208,7 +4321,10 @@ static inline void __not_in_flash_func(main_psg_write_ring_push)(uint8_t port, u
     uint32_t head = main_psg_write_ring_head;
     uint32_t next = (head + 1u) & MAIN_PSG_WRITE_RING_MASK;
     if (next == main_psg_write_ring_tail)
+    {
+        atrace_note_psg_drop();
         return; // ring full: drop PSG write (audio only; mapper state unaffected)
+    }
     main_psg_write_ring[head] = (uint16_t)(((uint16_t)port << 8) | data);
     __dmb();
     main_psg_write_ring_head = next;
@@ -4384,9 +4500,13 @@ static inline bool __not_in_flash_func(main_psg_calc_audible_sample_shifted)(uin
 
     uint32_t save = spin_lock_blocking(main_psg_lock);
     bool audible = main_psg_has_audible_channels_unlocked();
-    if (audible)
-        *sample = clamp_i16((int32_t)PSG_calc(&main_psg_instance) << volume_shift);
+    // Clock the emulator on every sample even when the mixer/volume state makes
+    // it inaudible. Skipping PSG_calc() freezes the tone, noise and envelope
+    // phase, so the waveform resumes mid-cycle from stale state and clicks the
+    // moment a channel becomes audible again.
+    int16_t raw = clamp_i16((int32_t)PSG_calc(&main_psg_instance) << volume_shift);
     spin_unlock(main_psg_lock, save);
+    *sample = audible ? raw : 0;
     return audible;
 }
 
@@ -4806,6 +4926,7 @@ static void __not_in_flash_func(msx_music_init)(void)
     OPLL_reset(msx_music_instance);
     OPLL_setChipType(msx_music_instance, OPLL_2413_TONE);
     OPLL_resetPatch(msx_music_instance, OPLL_2413_TONE);
+    msx_music_reset_filters();
     debug_trace("DBG music_init pio");
     msx_pio_io_bus_init();
     msx_music_ready = true;
@@ -4821,6 +4942,8 @@ static void __not_in_flash_func(msx_music_init)(void)
 static float msx_music_dc_x1 = 0.0f;   /* DC blocker previous input  */
 static float msx_music_dc_y1 = 0.0f;   /* DC blocker previous output */
 static float msx_music_lp_y1 = 0.0f;   /* low-pass previous output   */
+static float msx_music_psg_dc_x1 = 0.0f; /* mirrored-PSG DC blocker previous input  */
+static float msx_music_psg_dc_y1 = 0.0f; /* mirrored-PSG DC blocker previous output */
 #define MSX_MUSIC_DC_R   0.995f         /* DC blocker pole (~35 Hz cutoff) */
 #define MSX_MUSIC_LP_A   0.70f          /* 1-pole LPF coeff (~16 kHz cutoff) */
 
@@ -4829,6 +4952,8 @@ static inline void msx_music_reset_filters(void)
     msx_music_dc_x1 = 0.0f;
     msx_music_dc_y1 = 0.0f;
     msx_music_lp_y1 = 0.0f;
+    msx_music_psg_dc_x1 = 0.0f;
+    msx_music_psg_dc_y1 = 0.0f;
 }
 
 static inline int32_t __not_in_flash_func(msx_music_filter_sample)(int16_t in)
@@ -4858,7 +4983,7 @@ static inline int16_t __not_in_flash_func(msx_music_soft_limit)(int32_t g)
     return (int16_t)((g < 0) ? -out : out);
 }
 
-static inline int16_t __not_in_flash_func(msx_music_calc_sample)(void)
+static inline int32_t __not_in_flash_func(msx_music_calc_sample)(void)
 {
     if (!msx_music_ready)
         return 0;
@@ -4867,7 +4992,7 @@ static inline int16_t __not_in_flash_func(msx_music_calc_sample)(void)
     int16_t sample = OPLL_calc(msx_music_instance);
     spin_unlock(msx_music_lock, save);
     int32_t filtered = msx_music_filter_sample(sample);
-    return msx_music_soft_limit(filtered << MSX_MUSIC_VOLUME_SHIFT);
+    return (filtered * MSX_MUSIC_GAIN_NUM) >> MSX_MUSIC_GAIN_SHIFT;
 }
 
 static inline void __not_in_flash_func(msx_music_write_ring_push)(uint8_t port, uint8_t data)
@@ -4952,34 +5077,40 @@ static inline void __not_in_flash_func(msx_music_service_io)(void)
     }
 }
 
-static inline bool __not_in_flash_func(msx_music_calc_psg_sample)(int16_t *sample)
+static inline int32_t __not_in_flash_func(msx_music_calc_psg_sample)(void)
 {
     int16_t psg_sample = 0;
     if (!main_psg_calc_audible_sample_shifted(MSX_MUSIC_PSG_VOLUME_SHIFT, &psg_sample))
-    {
-        *sample = 0;
-        return false;
-    }
+        psg_sample = 0;
 
-    *sample = psg_sample;
-    return true;
+    /* emu2149 output is unipolar (three 0..4080 channel levels summed), so the
+     * mirrored PSG carries a DC pedestal roughly half its own amplitude. Summing
+     * that straight into the FM mix would offset the whole signal and step every
+     * time a channel starts or stops. Strip it with the same ~35 Hz blocker used
+     * on the FM side; feeding 0 while the PSG is inaudible lets the blocker
+     * relax to silence instead of cutting the mix abruptly. */
+    float x = (float)psg_sample;
+    float dc = x - msx_music_psg_dc_x1 + MSX_MUSIC_DC_R * msx_music_psg_dc_y1;
+    msx_music_psg_dc_x1 = x;
+    msx_music_psg_dc_y1 = dc;
+    return (int32_t)dc;
 }
 
 static inline void __not_in_flash_func(msx_music_write_stereo_sample)(int16_t *samples, int index)
 {
-    int16_t music = msx_music_calc_sample();
+    int32_t music = msx_music_calc_sample();
     msx_music_service_io();
-    int16_t psg = 0;
-    if (msx_music_calc_psg_sample(&psg))
-    {
-        samples[index * 2] = apply_audio_volume(music);
-        samples[index * 2 + 1] = apply_audio_volume(psg);
-        return;
-    }
+    int32_t psg = msx_music_calc_psg_sample();
 
-    music = apply_audio_volume(music);
-    samples[index * 2] = music;
-    samples[index * 2 + 1] = music;
+    /* Sum both sources into both channels, the way a real FM-PAC and the
+     * machine's own PSG both reach the MSX audio bus. The previous code routed
+     * FM to the left channel and the PSG to the right *only while the PSG had
+     * audible channels*, and sent FM to both channels otherwise, so every time a
+     * sound effect started or stopped the FM level moved by 6 dB in a mono sum
+     * and the right channel cut between two unrelated signals. */
+    int16_t mixed = apply_audio_volume(msx_music_soft_limit(music + psg));
+    samples[index * 2] = mixed;
+    samples[index * 2 + 1] = mixed;
 }
 
 static void __no_inline_not_in_flash_func(core1_msx_music_audio)(void)
@@ -6940,6 +7071,14 @@ static bool fh_http_get_url(const char *url, fh_http_body_callback_t callback, v
                         if (response_timestamp &&
                             !fh_parse_http_timestamp(fh_find_header_value(headers, "Last-Modified"), response_timestamp))
                             (void)fh_parse_http_timestamp(fh_find_header_value(headers, "Date"), response_timestamp);
+                        // Seed the firmware wall clock from the server's own
+                        // clock. Only "Date" qualifies: "Last-Modified" is the
+                        // age of the file being fetched, not the current time.
+                        {
+                            FILINFO server_now;
+                            if (fh_parse_http_timestamp(fh_find_header_value(headers, "Date"), &server_now))
+                                file_clock_set_from_fattime(((uint32_t)server_now.fdate << 16) | server_now.ftime);
+                        }
                         decoder.chunked = fh_header_value_is_chunked(fh_find_header_value(headers, "Transfer-Encoding"));
                         if (!decoder.chunked && fh_parse_header_u32(fh_find_header_value(headers, "Content-Length"), &decoder.content_remaining))
                             decoder.has_content_length = true;
@@ -7367,8 +7506,8 @@ static void fh_save_background_work(void)
             fh_save_fail("Save failed: path");
             return;
         }
-        fatfs_set_fattime_override(((uint32_t)fh_download_timestamp.fdate << 16) |
-                                   fh_download_timestamp.ftime);
+        fatfs_set_fattime_override(file_download_fattime(((uint32_t)fh_download_timestamp.fdate << 16) |
+                                                         fh_download_timestamp.ftime));
         fr = f_open(&fh_save_file, path, FA_CREATE_ALWAYS | FA_WRITE);
         if (fr != FR_OK)
         {
@@ -8471,6 +8610,33 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset, bool cach
 // -----------------------------------------------------------------------
 // Core 1 audio entry: generates SCC samples and pushes to I2S
 // -----------------------------------------------------------------------
+#if EXPLORER_AUDIO_TRACE
+// Printed alongside a trigger dump so the register state that is actually
+// producing sound can be compared against the write sequence that led to it.
+static void audio_trace_dump_state(void)
+{
+    printf("[atrace] PSG mirror: ready=%u core1_io=%u selected_reg=%u\r\n",
+           (unsigned)main_psg_ready, (unsigned)main_psg_core1_services_io,
+           (unsigned)atrace_psg_sel);
+    printf("[atrace] PSG regs:");
+    for (uint8_t r = 0; r < 16u; r++)
+        printf(" %02X", main_psg_instance.reg[r]);
+    printf("\r\n[atrace] PSG mixer=%02X volA=%02X volB=%02X volC=%02X noise=%02X envShape=%02X\r\n",
+           main_psg_instance.reg[7], main_psg_instance.reg[8], main_psg_instance.reg[9],
+           main_psg_instance.reg[10], main_psg_instance.reg[6], main_psg_instance.reg[13]);
+    printf("[atrace] SCC: active=%lu mode=%lu type=%lu base=%04lX chEnable=%02X\r\n",
+           (unsigned long)scc_instance.active, (unsigned long)scc_instance.mode,
+           (unsigned long)scc_instance.type, (unsigned long)scc_instance.base_adr,
+           (unsigned)scc_instance.ch_enable);
+    printf("[atrace] SCC freq/vol:");
+    for (int ch = 0; ch < 5; ch++)
+        printf(" ch%d=%03lX/%lu", ch, (unsigned long)scc_instance.freq[ch],
+               (unsigned long)scc_instance.volume[ch]);
+    printf("\r\n");
+    fflush(stdout);
+}
+#endif
+
 static void __no_inline_not_in_flash_func(core1_scc_audio)(void)
 {
     while (true)
@@ -8487,16 +8653,14 @@ static void __no_inline_not_in_flash_func(core1_scc_audio)(void)
         for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
         {
             main_psg_service_io();
-            int16_t raw = SCC_calc(&scc_instance);
-            int32_t boosted = (int32_t)raw << SCC_VOLUME_SHIFT;
-            if (boosted > 32767) boosted = 32767;
-            else if (boosted < -32768) boosted = -32768;
-            int16_t s = apply_audio_volume(boosted + main_psg_calc_sample());
+            int32_t scc_out = scc_apply_gain(SCC_calc(&scc_instance));
+            int16_t s = apply_audio_volume(soft_limit_i16(scc_out + main_psg_calc_sample()));
             samples[i * 2]     = s;  // left
             samples[i * 2 + 1] = s;  // right
         }
         buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
         give_audio_buffer(scc_audio_pool, buffer);
+        audio_trace_service();
     }
 }
 
@@ -8586,16 +8750,14 @@ static inline void __not_in_flash_func(scc_audio_service_buffer)(void)
     for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
     {
         main_psg_service_io();
-        int16_t raw = SCC_calc(&scc_instance);
-        int32_t boosted = (int32_t)raw << SCC_VOLUME_SHIFT;
-        if (boosted > 32767) boosted = 32767;
-        else if (boosted < -32768) boosted = -32768;
-        int16_t sample = apply_audio_volume(boosted + main_psg_calc_sample());
+        int32_t scc_out = scc_apply_gain(SCC_calc(&scc_instance));
+        int16_t sample = apply_audio_volume(soft_limit_i16(scc_out + main_psg_calc_sample()));
         samples[i * 2] = sample;
         samples[i * 2 + 1] = sample;
     }
     buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
     give_audio_buffer(scc_audio_pool, buffer);
+    audio_trace_service();
 }
 
 // -----------------------------------------------------------------------
@@ -12383,6 +12545,10 @@ int __no_inline_not_in_flash_func(main)()
 
     stdio_init_all();     // Initialize stdio
     init_pico_chip_id();
+#if EXPLORER_AUDIO_TRACE
+    atrace_init();
+    atrace_set_state_cb(audio_trace_dump_state);
+#endif
     setup_gpio();     // Initialize GPIO
 
     while (true) {
@@ -12450,11 +12616,6 @@ int __no_inline_not_in_flash_func(main)()
     // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
     vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
     cpu_mode_launch = system_mapper ? CPU_MODE_DEFAULT : ctrl_cpu_mode;
-    // ASCII8 (mapper 5) maps block 0 into all four 8 KB windows at reset, so only
-    // the first 8 KB of its image is reachable when INIT runs. Every other cached
-    // game mapper starts with sequential blocks from 0x4000, so the stub may be
-    // parked anywhere in the first 32 KB.
-    boot_stub_search_limit = (mapper == 5u) ? BOOT_STUB_SEARCH_BLOCK0 : BOOT_STUB_SEARCH_PAGE1;
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);

@@ -39,7 +39,10 @@ project(explorer C CXX ASM)
 pico_sdk_init()
 
 # Set to 1 to enable USB stdio debug output, 0 to disable. If enabled, the pico will appear as a USB CDC device when connected to a host, and printf output will be sent over USB instead of UART. Note that enabling this will prevent the use of the USB host stack, so it is not recommended for normal use.
-# I used to debug some pico crashes during development... 
+# I used to debug some pico crashes during development...
+# This also builds the SCC / PSG-mirror bus tracer (debug/audio_trace.c), which
+# records MSX I/O writes, PSG register traffic, SCC register writes and the PIO
+# FIFO stall flags into a per-core ring buffer and reports over the same CDC link.
 set(EXPLORER_USB_STDIO_DEBUG 0)
 
 # Add executable. Default name is the project name, version 0.1
@@ -55,6 +58,7 @@ set(EXPLORER_SOURCES
     audio/emu2413.c
     audio/emu2151.cpp
     audio/ymfm/ymfm_opm.cpp
+    debug/audio_trace.c
     msx_bus.pio
 )
 
@@ -96,6 +100,7 @@ endif()
 target_compile_definitions(explorer PRIVATE
     PICO_AUDIO_I2S_PIO=1
     EXPLORER_USB_STDIO_DEBUG=$<BOOL:${EXPLORER_USB_STDIO_DEBUG}>
+    EXPLORER_AUDIO_TRACE=$<BOOL:${EXPLORER_USB_STDIO_DEBUG}>
     EXPLORER_VERSION="${EXPLORER_VERSION}"
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=5000
     PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0

@@ -62,11 +62,16 @@ wait_sltsl:
 
 .program msx_write_captor
 
+; MSX_MEM_SETTLE: extra PIO cycles between observing /WR low and latching the
+; address+data bus. At 210 MHz each cycle is ~4.8 ns. Raise this if a machine's
+; slot buffers present data later than the Pico samples it.
+.define MSX_MEM_SETTLE 2
+
 .wrap_target
 wait_sltsl:
     wait 0 gpio 27            ; Wait for /SLTSL=0
     jmp pin wait_sltsl        ; If /WR=1, re-check /SLTSL
-    nop              [2]      ; Let address/data settle
+    nop  [MSX_MEM_SETTLE]     ; Let address/data settle
     mov isr, pins             ; Snapshot GPIOs
     push block                ; Send (addr+data) to CPU
     wait 1 gpio 25            ; Wait for /WR=1
@@ -91,15 +96,31 @@ wait_sltsl:
 ; jmp_pin must be configured to /WR (GPIO 25) from C code.
 ;   /WR=1 (inactive) → jump taken  → re-check /IORQ
 ;   /WR=0 (active)   → fall through → capture the write
+;
+; Data-bus timing: an I/O write never asserts /SLTSL, so on machines that gate
+; the cartridge slot data buffer the real byte appears on D0..D7 noticeably
+; later in the cycle than it does for a memory write. Latching a fixed few
+; nanoseconds after /WR falls captured whatever the undriven bus still held -
+; on a Yamaha this was the operand byte of the preceding "OUT (n),A" fetch, so
+; the sampled data equalled the port number and every mirrored PSG register
+; write was garbage.
+;
+; Instead of guessing a settling delay, re-sample continuously for as long as
+; /WR is asserted and keep the last snapshot taken before it rises. That is
+; what real I/O hardware does (it latches on the trailing edge of /WR), it is
+; correct regardless of how late a particular machine drives the bus, and it
+; adapts automatically to CPU speed (3.58 MHz, turbo or R800).
 
 .wrap_target
 wait_iorq:
     wait 0 gpio 26           ; Wait for /IORQ=0 (I/O request)
-    jmp pin wait_iorq         ; If /WR=1 (no write), re-check /IORQ
-    nop              [2]     ; Let address + data settle (3 cycles)
-    mov isr, pins            ; Snapshot all GPIOs into ISR
+    jmp pin wait_iorq        ; If /WR=1 (no write), re-check /IORQ
+resample:
+    mov isr, pins            ; Snapshot A0..A15 + D0..D7
+    jmp pin capture          ; /WR rose: ISR holds the last in-cycle sample
+    jmp resample
+capture:
     push block               ; Send (addr+data) to CPU via RX FIFO
-    wait 1 gpio 25           ; Wait for /WR=1 (write cycle ends)
 .wrap
 
 ; ===================================================================

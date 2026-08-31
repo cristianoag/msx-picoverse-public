@@ -215,78 +215,109 @@ shadow as part of the same call.
 
 ### Where the stub is placed
 
-The 14-byte frequency stub (longer when a CPU option is combined with it) does not fit the 12
-reserved ROM-header bytes. More importantly, those bytes cannot safely contain executable code:
-offsets 4..9 are the `STATEMENT`, `DEVICE` and `TEXT` words, and unused fields must remain zero.
-The first v2.46 split fallback violated this rule; on a real Panasonic FS-A1FX its nonzero `TEXT`
-word was treated as a tokenized BASIC program pointer, so King's Valley II fell through to the MSX
-logo/BASIC screen.
+The stub does not live in the ROM's own spare space. Releases up to v2.47 searched the image for a
+run of `0x00`/`0xFF` padding big enough to hold the code, chaining fragments across several runs when
+no single one was large enough. That works for most commercial ROMs but fails on densely packed ones:
+a 120-ROM sweep left 9 unpatchable, and every **DSK2ROM** image failed, because a packed dsk2rom
+block 0 may hold nothing longer than a 6-byte run.
 
-`apply_boot_patches()` therefore uses only header-safe outcomes:
+Since v2.48 the Pico simply serves the stub instead. It is written straight over whatever bytes
+occupy the chosen slot; the originals are kept in `boot_patch_saved[]` together with the original
+`INIT` vector, and the Pico puts all of them back the instant the MSX reads the stub's **last** byte:
 
-1. **Chained across padding runs** — `place_boot_stub()` lays the stub into the largest available
-   runs of `0x00`/`0xFF`, splitting it across up to four of them and ending each fragment with a
-   `jp` to the next. A single large run holds the whole stub; otherwise a run as short as 4 bytes
-   still contributes (one code byte plus the jump). The `INIT` word points at the first fragment and
-   header offsets 4..15 stay byte-for-byte unchanged. Fragments are only ever cut at instruction
-   boundaries, and the CPU fragments — which contain relative `jr nz` jumps — are indivisible blocks.
-2. **Compact frequency-only fallback** — when the full stub cannot be laid out, a 9-byte form
-   (`ld bc,r9*256+9` / `call 0047h` / `jp`) is chained instead. It writes R9 outright rather than
-   preserving the register's other bits, which is safe because a cartridge `INIT` runs while the
-   BIOS still has its boot defaults loaded. The CPU option has no compact form and is dropped.
-3. **No safe placement** — the ROM is left untouched. The requested frequency is not applied, but
-   selecting it cannot prevent the game from booting.
+```c
+static inline uint8_t read_rom_byte(const uint8_t *rom_base, uint32_t rel)
+{
+    uint8_t value = (rel < rom_cached_size) ? rom_sram[rel] : rom_base[rel];
+    if (rel == boot_patch_trigger_rel) boot_patch_restore();
+    return value;
+}
+```
 
-`find_boot_cave()` returns the **largest** remaining run each time and the stub is written at its
-top, because the largest run is almost always genuine trailing padding rather than a short gap
-between data tables the game reads. Chosen runs are checked against each other so fragments can
-never overlap.
+That last byte is the high half of the stub's `jp orig_init` operand, so the Z80 already holds the
+whole jump and never reads the stub again. The MSX therefore sees the stub only while the BIOS is
+calling `INIT`; from the game's first instruction the image is byte-for-byte original. No padding is
+required, so **any** ROM can be patched, and the CPU option no longer has to be dropped to make room.
 
-This chaining is what makes **DSK2ROM** images work. They are ASCII8, so only image block 0 is
-reachable at `INIT` time, and a packed dsk2rom block 0 may contain nothing longer than a 6-byte run
-— too small for the 14-byte stub or any two-run split, but enough once the compact form is spread
-over three runs.
+`read_rom_byte()` is the single read path shared by every cached game mapper, so hooking the restore
+there needed no changes to the individual mapper loops. The check is one compare against
+`boot_patch_trigger_rel`, which holds a sentinel offset no read can produce while no patch is
+pending.
 
-### The relocation window
+This is the same idea SofaRun uses — it applies the setting from outside the ROM image, as the last
+thing that runs before the game — adapted to a cartridge that has to survive the launch reset.
+
+#### Choosing the slot
+
+Two constraints decide where the stub goes.
+
+**It must sit wholly inside image block 0** (offset `< 0x2000`). ASCII8 maps block 0 into all four
+8 KB windows at reset, so image offset `0x2000` is *not* what follows `0x1FFF` on the bus; a stub
+straddling that boundary would run on into the wrong bytes. The stub is therefore anchored to end
+exactly at `0x2000`. With both a frequency and a CPU fragment it is 28 bytes, so it always fits.
+
+**It must avoid the conventional entry-point area.** Image offset `0x10` — the obvious spot just
+after the header — is where a disk ROM keeps its driver jump table (`INIHRD`, `INIENV`, `DRIVES`,
+`DSKIO`, ...), and that is exactly what DSK2ROM emits. `Herzog - Tecno Soft (1989) [dsk2rom]` has one
+at `0x4010`:
+
+```
+4010: jp 75E0     4013: jp 7506     4016: jp 7516     4019: jp 75D5   ...
+```
+
+The stub is only exposed between being installed and the BIOS calling `INIT`, but during that window
+the BIOS may call one of those entries, which would execute stub bytes as a driver routine. Nothing
+calls into the top of block 0 that early, so that is where the stub goes. A `BOOT_STUB_FALLBACK_OFFSET`
+of 16 is kept only for images too small to reach `0x2000`.
+
+Because the restore also puts the `INIT` vector back, a later **soft reset** re-runs the untouched
+game rather than jumping at a stub that is no longer there. The trade-off is that a manual reset boots
+at the machine default instead of re-applying the option.
+
+### The page the stub is served from
 
 The stub must be reachable **when the BIOS calls `INIT`**, and at that moment the BIOS has the
 cartridge enabled in **page 1 only** (`0x4000`..`0x7FFF`). Page 2 still holds RAM until the ROM
 enables its own slot there, which games do from their own `INIT` — King's Valley II calls `ENASLT`
-with `H=0x80` for exactly that. A stub parked in the page-2 half of the image therefore never runs
-correctly.
+with `H=0x80` for exactly that.
 
-So the search window is:
+Every cached mapper has image block 0 at `0x4000` at that point (ASCII8 resets all four 8 KB windows
+to block 0; the linear, Konami/Konami-SCC and ASCII16 layouts all start with sequential blocks), so an
+offset below 8 KB is always visible at `0x4000 + offset`, and the chosen address is never a
+bank-switch address for any of them.
 
-| Mapper | Window | Why |
-|---|---|---|
-| ASCII8 | first 8 KB | resets all four 8 KB windows to block 0, so only image `0x0000`..`0x1FFF` is reachable |
-| plain 16/32 KB, linear 48 KB, Konami, Konami-SCC, ASCII16 | first 16 KB | initial blocks are sequential, so image `0x0000`..`0x3FFF` is at `0x4000`..`0x7FFF` |
-
-It is selected at launch time in `main()` (`boot_stub_search_limit`) next to the other launch flags.
+ROMs whose `INIT` lives in page 2 are left alone, since page 1 would still be RAM when it ran. Of the
+155 ROMs on the test microSD, 154 have a page-1 `INIT`; the remaining one declares `INIT=0x0000`, so
+it has no INIT routine to redirect at all.
 
 ### Sharing the stub with the CPU speed option
 
-Since Explorer v2.45 the same mechanism also carries the per-ROM **CPU** option (Panasonic 5.37 MHz
-turbo / turbo R R800), appended to the frequency fragment by `build_boot_stub()`. `R800` uses
-`call 0180h` (CHGCPU); that is a plain main-ROM entry with no SUB-ROM involvement, so it remains a
-direct call. Since v2.46 the CPU option is only applied when the combined stub can be parked in one
-run (outcome 1); the compact frequency-only fallback has no room for it.
+The same stub carries the per-ROM **CPU** option (Panasonic 5.37 MHz turbo / turbo R R800), appended
+to the frequency fragment by `build_boot_stub()`. `R800` uses `call 0180h` (CHGCPU); that is a plain
+main-ROM entry with no SUB-ROM involvement, so it remains a direct call. Since v2.48 the two options
+are always applied together — there is no longer a fallback that has to drop the CPU switch.
 
 ### Where it is applied
 
 The patch lives in `prepare_rom_source()` (the shared function that DMA-caches a ROM's leading
-window into `rom_sram`), immediately after the cache is populated:
+window into `rom_sram`), immediately after the cache is populated and before `/WAIT` is released:
 
 ```c
 apply_boot_patches(rom_sram, bytes_to_cache);
 ```
 
+`prepare_rom_source()` also calls `boot_patch_disarm()` on entry: `apply_boot_patches()` is only
+reached on the caching path, so without that a mapper which skips caching could inherit an armed
+trigger from an earlier launch.
+
 Guards inside `apply_boot_patches()`:
 - At least one of `vdp_freq_launch` / `cpu_mode_launch` is non-default.
-- `"AB"` signature present and `INIT` in the cartridge window (`0x4000..0xBFFF`).
-- `cached_len >= 16` — the whole header is in the writable `rom_sram` cache (the header is served
-  from `rom_sram`, not the read-only flash/PSRAM source).
+- `"AB"` signature present at image offset 0 and `INIT` inside page 1 (`0x4000..0x7FFF`).
+- The cache covers the whole stub, so it is served from the writable `rom_sram` copy rather than the
+  read-only flash/PSRAM source.
 
+When any guard fails the ROM is left completely untouched, so choosing a frequency can never stop a
+game from booting.
 ### System-ROM exclusion
 
 `prepare_rom_source()` is shared by the regular game mappers **and** the Nextor/Sunrise loaders, so
@@ -338,10 +369,16 @@ from the Pico-injected stub.
 
 - **MSX2+ only.** R9 exists on the V9938/V9958. A fixed-frequency MSX1 VDP (TMS9918) has no R9 to
   change, so the option is hidden on MSX1 and the launch forces `Default` there (no R9 write).
-- **192-line default value.** The stub writes R9 with the standard 192-line, non-interlaced value
-  plus the chosen frequency bit — which matches the boot default for the vast majority of games.
+- **Only bit 1 of R9 is changed.** The stub reads the current `RG9SAV`, flips the 50/60 Hz bit and
+  writes the result back through `WRTVDP`, so the line-count, interlace and display-control bits
+  are preserved rather than forced to a fixed value.
 - **Games that reprogram R9 themselves** (e.g. some 212-line MSX2 titles) will use their own R9
   value; the injected setting is overridden by design.
+- **A manual reset boots at the machine default.** The patch restores the original INIT vector once
+  the stub has run, so a soft reset re-runs the untouched game rather than re-applying the option.
+- **A few mappers are not covered.** NEO8, NEO16 and ASCII16-X do not use the shared ROM cache the
+  patch is written into, and Planar64 carries its `AB` header at image offset `0x4000` rather than
+  0. Those ROMs launch normally, with the option simply not applied.
 - **System ROMs are excluded** (Nextor/Sunrise, Carnivore2, MegaRAM). For DOS/Nextor use, tools such
   as SofaRun can switch the frequency from within the environment.
 
