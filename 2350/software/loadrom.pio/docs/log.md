@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.75
+
+- Fixed OPL4/MoonSound images (`-4`, with or without `--22khz`) playing much quieter than the SCC, PSG and MSX-MUSIC audio profiles, which forced the amplifier or TV volume to be turned far up for an OPL4 game and back down again afterwards (reported with "Go Figure"). The YMF278B emulation core applies no output normalisation to this chip - upstream marks its YMF278B mixing as unverified - so the cartridge was running about 7 dB below the level the same hardware plays SCC/PSG music at. The final output stage now applies a 3x gain, which lines the OPL4 up with the other profiles.
+- The gain was calibrated against openMSX, whose wave part is matched to real MoonSound recordings, by comparing the peak one voice or channel can contribute to an output channel: openMSX puts a MoonSound wave voice at 0.292 of full scale, an SCC channel at 0.102 and a PSG channel at 0.255, while the PicoVerse firmware puts its SCC channel at 0.200 and its PSG channel at 0.498 - a consistent ~1.96x above openMSX - against only 0.85x for the OPL4 wave voice. The FM/wave balance is unchanged: both halves of the emulated chip already peak at the same per-channel level openMSX gives them, so the correction is a single gain on the mixed output and the chip's own mix registers (0xF8/0xF9) still set the balance.
+- Replaced the hard clip on the OPL4 output with the same soft-knee limiter the SCC and MSX-MUSIC profiles use. The chip can key 24 wave voices and 18 FM channels at once, so a sum over full scale is normal on dense songs; the mix is now compressed smoothly toward full scale instead of being squared off into harsh buzz, and a single maximum-level voice still passes through untouched.
+- Added `OPL4_OUTPUT_GAIN_NUM`/`OPL4_OUTPUT_GAIN_SHIFT` CMake options (default 96/32 = 3x) so the output level can be A/B tested from the build configuration alone.
+- The OPL4 USB debug report now prints `lim/s` (samples pushed past the limiter knee) in place of `clip/s`, which measured a hard clip that no longer exists.
+- Bumped the loadrom build version to v2.75 (top-level and tool Makefiles), and regenerated the embedded 44.1 kHz and 22.05 kHz OPL4 firmware payloads.
+
 ## PicoVerse 2350 Loadrom v2.74
 
 - Added the `--22khz` option to the standalone OPL4 mode (`-4`). It builds an OPL4 cartridge image that renders audio at 22050 Hz instead of 44100 Hz, roughly halving the emulation workload. This is meant for the handful of very dense songs (reported with "Go Figure") that use so many simultaneous FM channels and wave voices that the 44.1 kHz emulation cannot keep up in real time and breaks into continuous noise. The trade-off is a duller high end and more aliasing on bright FM patches, cymbals and high-pitched samples, so the option is opt-in and the default 44.1 kHz image remains the recommended one.

@@ -41,6 +41,7 @@
 #include "pico/audio_i2s.h"
 #include "storage/sunrise_ide.h"
 #include "storage/sunrise_sd.h"
+#include "storage/sd_activity.h"
 #include "debug/audio_trace.h"
 
 // config area and buffer for the ROM data
@@ -134,6 +135,7 @@
 #define VDP_FREQ_60HZ    1u
 #define VDP_FREQ_50HZ    2u
 #define CTRL_CPU_MODE   0xBFA2 // Control: per-ROM CPU speed load read-back (Pico -> MSX)
+#define CTRL_DISK_ACT   0xBFA3 // Control: microSD activity counter read-back (Pico -> MSX)
 #define CPU_MODE_DEFAULT 0u    // Leave the CPU as the BIOS boots it
 #define CPU_MODE_TURBO   1u    // Panasonic MSX2+/turbo R switched-I/O 5.37MHz Z80 turbo
 #define CPU_MODE_R800    2u    // MSX turbo R R800 ROM mode via the CHGCPU BIOS entry
@@ -200,7 +202,19 @@
 #define MAIN_PSG_PORT_REG  0xA0u
 #define MAIN_PSG_PORT_DATA 0xA1u
 
-#define MSX_MUSIC_SAMPLE_RATE 44100
+/* Run the FM output stage at the YM2413's own native rate, clock/72.
+ *
+ * emu2413 otherwise inserts a 16-tap windowed-sinc resampler to convert its
+ * native 49716 Hz to the output rate, and that resampler is written in double
+ * precision. The RP2350's FPU is single-precision only, so every one of those
+ * operations becomes a soft-float library call: an on-target measurement showed
+ * OPLL_calc consuming 5229 us of the 5805 us a 256-sample buffer represents -
+ * 90% of real time - almost all of it inside the resampler rather than in the
+ * FM synthesis. Matching the output rate to clock/72 makes emu2413 skip the
+ * converter entirely (see the note above OPLL_RateConv_new) and drops the
+ * synthesis to exactly one chip update per output sample, which is both faster
+ * and higher quality than resampling. */
+#define MSX_MUSIC_SAMPLE_RATE 49716
 #define MSX_MUSIC_CLOCK       3579545
 /* Output gain applied to the raw OPLL sample. emu2413 halves the six melody
  * slots but not the five rhythm slots, so OPLL_calc() reaches +/-27340 in
@@ -679,6 +693,9 @@ static uint8_t sd_mounted_partition = 0;
 static uint8_t sd_browse_partition = 0;
 static bool sd_config_loaded = false;
 static sd_card_t *sd_card = NULL;
+// Bumped by every microSD transfer and published at CTRL_DISK_ACT so the MSX
+// menu can blink the keyboard CAPS LED while the card is being accessed.
+volatile uint8_t sd_activity_counter = 0;
 static uint16_t total_record_count = 0;
 static uint16_t full_record_count = 0;
 static uint8_t current_page = 0;
@@ -1910,6 +1927,7 @@ static void process_load_options_request(void) {
         }
         return;
     }
+    sd_activity_note();
     uint8_t data[PVC_OPTIONS_SIZE];
     UINT br = 0;
     FRESULT fr = f_read(&fil, data, sizeof(data), &br);
@@ -1986,6 +2004,7 @@ static void process_save_options_request(void) {
         fatfs_set_fattime_override(0u);
         return;
     }
+    sd_activity_note();
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
         audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4], sd_partition,
@@ -2077,6 +2096,7 @@ static void process_save_last_selection_request(void) {
         fatfs_set_fattime_override(0u);
         return;
     }
+    sd_activity_note();
     uint8_t header[PV_LAST_HEADER_SIZE] = {
         PV_LAST_MAGIC_0, PV_LAST_MAGIC_1, PV_LAST_MAGIC_2, PV_LAST_MAGIC_3,
         PV_LAST_VERSION, source, 0, 0
@@ -2117,6 +2137,7 @@ static void process_load_last_selection_request(void) {
     if (f_open(&fil, PV_LAST_PATH, FA_READ) != FR_OK) {
         return;
     }
+    sd_activity_note();
     uint8_t header[PV_LAST_HEADER_SIZE];
     char path[SD_PATH_MAX];
     UINT br = 0;
@@ -2251,6 +2272,7 @@ static uint32_t fatfs_reader_cb(void *user, uint32_t offset, void *buf, uint32_t
     if (ctx->failed || !ctx->fil) {
         return 0;
     }
+    sd_activity_note();
     if (offset != ctx->cur_offset) {
         if (f_lseek(ctx->fil, offset) != FR_OK) {
             ctx->failed = true;
@@ -2326,6 +2348,7 @@ static bool sd_mount_partition(const sunrise_sd_partition_t *parts, uint8_t coun
 
     sd_unmount_card();
     disk_set_partition_window((LBA_t)parts[index].start_lba, (LBA_t)parts[index].sector_count);
+    sd_activity_note();
     FRESULT fr = f_mount(&sd_card->state.fatfs, "", 1);
     if (fr != FR_OK) {
         sd_unmount_card();
@@ -2452,6 +2475,7 @@ static void process_delete_sd_file_request(void) {
 
     char pvc_path[SD_PATH_MAX];
     bool has_pvc_path = build_pvc_options_path(record_index, pvc_path, sizeof(pvc_path));
+    sd_activity_note();
     if (f_unlink(sd_path_buffer + sd_path_offsets[record_index]) == FR_OK) {
         refresh_requested = true;
         FRESULT pvc_result = has_pvc_path ? f_unlink(pvc_path) : FR_NO_FILE;
@@ -2608,6 +2632,7 @@ static void refresh_records_for_current_path(void) {
         if (fr == FR_OK) {
             while (record_index < MAX_ROM_RECORDS) {
                 fr = f_readdir(&dir, &fno);
+                sd_activity_note();
                 if (fr != FR_OK || fno.fname[0] == '\0') {
                     break;
                 }
@@ -2632,6 +2657,7 @@ static void refresh_records_for_current_path(void) {
         if (fr == FR_OK) {
             while (record_index < MAX_ROM_RECORDS) {
                 fr = f_readdir(&dir, &fno);
+                sd_activity_note();
                 if (fr != FR_OK || fno.fname[0] == '\0') {
                     break;
                 }
@@ -2768,6 +2794,7 @@ static bool refresh_records_chunked(void) {
         while (reads < REFRESH_CHUNK_SIZE && refresh_record_index < MAX_ROM_RECORDS) {
             fr = f_readdir(&refresh_dir, &fno);
             reads++;
+            sd_activity_note();
             if (fr != FR_OK || fno.fname[0] == '\0') {
                 f_closedir(&refresh_dir);
                 refresh_state = REFRESH_SORT_FOLDERS;
@@ -2804,6 +2831,7 @@ static bool refresh_records_chunked(void) {
         while (reads < REFRESH_CHUNK_SIZE && refresh_record_index < MAX_ROM_RECORDS) {
             fr = f_readdir(&refresh_dir, &fno);
             reads++;
+            sd_activity_note();
             if (fr != FR_OK || fno.fname[0] == '\0') {
                 f_closedir(&refresh_dir);
                 refresh_state = REFRESH_FINALIZE;
@@ -3401,6 +3429,7 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
     while (total < size) {
         UINT to_read = (UINT)((size - total) > 4096 ? 4096 : (size - total));
         UINT br = 0;
+        sd_activity_note();
         fr = f_read(&fil, dst + total, to_read, &br);
         if (fr != FR_OK || br == 0) {
             printf("SDLOAD: read stopped fr=%d br=%u total=%u target=%lu\n", (int)fr, (unsigned)br, (unsigned)total, (unsigned long)size);
@@ -4186,7 +4215,14 @@ static inline int16_t __not_in_flash_func(clamp_i16)(int32_t sample)
 
 static inline int32_t __not_in_flash_func(scale_sample_percent_i32)(int32_t sample, uint8_t percent)
 {
-    return (int32_t)(((int64_t)sample * percent) / 100);
+    // 100% is the default and by far the common case, so short-circuit it.
+    if (percent == 100u)
+        return sample;
+    // Every caller passes a mixer output bounded well inside +/-2^23 and
+    // percent is capped at 200, so the product cannot overflow 32 bits. Staying
+    // in 32-bit matters: a 64-bit divide is a library call on Cortex-M33, while
+    // a 32-bit divide by the constant 100 compiles to a multiply and shift.
+    return (sample * (int32_t)percent) / 100;
 }
 
 static inline int16_t __not_in_flash_func(apply_audio_volume)(int32_t sample)
@@ -4493,21 +4529,35 @@ static inline bool __not_in_flash_func(main_psg_has_audible_channels_unlocked)(v
     return false;
 }
 
-static inline bool __not_in_flash_func(main_psg_calc_audible_sample_shifted)(uint8_t volume_shift, int16_t *sample)
+// Renders the mirrored PSG unconditionally and reports, separately, whether any
+// channel is nominally audible.
+//
+// The audible flag must NOT be used to gate the audio. emu2149's volume table
+// starts at 0 (`voltbl[x][0] == 0x00`), so a channel at volume 0 already
+// renders as exactly 0 - verified on the host, where a silent channel produced
+// 0 non-zero samples in a full second. Gating therefore removes nothing, while
+// forcing the output to 0 whenever the flag drops hard-switches the signal
+// feeding the DC blocker in the MSX-MUSIC mixer. Mixing unconditionally also
+// matches the SCC and dual-PSG paths, which have never gated.
+static inline int16_t __not_in_flash_func(main_psg_calc_sample_reporting)(uint8_t volume_shift,
+                                                                          bool *audible_out)
 {
     if (!main_psg_ready)
-        return false;
+    {
+        *audible_out = false;
+        return 0;
+    }
 
     uint32_t save = spin_lock_blocking(main_psg_lock);
     bool audible = main_psg_has_audible_channels_unlocked();
-    // Clock the emulator on every sample even when the mixer/volume state makes
-    // it inaudible. Skipping PSG_calc() freezes the tone, noise and envelope
-    // phase, so the waveform resumes mid-cycle from stale state and clicks the
-    // moment a channel becomes audible again.
-    int16_t raw = clamp_i16((int32_t)PSG_calc(&main_psg_instance) << volume_shift);
+    // Clock the emulator on every sample regardless: skipping PSG_calc() would
+    // freeze the tone, noise and envelope phase and resume mid-cycle later.
+    int16_t raw;
+    ATRACE_TIME_PSG(raw = PSG_calc(&main_psg_instance));
+    int16_t sample = clamp_i16((int32_t)raw << volume_shift);
     spin_unlock(main_psg_lock, save);
-    *sample = audible ? raw : 0;
-    return audible;
+    *audible_out = audible;
+    return sample;
 }
 
 static inline void __not_in_flash_func(dual_psg_write_stereo_sample)(int16_t *samples, int index)
@@ -4800,7 +4850,17 @@ static void system_audio_init_for_sunrise(bool service_io_on_core1)
         msx_music_core1_services_io = service_io_on_core1;
         if (ctrl_psg_emulation != 0u)
         {
-            main_psg_init(PSG_QUALITY_FAST);
+            // Use the same high-quality PSG renderer as every other profile.
+            // The fast renderer point-samples the ~1.79 MHz PSG once per output
+            // sample and disables emu2149's Nyquist guard (`freq_limit = 0`),
+            // which aliases badly - measured at 3.4% non-harmonic energy at
+            // 1.7 kHz rising to 18.9% at 14 kHz, against 1.2% and 7.2% here.
+            // Noise-based effects, which is what the reported ROM plays, are
+            // the worst case and cannot be helped by the Nyquist guard at all.
+            main_psg_init(PSG_QUALITY_HIGH);
+            // The mixer runs at the YM2413's native rate, so the mirrored PSG
+            // has to render at that rate too or every PSG note is transposed.
+            PSG_setRate(&main_psg_instance, MSX_MUSIC_SAMPLE_RATE);
             main_psg_core1_services_io = service_io_on_core1;
         }
         msx_music_audio_init();
@@ -4845,6 +4905,7 @@ static inline bool __not_in_flash_func(system_audio_handle_io_write)(uint8_t por
             return true;
         if (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA)
         {
+            atrace_note_opll_write(port, port == MSX_MUSIC_PORT_DATA, data);
             msx_music_write_io(port, data);
             return true;
         }
@@ -4989,7 +5050,8 @@ static inline int32_t __not_in_flash_func(msx_music_calc_sample)(void)
         return 0;
 
     uint32_t save = spin_lock_blocking(msx_music_lock);
-    int16_t sample = OPLL_calc(msx_music_instance);
+    int16_t sample;
+    ATRACE_TIME_FM(sample = OPLL_calc(msx_music_instance));
     spin_unlock(msx_music_lock, save);
     int32_t filtered = msx_music_filter_sample(sample);
     return (filtered * MSX_MUSIC_GAIN_NUM) >> MSX_MUSIC_GAIN_SHIFT;
@@ -5000,7 +5062,10 @@ static inline void __not_in_flash_func(msx_music_write_ring_push)(uint8_t port, 
     uint32_t head = msx_music_write_ring_head;
     uint32_t next = (head + 1u) & MSX_MUSIC_WRITE_RING_MASK;
     if (next == msx_music_write_ring_tail)
+    {
+        atrace_note_opll_drop();
         return; // ring full: drop write (audio only; mapper state unaffected)
+    }
     msx_music_write_ring[head] = (uint16_t)(((uint16_t)port << 8) | data);
     __dmb();
     msx_music_write_ring_head = next;
@@ -5067,7 +5132,10 @@ static inline void __not_in_flash_func(msx_music_service_io)(void)
         if (main_psg_handle_io_write(port, io_data))
             continue;
         if (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA)
+        {
+            atrace_note_opll_write(port, port == MSX_MUSIC_PORT_DATA, io_data);
             msx_music_write_io(port, io_data);
+        }
     }
 
     while (pio_try_get_io_read(&io_addr))
@@ -5077,18 +5145,19 @@ static inline void __not_in_flash_func(msx_music_service_io)(void)
     }
 }
 
-static inline int32_t __not_in_flash_func(msx_music_calc_psg_sample)(void)
+static inline int32_t __not_in_flash_func(msx_music_calc_psg_sample)(bool *audible_out)
 {
-    int16_t psg_sample = 0;
-    if (!main_psg_calc_audible_sample_shifted(MSX_MUSIC_PSG_VOLUME_SHIFT, &psg_sample))
-        psg_sample = 0;
+    /* Mix the mirrored PSG unconditionally. It was previously forced to 0
+     * whenever no channel looked audible; that gate is provably redundant,
+     * because a silent PSG channel already renders as 0, so removing it is a
+     * simplification rather than an audible change. */
+    int16_t psg_sample = main_psg_calc_sample_reporting(MSX_MUSIC_PSG_VOLUME_SHIFT, audible_out);
 
     /* emu2149 output is unipolar (three 0..4080 channel levels summed), so the
      * mirrored PSG carries a DC pedestal roughly half its own amplitude. Summing
      * that straight into the FM mix would offset the whole signal and step every
-     * time a channel starts or stops. Strip it with the same ~35 Hz blocker used
-     * on the FM side; feeding 0 while the PSG is inaudible lets the blocker
-     * relax to silence instead of cutting the mix abruptly. */
+     * time a channel starts or stops, so strip it with the same ~35 Hz blocker
+     * used on the FM side. */
     float x = (float)psg_sample;
     float dc = x - msx_music_psg_dc_x1 + MSX_MUSIC_DC_R * msx_music_psg_dc_y1;
     msx_music_psg_dc_x1 = x;
@@ -5100,7 +5169,8 @@ static inline void __not_in_flash_func(msx_music_write_stereo_sample)(int16_t *s
 {
     int32_t music = msx_music_calc_sample();
     msx_music_service_io();
-    int32_t psg = msx_music_calc_psg_sample();
+    bool psg_audible = false;
+    int32_t psg = msx_music_calc_psg_sample(&psg_audible);
 
     /* Sum both sources into both channels, the way a real FM-PAC and the
      * machine's own PSG both reach the MSX audio bus. The previous code routed
@@ -5111,7 +5181,68 @@ static inline void __not_in_flash_func(msx_music_write_stereo_sample)(int16_t *s
     int16_t mixed = apply_audio_volume(msx_music_soft_limit(music + psg));
     samples[index * 2] = mixed;
     samples[index * 2 + 1] = mixed;
+
+    int32_t sum = music + psg;
+    int32_t mag = sum < 0 ? -sum : sum;
+    atrace_note_fm_sample(music, psg, mixed, mag > MSX_MUSIC_LIMIT_KNEE, psg_audible);
 }
+
+#if EXPLORER_AUDIO_TRACE
+// Emitted once at the start of the FM log and every 5 s afterwards. Kept to a
+// few lines so it never dominates the stream: it answers "is the FM actually
+// configured and playing" and "is the PSG mirror on and contributing".
+static void audio_trace_dump_opll_state(void)
+{
+    printf("[fm.cfg] ready=%u audio=%u gain=%u/%u knee=%d vol=%u%% | FMring depth=%lu/%lu | "
+           "PSGmirror=%s ready=%u PSGring depth=%lu/%lu\r\n",
+           (unsigned)msx_music_ready, (unsigned)msx_music_audio_started,
+           MSX_MUSIC_GAIN_NUM, 1u << MSX_MUSIC_GAIN_SHIFT,
+           MSX_MUSIC_LIMIT_KNEE, (unsigned)ctrl_audio_volume,
+           (unsigned long)((msx_music_write_ring_head - msx_music_write_ring_tail) &
+                           MSX_MUSIC_WRITE_RING_MASK),
+           (unsigned long)MSX_MUSIC_WRITE_RING_SIZE,
+           ctrl_psg_emulation ? "ON" : "off", (unsigned)main_psg_ready,
+           (unsigned long)((main_psg_write_ring_head - main_psg_write_ring_tail) &
+                           MAIN_PSG_WRITE_RING_MASK),
+           (unsigned long)MAIN_PSG_WRITE_RING_SIZE);
+
+    if (msx_music_instance)
+    {
+        uint8_t reg[0x40];
+        uint32_t save = spin_lock_blocking(msx_music_lock);
+        memcpy(reg, msx_music_instance->reg, sizeof(reg));
+        uint8_t rhythm = msx_music_instance->rhythm_mode;
+        spin_unlock(msx_music_lock, save);
+
+        // One line for all nine channels: F-number, block, key and volume are
+        // what tell us whether the FM is being driven sensibly.
+        printf("[fm.ch] rhythm=%u", (unsigned)rhythm);
+        for (uint8_t ch = 0; ch < 9u; ch++)
+        {
+            uint8_t hi = reg[0x20u + ch];
+            uint8_t iv = reg[0x30u + ch];
+            printf(" %u:f=%03X/%u%s i=%u v=%u", ch,
+                   (unsigned)(((hi & 1u) << 8) | reg[0x10u + ch]),
+                   (unsigned)((hi >> 1) & 7u), ((hi >> 4) & 1u) ? "*" : "",
+                   (unsigned)((iv >> 4) & 15u), (unsigned)(iv & 15u));
+        }
+        printf("\r\n");
+    }
+
+    if (main_psg_ready)
+    {
+        uint32_t psave = spin_lock_blocking(main_psg_lock);
+        uint8_t preg[16];
+        memcpy(preg, main_psg_instance.reg, sizeof(preg));
+        bool audible = main_psg_has_audible_channels_unlocked();
+        spin_unlock(main_psg_lock, psave);
+        printf("[fm.psg] mixer=%02X volA=%02X volB=%02X volC=%02X env=%02X/%02X%02X gate=%s\r\n",
+               preg[7], preg[8], preg[9], preg[10], preg[13], preg[12], preg[11],
+               audible ? "OPEN" : "closed");
+    }
+    fflush(stdout);
+}
+#endif
 
 static void __no_inline_not_in_flash_func(core1_msx_music_audio)(void)
 {
@@ -5124,16 +5255,28 @@ static void __no_inline_not_in_flash_func(core1_msx_music_audio)(void)
             struct audio_buffer *buffer = take_audio_buffer(msx_music_audio_pool, false);
             if (buffer)
             {
+                uint32_t busy_t0 = timer_hw->timerawl;
                 int16_t *samples = (int16_t *)buffer->buffer->bytes;
                 for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
                 {
-                    msx_music_service_io();
+                    ATRACE_TIME_IO(msx_music_service_io());
                     msx_music_write_stereo_sample(samples, i);
                 }
                 buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
                 give_audio_buffer(msx_music_audio_pool, buffer);
+                // Measured before the reporting call below, so the tracer's own
+                // printf cost is excluded from the utilisation figure.
+                atrace_note_fm_busy(timer_hw->timerawl - busy_t0);
+                atrace_fm_buffer_done();
+                // Reporting is far too slow for the sample loop, so it runs
+                // here, between buffers, exactly like the SCC tracer does.
+                audio_trace_service();
                 break;
             }
+            // No free buffer means core1 is running ahead of the DAC, which is
+            // the healthy steady state - not something to count. Real underruns
+            // are detected in atrace_fm_buffer_done() from the interval between
+            // completed buffers.
             tight_loop_contents();
         }
     }
@@ -5149,20 +5292,32 @@ static void msx_music_audio_init(void)
     gpio_set_dir(I2S_MUTE_PIN, GPIO_OUT);
     gpio_put(I2S_MUTE_PIN, 1);
 
-    struct audio_buffer_pool *handoff_pool = claim_rom_audio_handoff_pool();
-    if (handoff_pool)
-    {
-        debug_trace("DBG music_audio_init handoff pool");
-        msx_music_audio_pool = handoff_pool;
-        msx_music_audio_started = true;
-        return;
-    }
-
     static audio_format_t msx_music_audio_format = {
         .sample_freq = MSX_MUSIC_SAMPLE_RATE,
         .format = AUDIO_BUFFER_FORMAT_PCM_S16,
         .channel_count = 2,
     };
+
+    struct audio_buffer_pool *handoff_pool = claim_rom_audio_handoff_pool();
+    if (handoff_pool)
+    {
+        // pico_audio_i2s retunes the PIO from producer_pool->format->sample_freq
+        // on the next take/give (see wrap_consumer_take), so writing the rate in
+        // place is all that is needed - no disable/reconnect dance.
+        //
+        // Write the frequency into the existing struct rather than repointing
+        // the pool at ours: the struct belongs to whoever handed the pool over
+        // (mp3.c), and leaving the pool pointing into this file's statics would
+        // mistune MP3 playback for the rest of the session. mp3.c rewrites this
+        // field from the file header every time it starts a track, so borrowing
+        // it here is self-correcting.
+        debug_trace("DBG music_audio_init handoff pool, retuning i2s");
+        ((audio_format_t *)handoff_pool->format)->sample_freq = MSX_MUSIC_SAMPLE_RATE;
+        msx_music_audio_pool = handoff_pool;
+        gpio_put(I2S_MUTE_PIN, 0);
+        msx_music_audio_started = true;
+        return;
+    }
 
     static struct audio_buffer_format msx_music_producer_format = {
         .format = &msx_music_audio_format,
@@ -5365,8 +5520,11 @@ static inline void __not_in_flash_func(ym2151_calc_stereo_sample)(int16_t *sampl
         opm_out[1] = scale_sample_percent_i32(ym2151_last_output[1], YM2151_BASE_VOLUME_PERCENT);
     }
 
-    int16_t psg = 0;
-    (void)main_psg_calc_audible_sample_shifted(YM2151_PSG_VOLUME_SHIFT, &psg);
+    // The mirrored PSG is summed unconditionally here too, matching the
+    // MSX-MUSIC path; the old audible test gated a signal that is already 0
+    // when silent.
+    bool psg_audible = false;
+    int16_t psg = main_psg_calc_sample_reporting(YM2151_PSG_VOLUME_SHIFT, &psg_audible);
     samples[index * 2] = apply_audio_volume(opm_out[0] + psg);
     samples[index * 2 + 1] = apply_audio_volume(opm_out[1] + psg);
 }
@@ -5607,26 +5765,32 @@ static inline void __not_in_flash_func(fmpac_handle_write)(fmpac_state_t *fmpac,
 {
     if (addr == 0x7FF4u)
     {
+        atrace_note_opll_write(addr, false, data);
         msx_music_write_io(MSX_MUSIC_PORT_REG, data);
     }
     else if (addr == 0x7FF5u)
     {
+        atrace_note_opll_write(addr, true, data);
         msx_music_write_io(MSX_MUSIC_PORT_DATA, data);
     }
     else if (addr == 0x7FF6u)
     {
+        atrace_note_fmpac_ctl(addr, data);
         fmpac->control = data;
     }
     else if (addr == 0x7FF7u)
     {
+        atrace_note_fmpac_ctl(addr, data);
         fmpac->page = data & 0x03u;
     }
     else if (addr == 0x5FFEu)
     {
+        atrace_note_fmpac_ctl(addr, data);
         fmpac->sram_key_5ffe = data;
     }
     else if (addr == 0x5FFFu)
     {
+        atrace_note_fmpac_ctl(addr, data);
         fmpac->sram_key_5fff = data;
     }
     else if (fmpac_sram_enabled(fmpac) && addr >= 0x4000u && addr <= 0x5FFFu)
@@ -6132,6 +6296,10 @@ static uint8_t __not_in_flash_func(fh_read_window_byte)(uint16_t addr, bool *in_
         {
             data = esp_net_status;
         }
+        else if (addr == CTRL_DISK_ACT)
+        {
+            data = sd_activity_counter;
+        }
         else if (addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
         {
             data = (uint8_t)fh_wifi_status_text[addr - FH_STATUS_TEXT_BASE];
@@ -6170,6 +6338,10 @@ static uint8_t __not_in_flash_func(fh_read_menu_window_byte)(uint16_t addr, bool
         else if (addr == CTRL_NET_STATUS)
         {
             data = esp_net_status;
+        }
+        else if (addr == CTRL_DISK_ACT)
+        {
+            data = sd_activity_counter;
         }
         else if (addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
         {
@@ -7547,6 +7719,7 @@ static void fh_save_background_work(void)
         UINT written = 0;
 
         memcpy(fh_sd_save_chunk, fh_download_region.ptr + fh_save_offset, to_write);
+        sd_activity_note();
         fr = f_write(&fh_save_file, fh_sd_save_chunk, to_write, &written);
         if (fr != FR_OK || written != to_write)
         {
@@ -8216,6 +8389,10 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
             else if (addr == CTRL_NET_STATUS)
             {
                 data = esp_net_status;
+            }
+            else if (addr == CTRL_DISK_ACT)
+            {
+                data = sd_activity_counter;
             }
             else if (fh_menu_window_active && addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
             {
@@ -12548,6 +12725,7 @@ int __no_inline_not_in_flash_func(main)()
 #if EXPLORER_AUDIO_TRACE
     atrace_init();
     atrace_set_state_cb(audio_trace_dump_state);
+    atrace_set_opll_state_cb(audio_trace_dump_opll_state);
 #endif
     setup_gpio();     // Initialize GPIO
 
@@ -12630,7 +12808,15 @@ int __no_inline_not_in_flash_func(main)()
             mp3_wavegame_set_psg_callbacks(wavegame_psg_calc_sample, wavegame_psg_set_sample_rate);
             printf("WAVEGAME: PSG mirror active\n");
         } else {
-            main_psg_init(audio_mode == AUDIO_MODE_MSX_MUSIC ? PSG_QUALITY_FAST : PSG_QUALITY_HIGH);
+            // Every profile now mirrors the PSG at full quality. MSX-MUSIC used
+            // to be the sole exception, on the fast renderer, which is where the
+            // aliasing noise reported against the FMPAC profile came from.
+            main_psg_init(PSG_QUALITY_HIGH);
+            if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
+                // MSX-MUSIC mixes at the YM2413's native rate, so the mirrored
+                // PSG must render at that rate or every PSG note is transposed.
+                PSG_setRate(&main_psg_instance, MSX_MUSIC_SAMPLE_RATE);
+            }
         }
     }
     if (audio_mode == AUDIO_MODE_DUAL_PSG && !system_mapper) {

@@ -89,6 +89,10 @@
 // Per-ROM CPU mode load read-back byte (Pico -> MSX), next free byte after
 // CTRL_NET_STATUS. The save channel reuses query buffer byte 8.
 #define CTRL_CPU_MODE 0xBFA2
+// microSD activity counter (Pico -> MSX). The Pico bumps this byte on every
+// microSD access, so the menu blinks the CAPS LED while the value keeps
+// changing, the same way a disk drive lights its own activity LED.
+#define CTRL_DISK_ACT 0xBFA3
 #define MP3_CTRL_BASE      0xBFE0
 #define MP3_CTRL_CMD       (MP3_CTRL_BASE + 0)
 #define MP3_CTRL_STATUS    (MP3_CTRL_BASE + 1)

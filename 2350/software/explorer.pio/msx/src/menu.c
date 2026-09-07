@@ -48,6 +48,7 @@ static void switch_menu_source(unsigned char source_mode);
 static void print_chip_id_line(void);
 void msx_wait(uint16_t times_jiffy);
 void delay_ms(uint16_t milliseconds);
+static void disk_led_poll(void);
 
 // --- ROM record helpers ---
 // read_ulong - Read a 4-byte value from the memory area
@@ -763,6 +764,9 @@ static int wait_for_key_with_scroll(void)
             return (int)bios_chget();
         }
 
+        // mirror background microSD traffic (MP3 streaming, list refresh)
+        disk_led_poll();
+
         // handle scrolling
         if ((unsigned int)(*jiffyPtr - lastTick) >= scrollDelay) {
             if (!use_80_columns && menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
@@ -1253,5 +1257,74 @@ void msx_wait(uint16_t times_jiffy)
 void delay_ms(uint16_t milliseconds)
 {
     msx_wait(milliseconds / 20);
+    disk_led_poll();
+}
+
+// --- microSD activity LED ---
+// The Pico bumps CTRL_DISK_ACT on every microSD access, so the menu mirrors the
+// traffic on the keyboard CAPS LED. The LED is driven through the PPI bit
+// set/reset register (port 0xAB, port C bit 6, active low) so the keyboard row
+// bits kept in port C are left untouched.
+
+#define DISK_LED_BLINK_TICKS 6u // ~100 ms between toggles at 60 Hz
+#define DISK_LED_IDLE_TICKS 12u // ~200 ms without traffic ends the blinking
+
+static unsigned char disk_led_count; // last CTRL_DISK_ACT value seen
+static unsigned char disk_led_busy;  // 1 while the card is considered active
+static unsigned char disk_led_lit;   // 1 while the LED is on
+static unsigned char disk_led_seen;  // JIFFY tick of the last counter change
+static unsigned char disk_led_tick;  // JIFFY tick of the last LED toggle
+
+// caps_led_on - Light the CAPS LED (reset PPI port C bit 6).
+static void caps_led_on(void) __naked
+{
+    __asm
+    ld a, #0x0C
+    out (#0xAB), a
+    ret
+    __endasm;
+}
+
+// caps_led_off - Turn the CAPS LED off (set PPI port C bit 6).
+static void caps_led_off(void) __naked
+{
+    __asm
+    ld a, #0x0D
+    out (#0xAB), a
+    ret
+    __endasm;
+}
+
+// disk_led_poll - Blink the CAPS LED while the Pico reports microSD activity
+// and hand the LED back to the BIOS CAPS state once the card goes idle.
+static void disk_led_poll(void)
+{
+    unsigned char now = *((volatile unsigned char *)JIFFY);
+    unsigned char count = *((volatile unsigned char *)CTRL_DISK_ACT);
+
+    if (count != disk_led_count) {
+        disk_led_count = count;
+        disk_led_seen = now;
+        disk_led_busy = 1;
+    }
+    if (!disk_led_busy) {
+        return;
+    }
+
+    if ((unsigned char)(now - disk_led_seen) >= DISK_LED_IDLE_TICKS) {
+        disk_led_busy = 0;
+        disk_led_lit = *((volatile unsigned char *)BIOS_CAPST) ? 1 : 0;
+    } else if ((unsigned char)(now - disk_led_tick) >= DISK_LED_BLINK_TICKS) {
+        disk_led_tick = now;
+        disk_led_lit = disk_led_lit ? 0 : 1;
+    } else {
+        return;
+    }
+
+    if (disk_led_lit) {
+        caps_led_on();
+    } else {
+        caps_led_off();
+    }
 }
 

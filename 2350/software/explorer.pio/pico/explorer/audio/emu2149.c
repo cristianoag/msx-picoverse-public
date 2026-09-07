@@ -35,6 +35,21 @@ static const uint8_t regmsk[16] = {
 
 #define GETA_BITS 24
 
+// Oversampling divisor for the high-quality renderer, mirroring the same
+// treatment emu2212.c already applies to the SCC.
+//
+// Upstream advances the PSG state by one step per iteration, which at the MSX
+// PSG clock works out at about 5 update_output() passes for every output
+// sample. That is more than the RP2350 audio core can afford once the YM2413 is
+// running on the same core. Advancing the state by PSG_OVERSAMPLE_DIV steps per
+// iteration and stretching psgstep by the same factor keeps the product
+// base_incr x iterations identical, so pitch and envelope timing are unchanged,
+// while cutting the iteration count by that factor. The Nyquist guard in
+// freq_limit is derived from the master clock and is unaffected.
+#ifndef PSG_OVERSAMPLE_DIV
+#define PSG_OVERSAMPLE_DIV 2
+#endif
+
 static void
 internal_refresh (PSG * psg)
 {
@@ -45,9 +60,9 @@ internal_refresh (PSG * psg)
 
   if (psg->quality)
   {
-    psg->base_incr = 1 << GETA_BITS;
+    psg->base_incr = PSG_OVERSAMPLE_DIV << GETA_BITS;
     psg->realstep = f_master;
-    psg->psgstep = psg->rate * 8;
+    psg->psgstep = psg->rate * 8 * PSG_OVERSAMPLE_DIV;
     psg->psgtime = 0;
     psg->freq_limit = (uint32_t)(f_master / 16 / (psg->rate / 2));
   }

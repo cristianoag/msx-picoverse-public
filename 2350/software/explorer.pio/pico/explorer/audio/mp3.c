@@ -10,6 +10,7 @@
 #include "hardware/pio.h"
 #include "ff.h"
 #include "mp3dec.h"
+#include "../storage/sd_activity.h"
 
 // I2S clock pins must be consecutive: clock_pin_base = BCLK, clock_pin_base+1 = LRCLK.
 #define MP3_I2S_DATA_PIN 29
@@ -296,6 +297,7 @@ static void fill_buffer_if_needed(void) {
     if (free_space < mp3_buf_capacity / 4) return;
 
     UINT br = 0;
+    sd_activity_note();
     if (f_read(&mp3_file, mp3_buf + mp3_buf_used, (UINT)free_space, &br) == FR_OK) {
         if (br > 0) {
             mp3_buf_used += br;
@@ -711,6 +713,7 @@ static void wav_update(void) {
     }
 
     UINT br = 0;
+    sd_activity_note();
     if (f_read(&mp3_file, mp3_buf, (UINT)max_bytes, &br) != FR_OK) {
         printf("WAV: read error remaining=%lu request=%lu\n",
                (unsigned long)wav_bytes_remaining, (unsigned long)max_bytes);
