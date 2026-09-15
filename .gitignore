@@ -22,6 +22,18 @@ _autosave-*
 **/lib
 **/.vscode/
 
+# Portable builds and dependency downloads
+/.deps/
+/firmware/
+__pycache__/
+.DS_Store
+**/tool/loadrom
+**/tool/multirom
+**/tool/explorer
+**/tool/yamanooto
+**/tool/*.uf2
+**/build22k/
+
 # Netlist files (exported from Eeschema)
 *.net
 

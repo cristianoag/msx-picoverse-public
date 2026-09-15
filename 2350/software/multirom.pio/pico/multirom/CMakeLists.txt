@@ -51,7 +51,8 @@ add_executable(multirom
 
 pico_generate_pio_header(multirom ${CMAKE_CURRENT_SOURCE_DIR}/msx_bus.pio)
 
-add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
+set(PICO_FATFS_PATH "${CMAKE_CURRENT_LIST_DIR}/lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico" CACHE PATH "Path to the FatFS/SD library")
+add_subdirectory("${PICO_FATFS_PATH}/src" build_sd_lib)
 
 pico_set_program_name(multirom "multirom")
 pico_set_program_version(multirom "0.1")
@@ -82,4 +83,3 @@ target_include_directories(multirom PRIVATE
 )
 
 pico_add_extra_outputs(multirom)
-

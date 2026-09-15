@@ -21,10 +21,10 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include "uf2format.h"
-#include "multirom.h"
-#include "menu.h"
-#include "nextor_sunrise.h"
-#include "esp8266p_rom.h"
+#include <multirom.h>
+#include <menu.h>
+#include <nextor_sunrise.h>
+#include <esp8266p_rom.h>
 #include "sha1.h"
 #include "romdb.h"
 

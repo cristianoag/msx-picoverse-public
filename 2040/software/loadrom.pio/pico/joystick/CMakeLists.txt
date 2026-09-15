@@ -73,7 +73,10 @@ target_include_directories(joystick PRIVATE
 pico_add_extra_outputs(joystick)
 
 # Copy firmware binary to dist folder for the tool to embed
+option(PICOVERSE_COPY_TO_DIST "Copy built firmware into the legacy dist directory" ON)
+if(PICOVERSE_COPY_TO_DIST)
 add_custom_command(TARGET joystick POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/joystick.bin ${CMAKE_SOURCE_DIR}/dist/joystick.bin
 )
+endif()

@@ -71,8 +71,10 @@ add_executable(explorer ${EXPLORER_SOURCES})
 
 pico_generate_pio_header(explorer ${CMAKE_CURRENT_SOURCE_DIR}/msx_bus.pio)
 
-add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
-add_subdirectory(lib/picomp3lib/src picomp3lib_build)
+set(PICO_FATFS_PATH "${CMAKE_CURRENT_LIST_DIR}/lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico" CACHE PATH "Path to the FatFS/SD library")
+set(PICOMP3LIB_PATH "${CMAKE_CURRENT_LIST_DIR}/lib/picomp3lib" CACHE PATH "Path to picomp3lib")
+add_subdirectory("${PICO_FATFS_PATH}/src" build_sd_lib)
+add_subdirectory("${PICOMP3LIB_PATH}/src" picomp3lib_build)
 
 pico_set_program_name(explorer "explorer")
 pico_set_program_version(explorer "${EXPLORER_VERSION}")

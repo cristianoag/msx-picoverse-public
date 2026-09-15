@@ -90,6 +90,9 @@ target_include_directories(yamanooto PRIVATE
 pico_add_extra_outputs(yamanooto)
 
 # Custom command to copy files to dist folder
+option(PICOVERSE_COPY_TO_DIST "Copy built firmware into the legacy dist directory" ON)
+if(PICOVERSE_COPY_TO_DIST)
 add_custom_command(TARGET yamanooto POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/yamanooto.bin ${CMAKE_SOURCE_DIR}/dist/yamanooto.bin
 )
+endif()

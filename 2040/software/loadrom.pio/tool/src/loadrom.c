@@ -24,12 +24,12 @@
 #include <string.h>
 #include <ctype.h>
 #include "uf2format.h"
-#include "loadrom.h"
-#include "nextor_sunrise.h"
-#include "keyboard.h"
-#include "midi_fw.h"
-#include "midipac_fw.h"
-#include "joystick_fw.h"
+#include <loadrom.h>
+#include <nextor_sunrise.h>
+#include <keyboard.h>
+#include <midi_fw.h>
+#include <midipac_fw.h>
+#include <joystick_fw.h>
 #include "sha1.h"
 #include "romdb.h"
 

@@ -71,7 +71,10 @@ target_include_directories(keyboard PRIVATE
 pico_add_extra_outputs(keyboard)
 
 # Copy firmware binary to dist folder for the tool to embed
+option(PICOVERSE_COPY_TO_DIST "Copy built firmware into the legacy dist directory" ON)
+if(PICOVERSE_COPY_TO_DIST)
 add_custom_command(TARGET keyboard POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/keyboard.bin ${CMAKE_SOURCE_DIR}/dist/keyboard.bin
 )
+endif()

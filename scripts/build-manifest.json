@@ -1,0 +1,75 @@
+{
+  "2040-loadrom": {
+    "directory": "2040/software/loadrom.pio/tool",
+    "program": "loadrom",
+    "version": "v2.62",
+    "assets": {
+      "loadrom.h": "../pico/loadrom/dist/loadrom.bin",
+      "nextor_sunrise.h": "../nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM",
+      "keyboard.h": "../pico/keyboard/dist/keyboard.bin",
+      "midi_fw.h": "../pico/midi/dist/midi.bin",
+      "midipac_fw.h": "../pico/midipac/dist/midipac.bin",
+      "joystick_fw.h": "../pico/joystick/dist/joystick.bin"
+    }
+  },
+  "2040-multirom": {
+    "directory": "2040/software/multirom.pio/tool",
+    "program": "multirom",
+    "version": "v2.63",
+    "assets": {
+      "multirom.h": "../pico/multirom/build/multirom.bin",
+      "menu.h": "../msx/dist/menu.rom",
+      "nextor_sunrise.h": "../nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM"
+    }
+  },
+  "2350-loadrom": {
+    "directory": "2350/software/loadrom.pio/tool",
+    "program": "loadrom",
+    "version": "v2.75",
+    "assets": {
+      "loadrom.h": "../pico/loadrom/dist/loadrom.bin",
+      "nextor_sunrise.h": "../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM",
+      "esp8266p_rom.h": "../../wifi/bios/ESP8266P.rom",
+      "fmpac_bios.h": "../fmpac/FMPCCMFC.BIN",
+      "opl4_fw.h": "../pico/opl4/dist/opl4.bin",
+      "opl4_fw_22k.h": "../pico/opl4/dist/opl4_22k.bin",
+      "yrw801_rom.h": "../resources/YRW801-M - Yamaha - 1993.rom",
+      "msxaudio_fw.h": "../pico/msxaudio/dist/msxaudio.bin",
+      "msxaudio_bios.h": "../resources/MSXAUDIO_NMS1205.ROM"
+    }
+  },
+  "2350-multirom": {
+    "directory": "2350/software/multirom.pio/tool",
+    "program": "multirom",
+    "version": "v2.63",
+    "assets": {
+      "multirom.h": "../pico/multirom/build/multirom.bin",
+      "menu.h": "../msx/dist/menu.rom",
+      "nextor_sunrise.h": "../nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM",
+      "esp8266p_rom.h": "../../wifi/bios/ESP8266P.rom"
+    }
+  },
+  "2350-explorer": {
+    "directory": "2350/software/explorer.pio/tool",
+    "program": "explorer",
+    "version": "v2.49",
+    "assets": {
+      "explorer.h": "../pico/explorer/build/explorer.bin",
+      "menu.h": "../msx/dist/menu.rom",
+      "nextor.h": "../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM",
+      "wifibios.h": "../../wifi/config/ESP8266_config.rom",
+      "esp8266p_rom.h": "../../wifi/bios/ESP8266P.rom",
+      "fmpac_bios.h": "../../loadrom.pio/fmpac/FMPCCMFC.BIN",
+      "sfg_bios.h": "../resources/SFG_64K.ROM"
+    }
+  },
+  "2350-yamanooto": {
+    "directory": "2350/software/yamanooto/tool",
+    "program": "yamanooto",
+    "version": "v1.18",
+    "assets": {
+      "yamanooto.h": "../pico/yamanooto/dist/yamanooto.bin",
+      "fmpac_bios.h": "../fmpac/FMPCCMFC.BIN"
+    }
+  }
+}

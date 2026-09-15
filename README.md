@@ -4,6 +4,13 @@
 
 PicoVerse is a community-driven effort to build versatile MSX cartridges powered by Raspberry Pi Pico development boards. The project pairs accessible hardware designs with ready-to-flash firmware so MSX users can jump straight into loading games, tools, and Nextor without having to compile sources.
 
+**This fork:** native macOS/Linux tools and generated system UF2 images are
+published as [release downloads](https://github.com/rillgen/msx-picoverse-public/releases)
+when a tag is pushed. The old `firmware/` directory is replaced by those release
+assets. Run `make tools` or `make firmware` from a clean checkout; see
+[Building and releases](docs/BUILDING.md) for dependencies, optional Pico source
+builds, payload provenance and CI details.
+
 | Cartridge Label - 2040 Variant | Cartridge Label - 2350 Variant |
 |---------|---------|
 |![PicoVerse 2040 Label](/labels/PicoVerse_2040_Label_1.png) | ![PicoVerse 2350 Label](/labels/PicoVerse_2350_Label_1.png) |

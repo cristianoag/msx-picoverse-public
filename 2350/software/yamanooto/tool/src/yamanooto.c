@@ -25,8 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "uf2format.h"
-#include "yamanooto.h"
-#include "fmpac_bios.h"
+#include <yamanooto.h>
+#include <fmpac_bios.h>
 
 #ifndef APP_VERSION
 #define APP_VERSION "v1.18"

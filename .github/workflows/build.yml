@@ -1,0 +1,94 @@
+name: Build tools and firmware
+
+on:
+  push:
+    branches: [main, 'codex/**']
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: macos-arm64
+            runner: macos-15
+          - name: macos-x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build native tools from the bundled payloads
+        run: make tools
+      - name: Test payload embedding and UF2 validation
+        run: make test
+      - name: Package native tools
+        run: python3 scripts/release.py package --only tools
+      - name: Generate and validate every system image
+        run: make firmware
+      - name: Package firmware for release
+        if: matrix.name == 'linux-x86_64'
+        run: python3 scripts/release.py package --only firmware
+      - name: Upload native tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.name }}
+          path: |
+            build/release/picoverse-tools-*.tar.gz
+            build/release/picoverse-tools-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload firmware
+        if: matrix.name == 'linux-x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            build/release/picoverse-firmware.zip
+            build/release/picoverse-firmware.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish tagged release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Create release and upload archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd packages
+          sha256sum -c ./*.sha256
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" ./*.tar.gz ./*.zip ./*.sha256 --clobber

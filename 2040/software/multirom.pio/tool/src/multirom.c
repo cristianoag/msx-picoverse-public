@@ -21,9 +21,9 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include "uf2format.h"
-#include "multirom.h"
-#include "menu.h"
-#include "nextor_sunrise.h"
+#include <multirom.h>
+#include <menu.h>
+#include <nextor_sunrise.h>
 #include "sha1.h"
 #include "romdb.h"
 

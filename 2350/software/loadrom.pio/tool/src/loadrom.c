@@ -24,15 +24,15 @@
 #include <string.h>
 #include <ctype.h>
 #include "uf2format.h"
-#include "loadrom.h"
-#include "nextor_sunrise.h"
-#include "esp8266p_rom.h"
-#include "fmpac_bios.h"
-#include "opl4_fw.h"
-#include "opl4_fw_22k.h"
-#include "yrw801_rom.h"
-#include "msxaudio_fw.h"
-#include "msxaudio_bios.h"
+#include <loadrom.h>
+#include <nextor_sunrise.h>
+#include <esp8266p_rom.h>
+#include <fmpac_bios.h>
+#include <opl4_fw.h>
+#include <opl4_fw_22k.h>
+#include <yrw801_rom.h>
+#include <msxaudio_fw.h>
+#include <msxaudio_bios.h>
 #include "sha1.h"
 #include "romdb.h"
 

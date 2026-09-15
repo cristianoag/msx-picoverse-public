@@ -67,6 +67,9 @@ target_include_directories(loadrom PRIVATE
 pico_add_extra_outputs(loadrom)
 
 # Custom command to copy files to dist folder
+option(PICOVERSE_COPY_TO_DIST "Copy built firmware into the legacy dist directory" ON)
+if(PICOVERSE_COPY_TO_DIST)
 add_custom_command(TARGET loadrom POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/loadrom.bin ${CMAKE_SOURCE_DIR}/dist/loadrom.bin
 )
+endif()

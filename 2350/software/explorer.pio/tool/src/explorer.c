@@ -21,13 +21,13 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include "uf2format.h"
-#include "explorer.h"
-#include "menu.h"
-#include "nextor.h"
-#include "wifibios.h"
-#include "esp8266p_rom.h"
-#include "fmpac_bios.h"
-#include "sfg_bios.h"
+#include <explorer.h>
+#include <menu.h>
+#include <nextor.h>
+#include <wifibios.h>
+#include <esp8266p_rom.h>
+#include <fmpac_bios.h>
+#include <sfg_bios.h>
 #include "mapper_detect.h"
 
 #ifndef APP_VERSION
