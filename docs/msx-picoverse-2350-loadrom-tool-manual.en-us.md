@@ -166,20 +166,49 @@ Flash the resulting UF2 in BOOTSEL mode, then use any MSX-AUDIO software — the
 Append a dot-separated mapper tag before the `.ROM` extension to override detection. Tags are case-insensitive.
 
 Supported tags:
-`PLA-16`, `PLA-32`, `KonSCC`, `PLN-48`, `PLN-64`, `ASC-08`, `ASC-16`, `ASC-16X`, `Konami`, `NEO-8`, `NEO-16`, `MANBW2`.
+`PLA-16`, `PLA-32`, `KonSCC`, `PLN-48`, `PLN-64`, `ASC-08`, `ASC-16`, `ASC-16X`, `ASC16X-FR`, `Konami`, `NEO-8`, `NEO-16`, `MANBW2`.
 
-Additional aliases are accepted for backward compatibility: `PL-16`, `PL-32`, `PL-48`, `PL-64`, `PLN-32`, `PLANAR`, `LINEAR`, `LINEAR0`, `PLANAR48`, `PLANAR64`, `MANBOW2`, `MBW-2`.
+Additional aliases are accepted for backward compatibility: `PL-16`, `PL-32`, `PL-48`, `PL-64`, `PLN-32`, `PLANAR`, `LINEAR`, `LINEAR0`, `PLANAR48`, `PLANAR64`, `ASC16X`, `ASC-16X-FR`, `MANBOW2`, `MBW-2`.
 
 Example:
 
 ```
 Penguin Adventure.PL-32.ROM
 Space Manbow.KonSCC.rom
+Go Figure.ASC16X-FR.rom
 ```
 
 Tags are case-insensitive. If no valid tag is present, the tool first computes the ROM's SHA-1 hash and looks it up in an embedded database derived from the openMSX `softwaredb.xml`. When a match is found the database mapper type is used directly. Otherwise the tool falls back to heuristic detection.
 
 `SYSTEM` is ignored and cannot be forced.
+
+### ASCII16-X with FlashROM (`ASC16X-FR`)
+
+ASCII16-X cartridges carry a real FlashROM chip, and the mapper specification lets software erase sectors and program bytes so a game can store save games, high scores or user created levels inside the cartridge itself.
+
+Auto-detection is deliberately unchanged: a ROM recognised as ASCII16-X is always built as the read-only variant, where flash command sequences are ignored. FlashROM emulation is opt-in through the `ASC16X-FR` filename tag:
+
+```
+loadrom.exe "Go Figure.ASC16X-FR.rom" -o gofigure.uf2
+```
+
+This is the same tag the Explorer tool uses, so a ROM tagged for one tool behaves the same way in the other.
+
+With the tag, the cartridge implements the command set the specification names as the guaranteed minimum — autoselect, CFI query, chip erase, sector erase and byte program — plus the software reset. Sector geometry follows the documented bottom-boot layout: eight 8 KB sectors followed by 64 KB sectors.
+
+The flash contents are mirrored to a file named after the ROM in the root of the microSD card:
+
+```
+/<ROM name>.FLA
+```
+
+The file has no header: it is a byte exact image of the cartridge flash, so it can be copied off the card and inspected, or used as a ROM image. It is matched to the running cartridge by name and size.
+
+Notes:
+- The image is only created the first time a game actually programs the flash, so a card that has never been saved to costs nothing at startup.
+- Without a usable microSD card the flash is still emulated, but its contents are lost at power off.
+- The emulated device is sized to the next power of two at or above the ROM size, up to 8 MB.
+- Combining the tag with `-d` (second PSG) keeps the flash emulation working but makes it volatile, because the PSG engine owns the core that writes the card. The tool warns when this happens.
 
 ---
 

@@ -37,6 +37,7 @@
 #include "pico/audio_i2s.h"
 #include "storage/sunrise_ide.h"
 #include "storage/sunrise_sd.h"
+#include "storage/flash_sd.h"
 #include "memory/c2_emu.h"
 
 // -----------------------------------------------------------------------
@@ -564,6 +565,7 @@ static bool __no_inline_not_in_flash_func(psram_init)(void)
 static psram_region_t mapper_region;
 static psram_region_t c2_rom_region;
 static psram_region_t megaram_region;
+static psram_region_t flash_region;
 
 static struct {
     uint32_t next_free;
@@ -575,6 +577,7 @@ static void psram_mem_init(void)
     memset(&mapper_region, 0, sizeof(mapper_region));
     memset(&c2_rom_region, 0, sizeof(c2_rom_region));
     memset(&megaram_region, 0, sizeof(megaram_region));
+    memset(&flash_region, 0, sizeof(flash_region));
 }
 
 static bool psram_alloc(uint32_t size, psram_region_t *region)
@@ -594,6 +597,7 @@ static void psram_free_all(void)
     memset(&mapper_region, 0, sizeof(mapper_region));
     memset(&c2_rom_region, 0, sizeof(c2_rom_region));
     memset(&megaram_region, 0, sizeof(megaram_region));
+    memset(&flash_region, 0, sizeof(flash_region));
 }
 
 // -----------------------------------------------------------------------
@@ -2560,18 +2564,23 @@ static inline int8_t __not_in_flash_func(bcache_evict)(bank_cache_t *c)
     return best;
 }
 
-// Ensure a bank is resident; returns its slot index.
-static inline int8_t __not_in_flash_func(bcache_ensure)(bank_cache_t *c, uint16_t bank)
+// Normalize a bank number modulo the backing array size so out-of-range
+// banks wrap around, matching real hardware mirror behaviour.
+static inline uint16_t __not_in_flash_func(bcache_norm_bank)(bank_cache_t *c, uint16_t bank)
 {
-    // Normalize bank number modulo ROM size so out-of-range banks wrap
-    // around, matching real hardware mirror behaviour.
     if (c->rom_length > 0u)
     {
         uint16_t total_banks = (uint16_t)(c->rom_length >> c->slot_shift);
         if (total_banks > 0u)
             bank = bank % total_banks;
     }
+    return bank;
+}
 
+// Ensure a bank is resident; returns its slot index.
+static inline int8_t __not_in_flash_func(bcache_ensure)(bank_cache_t *c, uint16_t bank)
+{
+    bank = bcache_norm_bank(c, bank);
     int8_t slot = bcache_find(c, bank);
     if (slot >= 0) { bcache_touch(c, slot); return slot; }
 
@@ -2612,61 +2621,403 @@ static inline void __not_in_flash_func(bcache_prefill)(bank_cache_t *c)
 }
 
 // -----------------------------------------------------------------------
-// AMD-compatible flash command emulation for ASCII16-X
+// ASCII16-X mapper
 // -----------------------------------------------------------------------
-// Real ASCII16-X cartridges use AMD/SST-compatible flash chips.  Some
-// ROMs detect the cartridge by issuing a flash byte-program command and
-// verifying the write.  Others use flash for persistent save data.
+// Two 16KB banks mirrored to all four 16KB address quadrants:
+//   page 1 bank at 4000-7FFF and C000-FFFF
+//   page 2 bank at 0000-3FFF and 8000-BFFF
 //
-// The state machine below intercepts the standard AMD unlock + command
-// sequences and emulates byte-program and sector-erase by modifying the
-// SRAM bank cache directly.
+// Bank register mirrors:
+//   page 1: 2000-2FFF, 6000-6FFF, A000-AFFF, E000-EFFF
+//   page 2: 3000-3FFF, 7000-7FFF, B000-BFFF, F000-FFFF
+//
+// Bank number is 12-bit:
+//   bits 0-7 from data bus (D0-D7)
+//   bits 8-11 from address lines A8-A11
+//
+// Two implementations are provided.  The plain one below treats the
+// cartridge as read-only and ignores everything except bank switching.
+// The FlashROM one further down adds the writable flash device and is
+// selected with the tool's -fr option.
+
+typedef struct {
+    uint16_t     bank_regs[2];
+    bank_cache_t cache;
+} ascii16x_bank_ctx_t;
+
+static inline void __not_in_flash_func(handle_ascii16x_bank_write)(uint16_t addr, uint8_t data, void *ctx)
+{
+    ascii16x_bank_ctx_t *st = (ascii16x_bank_ctx_t *)ctx;
+
+    uint8_t high_nibble = (uint8_t)((addr >> 8) & 0x0Fu);
+    uint16_t bank = ((uint16_t)high_nibble << 8) | data;
+    uint8_t page;
+
+    switch (addr & 0xF000u)
+    {
+        case 0x2000u: case 0x6000u: case 0xA000u: case 0xE000u: page = 0; break;
+        case 0x3000u: case 0x7000u: case 0xB000u: case 0xF000u: page = 1; break;
+        default: return;
+    }
+
+    st->bank_regs[page] = bank;
+    st->cache.page_slot[page] = bcache_ensure(&st->cache, bank);
+}
+
+// -----------------------------------------------------------------------
+// loadrom_ascii16x_plain - read-only ASCII16-X
+// -----------------------------------------------------------------------
+// Uses a mapper-aware LRU cache so every read is served from SRAM.
+// Firmware flash is only accessed during bank-switch cache misses, and
+// writes only ever move the bank registers.
+static void __no_inline_not_in_flash_func(loadrom_ascii16x_plain)(uint32_t offset)
+{
+    ascii16x_bank_ctx_t state;
+    memset(&state, 0, sizeof(state));
+
+    bcache_init(&state.cache, 16384u, 2, rom + offset, active_rom_size);
+    bcache_prefill(&state.cache);
+
+    // Both pages start at bank 0 after reset
+    state.cache.page_slot[0] = bcache_find(&state.cache, 0);
+    state.cache.page_slot[1] = state.cache.page_slot[0];
+
+    msx_pio_bus_init();
+
+    while (true)
+    {
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16x_bank_write, &state);
+
+        pio_drain_writes(handle_ascii16x_bank_write, &state);
+
+        // ASCII16-X mirrors ROM across all 4 quadrants.
+        // Bit 14 selects the page: 1 = page 1 (regs[0]), 0 = page 2 (regs[1]).
+        uint8_t data = 0xFFu;
+        uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
+        int8_t slot = state.cache.page_slot[page_idx];
+
+        if (slot >= 0)
+            data = rom_sram[(uint32_t)slot * state.cache.slot_size + (addr & 0x3FFFu)];
+
+        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(true, data));
+    }
+}
+
+// -----------------------------------------------------------------------
+// AMD-compatible FlashROM emulation for ASCII16-X
+// -----------------------------------------------------------------------
+// ASCII16-X cartridges are built around an AMD/Spansion-compatible
+// FlashROM (the ASCII-X XL 8 MB uses an Infineon S29GL064S), and the
+// mapper specification exposes it to the MSX: software can erase sectors
+// and program bytes to keep save games, high scores or user created
+// levels inside the cartridge.
+//
+// The emulation implements the command set the specification lists as the
+// guaranteed minimum - autoselect, CFI query, chip erase, sector erase and
+// byte program - plus the software reset.  Sector geometry follows the
+// bottom-boot layout the specification documents: eight 8 KB sectors
+// followed by 64 KB sectors.
+//
+// The flash array itself lives in external PSRAM, with the existing LRU
+// bank cache in front of it so MSX reads are still served from internal
+// SRAM at full speed.  Programmed data therefore survives bank switches
+// (a cache refill reads back the modified array), and storage/flash_sd.c
+// mirrors the array into a byte exact image file on the microSD card so
+// it also survives a power cycle.
+//
+// Erases are carried out in small chunks between bus cycles, and while one
+// is running every read returns a busy status word instead of array data,
+// exactly as the real chip does.  The specification already requires the
+// erase/program routine to run from RAM and to poll for completion.
+//
+// Addressing note: the S29GL064S is a x16 device wired in byte mode, which
+// is what the MSX sees.  Commands are therefore decoded on *word*
+// addresses (A-1 is ignored), so the unlock cycles land on byte addresses
+// XAAAh/XAABh and X554h/X555h, and the CFI query on X0AAh/X0ABh.  The
+// autoselect identifiers and the CFI records likewise sit at word offsets,
+// so the MSX reads them at even byte addresses with the word's high byte
+// in between.  Array data itself is plain byte addressed.
+
+#define FLASH_BOOT_SECTORS      8u        // Number of small boot sectors
+#define FLASH_BOOT_SECTOR_SIZE  0x2000u   // 8 KB each
+#define FLASH_MAIN_SECTOR_SIZE  0x10000u  // 64 KB for the rest of the device
+#define FLASH_ERASE_CHUNK       256u      // Bytes cleared per bus iteration
+#define FLASH_CFI_WORDS         0x52u     // CFI records span word 10h-51h
+
+// Command cycle word addresses (byte address >> 1).
+#define FLASH_CMD_WORD_AAA      0x555u    // Unlock cycle 1 and command cycle
+#define FLASH_CMD_WORD_555      0x2AAu    // Unlock cycle 2
+#define FLASH_CMD_WORD_CFI      0x55u     // CFI query (low 8 bits only)
 
 typedef enum {
     FLASH_IDLE = 0,       // Normal read mode
-    FLASH_UNLOCK1,        // Received AAh at *AAAh
-    FLASH_UNLOCK2,        // Received 55h at *555h
-    FLASH_BYTE_PGM,       // Received A0h at *AAAh – next write programs
-    FLASH_ERASE_SETUP,    // Received 80h at *AAAh – awaiting second unlock
-    FLASH_ERASE_UNLOCK1,  // Received AAh at *AAAh (second unlock cycle)
-    FLASH_ERASE_UNLOCK2,  // Received 55h at *555h (second unlock cycle)
+    FLASH_UNLOCK1,        // Received AAh at word 555h
+    FLASH_UNLOCK2,        // Received 55h at word 2AAh
+    FLASH_BYTE_PGM,       // Received A0h at word 555h – next write programs
+    FLASH_ERASE_SETUP,    // Received 80h at word 555h – awaiting second unlock
+    FLASH_ERASE_UNLOCK1,  // Received AAh at word 555h (second unlock cycle)
+    FLASH_ERASE_UNLOCK2,  // Received 55h at word 2AAh (second unlock cycle)
+    FLASH_AUTOSELECT,     // Received 90h – reads return device identifiers
+    FLASH_CFI,            // Received 98h – reads return the CFI records
 } flash_cmd_state_t;
 
 typedef struct {
     uint16_t         bank_regs[2];
     bank_cache_t     cache;
     flash_cmd_state_t flash_state;
+
+    uint8_t         *array;       // Flash array in PSRAM (NULL = read-only ROM)
+    uint32_t         array_size;  // Flash array size in bytes
+    bool             persist;     // microSD image file is active
+
+    bool             erase_active; // Chunked erase in progress
+    uint32_t         erase_pos;
+    uint32_t         erase_end;
+    uint8_t          status_toggle;
+
+    uint16_t         cfi[FLASH_CFI_WORDS];
 } ascii16x_state_t;
+
+// Resolve the flash offset a bus address maps to through the mapper.
+static inline uint32_t __not_in_flash_func(flash_bus_offset)(
+    ascii16x_state_t *st, uint16_t addr)
+{
+    uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
+    uint32_t bank = bcache_norm_bank(&st->cache, st->bank_regs[page_idx]);
+    return (bank << 14) | (uint32_t)(addr & 0x3FFFu);
+}
+
+// Sector containing a given flash offset, clipped to the array.
+static inline void __not_in_flash_func(flash_sector_bounds)(
+    ascii16x_state_t *st, uint32_t off, uint32_t *base, uint32_t *end)
+{
+    uint32_t boot_span = FLASH_BOOT_SECTORS * FLASH_BOOT_SECTOR_SIZE;
+
+    if (off < boot_span)
+        *base = off & ~(FLASH_BOOT_SECTOR_SIZE - 1u);
+    else
+        *base = off & ~(FLASH_MAIN_SECTOR_SIZE - 1u);
+
+    uint32_t size = (off < boot_span) ? FLASH_BOOT_SECTOR_SIZE : FLASH_MAIN_SECTOR_SIZE;
+    uint32_t stop = *base + size;
+    *end = (stop > st->array_size) ? st->array_size : stop;
+}
+
+// Program one byte.  Flash can only clear bits, so the value is ANDed in.
+// The backing array and any cached copy of the bank are both updated.
+static inline void __not_in_flash_func(flash_program_byte)(
+    ascii16x_state_t *st, uint32_t off, uint8_t data)
+{
+    if (st->array != NULL)
+    {
+        if (off >= st->array_size)
+            return;
+
+        st->array[off] &= data;
+        if (st->persist)
+            flash_sd_mark_dirty(off, 1u);
+
+        int8_t slot = bcache_find(&st->cache, (uint16_t)(off >> 14));
+        if (slot >= 0)
+            rom_sram[(uint32_t)slot * st->cache.slot_size + (off & 0x3FFFu)] &= data;
+    }
+    else
+    {
+        // No PSRAM: the cache is the only writable copy, so a programmed
+        // byte lives only for as long as its bank stays resident.
+        int8_t slot = bcache_find(&st->cache, (uint16_t)(off >> 14));
+        if (slot >= 0)
+            rom_sram[(uint32_t)slot * st->cache.slot_size + (off & 0x3FFFu)] &= data;
+    }
+}
+
+// Advance a running erase by one chunk.  Called between bus cycles so the
+// MSX keeps getting serviced while the "chip" is busy.
+static inline void __not_in_flash_func(flash_service_erase)(ascii16x_state_t *st)
+{
+    if (!st->erase_active)
+        return;
+
+    uint32_t pos = st->erase_pos;
+    uint32_t in_bank = pos & 0x3FFFu;
+    uint32_t n = 0x4000u - in_bank;          // never cross a 16 KB bank
+    if (n > FLASH_ERASE_CHUNK)
+        n = FLASH_ERASE_CHUNK;
+    if (pos + n > st->erase_end)
+        n = st->erase_end - pos;
+
+    if (st->array != NULL)
+    {
+        memset(st->array + pos, 0xFFu, n);
+        if (st->persist)
+            flash_sd_mark_dirty(pos, n);
+    }
+
+    int8_t slot = bcache_find(&st->cache, (uint16_t)(pos >> 14));
+    if (slot >= 0)
+        memset(&rom_sram[(uint32_t)slot * st->cache.slot_size + in_bank], 0xFFu, n);
+
+    st->erase_pos = pos + n;
+    if (st->erase_pos >= st->erase_end)
+        st->erase_active = false;
+}
+
+static inline void __not_in_flash_func(flash_start_erase)(
+    ascii16x_state_t *st, uint32_t base, uint32_t end)
+{
+    if (end <= base)
+        return;
+    st->erase_pos = base;
+    st->erase_end = end;
+    st->erase_active = true;
+}
+
+// Autoselect data.  Byte-mode identifiers of the S29GL064S the ASCII-X
+// cartridges are built with; every sector reports as unprotected.  The
+// device is x16, so each identifier is a word that the MSX reads as two
+// consecutive byte addresses.
+static inline uint8_t __not_in_flash_func(flash_autoselect_byte)(uint16_t addr)
+{
+    uint16_t word;
+
+    switch ((addr >> 1) & 0x0Fu)
+    {
+        case 0x00u: word = 0x0001u; break;  // Manufacturer: AMD / Spansion / Infineon
+        case 0x01u: word = 0x227Eu; break;  // Device ID cycle 1
+        case 0x02u: word = 0x0000u; break;  // Sector protection: unprotected
+        case 0x0Eu: word = 0x2210u; break;  // Device ID cycle 2: 64 Mbit density
+        case 0x0Fu: word = 0x2201u; break;  // Device ID cycle 3: bottom boot
+        default:    word = 0x0000u; break;
+    }
+
+    return (addr & 1u) ? (uint8_t)(word >> 8) : (uint8_t)word;
+}
+
+// Read one byte of the CFI records.  The records are 8-bit values held in
+// the low half of each word, so odd byte addresses read back as zero.
+static inline uint8_t __not_in_flash_func(flash_cfi_byte)(ascii16x_state_t *st, uint16_t addr)
+{
+    if (addr & 1u)
+        return 0x00u;
+
+    uint16_t index = (addr >> 1) & 0x00FFu;
+    return (index < FLASH_CFI_WORDS) ? (uint8_t)st->cfi[index] : 0x00u;
+}
+
+// Build the CFI records for the emulated device size.  Indices are word
+// offsets, which is how the CFI specification numbers them.
+static void __not_in_flash_func(flash_build_cfi)(ascii16x_state_t *st)
+{
+    uint16_t *cfi = st->cfi;
+    memset(cfi, 0, sizeof(st->cfi));
+
+    cfi[0x10] = 'Q'; cfi[0x11] = 'R'; cfi[0x12] = 'Y';
+    cfi[0x13] = 0x02;                      // Primary command set: AMD/Fujitsu
+    cfi[0x15] = 0x40;                      // Primary extended table at 40h
+    cfi[0x1B] = 0x27;                      // Vcc min 2.7 V
+    cfi[0x1C] = 0x36;                      // Vcc max 3.6 V
+    cfi[0x1F] = 0x06;                      // Typical byte program: 2^6 us
+    cfi[0x20] = 0x00;                      // No buffered programming
+    cfi[0x21] = 0x09;                      // Typical sector erase: 2^9 ms
+    cfi[0x22] = 0x13;                      // Typical chip erase: 2^19 ms
+    cfi[0x23] = 0x03;                      // Max byte program: 2^3 x typical
+    cfi[0x24] = 0x00;                      // No buffered programming
+    cfi[0x25] = 0x03;                      // Max sector erase: 2^3 x typical
+    cfi[0x26] = 0x02;                      // Max chip erase: 2^2 x typical
+
+    uint8_t size_log2 = 0;
+    while ((1u << size_log2) < st->array_size)
+        size_log2++;
+    cfi[0x27] = size_log2;                 // Device size: 2^n bytes
+    cfi[0x28] = 0x00; cfi[0x29] = 0x00;    // Interface: x8 only
+    // Byte program is the only write command implemented, so no write
+    // buffer is advertised and software cannot pick a buffered algorithm.
+    cfi[0x2A] = 0x00;
+
+    uint32_t boot_span = FLASH_BOOT_SECTORS * FLASH_BOOT_SECTOR_SIZE;
+    if (st->array_size > boot_span)
+    {
+        uint32_t main_blocks = (st->array_size - boot_span) / FLASH_MAIN_SECTOR_SIZE;
+        cfi[0x2C] = 0x02;                                    // Two erase regions
+        cfi[0x2D] = FLASH_BOOT_SECTORS - 1u;                 // 8 x 8 KB
+        cfi[0x2F] = (uint8_t)(FLASH_BOOT_SECTOR_SIZE >> 8);  // Size in 256-byte units
+        cfi[0x31] = (uint8_t)((main_blocks - 1u) & 0xFFu);   // n x 64 KB
+        cfi[0x32] = (uint8_t)((main_blocks - 1u) >> 8);
+        cfi[0x34] = (uint8_t)(FLASH_MAIN_SECTOR_SIZE >> 16);
+    }
+    else
+    {
+        uint32_t boot_blocks = st->array_size / FLASH_BOOT_SECTOR_SIZE;
+        cfi[0x2C] = 0x01;
+        cfi[0x2D] = (uint8_t)((boot_blocks - 1u) & 0xFFu);
+        cfi[0x2E] = (uint8_t)((boot_blocks - 1u) >> 8);
+        cfi[0x2F] = (uint8_t)(FLASH_BOOT_SECTOR_SIZE >> 8);
+    }
+
+    cfi[0x40] = 'P'; cfi[0x41] = 'R'; cfi[0x42] = 'I';
+    cfi[0x43] = '1'; cfi[0x44] = '3';      // Extended table revision 1.3
+    // Everything else in the primary extended table stays zero: no erase
+    // suspend, no sector protection and no burst or page mode, none of
+    // which this emulation implements.
+    cfi[0x4F] = 0x02;                      // Bottom boot sector device
+}
 
 // Process a bus write through the AMD flash command state machine.
 static inline void __not_in_flash_func(flash_process_write)(
     ascii16x_state_t *st, uint16_t addr, uint8_t data)
 {
-    uint16_t cmd_addr = addr & 0x0FFFu;
+    // A real device ignores commands while an embedded erase is running.
+    // Accepting them here would let a program corrupt the sector being
+    // erased, or let a second erase abandon the one in progress.
+    if (st->erase_active)
+        return;
+
+    // Command cycles are decoded on the word address, so the lowest byte
+    // address bit is a don't-care (byte mode A-1).
+    uint16_t cmd_word = (uint16_t)((addr >> 1) & 0x07FFu);
+
+    // F0h always returns the device to read mode, and a CFI query needs no
+    // unlock sequence, so both are accepted from any read-mode state.
+    if (data == 0xF0u &&
+        (st->flash_state == FLASH_IDLE || st->flash_state == FLASH_AUTOSELECT ||
+         st->flash_state == FLASH_CFI))
+    {
+        st->flash_state = FLASH_IDLE;
+        return;
+    }
+
+    if (data == 0x98u && (cmd_word & 0x00FFu) == FLASH_CMD_WORD_CFI &&
+        (st->flash_state == FLASH_IDLE || st->flash_state == FLASH_AUTOSELECT))
+    {
+        st->flash_state = FLASH_CFI;
+        return;
+    }
 
     switch (st->flash_state)
     {
         case FLASH_IDLE:
-            if (cmd_addr == 0x0AAAu && data == 0xAAu)
+        case FLASH_AUTOSELECT:
+        case FLASH_CFI:
+            if (cmd_word == FLASH_CMD_WORD_AAA && data == 0xAAu)
                 st->flash_state = FLASH_UNLOCK1;
-            else if (data == 0xF0u)
-                st->flash_state = FLASH_IDLE;  // Reset to read mode
             break;
 
         case FLASH_UNLOCK1:
-            if (cmd_addr == 0x0555u && data == 0x55u)
+            if (cmd_word == FLASH_CMD_WORD_555 && data == 0x55u)
                 st->flash_state = FLASH_UNLOCK2;
             else
                 st->flash_state = FLASH_IDLE;
             break;
 
         case FLASH_UNLOCK2:
-            if (cmd_addr == 0x0AAAu)
+            if (cmd_word == FLASH_CMD_WORD_AAA)
             {
                 switch (data)
                 {
-                    case 0xA0u: st->flash_state = FLASH_BYTE_PGM;    break;
+                    case 0xA0u: st->flash_state = FLASH_BYTE_PGM;     break;
                     case 0x80u: st->flash_state = FLASH_ERASE_SETUP;  break;
+                    case 0x90u: st->flash_state = FLASH_AUTOSELECT;   break;
+                    case 0xF0u: st->flash_state = FLASH_IDLE;         break;
                     default:    st->flash_state = FLASH_IDLE;         break;
                 }
             }
@@ -2675,29 +3026,19 @@ static inline void __not_in_flash_func(flash_process_write)(
             break;
 
         case FLASH_BYTE_PGM:
-        {
-            // Program one byte: flash can only clear bits (AND-mask).
-            uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
-            int8_t slot = st->cache.page_slot[page_idx];
-            if (slot >= 0)
-            {
-                uint32_t off = (uint32_t)slot * st->cache.slot_size
-                             + (addr & 0x3FFFu);
-                rom_sram[off] &= data;
-            }
+            flash_program_byte(st, flash_bus_offset(st, addr), data);
             st->flash_state = FLASH_IDLE;
             break;
-        }
 
         case FLASH_ERASE_SETUP:
-            if (cmd_addr == 0x0AAAu && data == 0xAAu)
+            if (cmd_word == FLASH_CMD_WORD_AAA && data == 0xAAu)
                 st->flash_state = FLASH_ERASE_UNLOCK1;
             else
                 st->flash_state = FLASH_IDLE;
             break;
 
         case FLASH_ERASE_UNLOCK1:
-            if (cmd_addr == 0x0555u && data == 0x55u)
+            if (cmd_word == FLASH_CMD_WORD_555 && data == 0x55u)
                 st->flash_state = FLASH_ERASE_UNLOCK2;
             else
                 st->flash_state = FLASH_IDLE;
@@ -2706,12 +3047,13 @@ static inline void __not_in_flash_func(flash_process_write)(
         case FLASH_ERASE_UNLOCK2:
             if (data == 0x30u)
             {
-                // Sector erase: fill the mapped cache slot with FFh.
-                uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
-                int8_t slot = st->cache.page_slot[page_idx];
-                if (slot >= 0)
-                    memset(&rom_sram[(uint32_t)slot * st->cache.slot_size],
-                           0xFFu, st->cache.slot_size);
+                uint32_t base, end;
+                flash_sector_bounds(st, flash_bus_offset(st, addr), &base, &end);
+                flash_start_erase(st, base, end);
+            }
+            else if (data == 0x10u && cmd_word == FLASH_CMD_WORD_AAA)
+            {
+                flash_start_erase(st, 0u, st->array_size);
             }
             st->flash_state = FLASH_IDLE;
             break;
@@ -2743,30 +3085,73 @@ static inline void __not_in_flash_func(handle_ascii16x_write_cached)(uint16_t ad
 }
 
 // -----------------------------------------------------------------------
-// loadrom_ascii16x - ASCII16-X mapper
+// loadrom_ascii16x_flash - ASCII16-X with FlashROM emulation
 // -----------------------------------------------------------------------
-// Two 16KB banks mirrored to all four 16KB address quadrants:
-//   page 1 bank at 4000-7FFF and C000-FFFF
-//   page 2 bank at 0000-3FFF and 8000-BFFF
-//
-// Bank register mirrors:
-//   page 1: 2000-2FFF, 6000-6FFF, A000-AFFF, E000-EFFF
-//   page 2: 3000-3FFF, 7000-7FFF, B000-BFFF, F000-FFFF
-//
-// Bank number is 12-bit:
-//   bits 0-7 from data bus (D0-D7)
-//   bits 8-11 from address lines A8-A11
-//
-// Uses a mapper-aware LRU cache so every read is served from SRAM.
-// Flash is only accessed during bank-switch cache misses.
-void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache_enable)
-{
-    (void)cache_enable;
+// The cartridge ROM is staged into external PSRAM, which becomes the
+// writable FlashROM array, and a mapper-aware LRU cache in internal SRAM
+// serves every MSX read.  Core 1 mirrors the array to a .FLA image file on
+// the microSD card so flash writes survive a power cycle.
+static void __no_inline_not_in_flash_func(loadrom_ascii16x_flash)(uint32_t offset)
+{    // Freeze the MSX for the whole of the PSRAM staging and card access.
+    gpio_init(PIN_WAIT);
+    gpio_set_dir(PIN_WAIT, GPIO_OUT);
+    gpio_put(PIN_WAIT, 0);
 
-    ascii16x_state_t state;
+    static ascii16x_state_t state;
     memset(&state, 0, sizeof(state));
 
-    bcache_init(&state.cache, 16384u, 2, rom + offset, active_rom_size);
+    // Size the emulated device like the real thing: a power of two, at
+    // least as large as the cartridge ROM, with anything past the end of
+    // the ROM reading as erased (FFh). This also makes the mapper wrap
+    // out-of-range bank numbers at the device size, as hardware does.
+    uint32_t array_size = FLASH_MAIN_SECTOR_SIZE;
+    while (array_size < active_rom_size && array_size < PSRAM_TOTAL_SIZE)
+        array_size <<= 1;
+    state.array_size = array_size;
+
+    // Stage the cartridge ROM into PSRAM. Without working PSRAM the mapper
+    // still runs, but the flash array is limited to whatever the bank cache
+    // happens to hold and nothing is persisted.
+    if (psram_init())
+    {
+        psram_mem_init();
+        if (psram_alloc(array_size, &flash_region))
+        {
+            state.array = flash_region.ptr;
+
+            uint32_t copied = (active_rom_size < array_size) ? active_rom_size : array_size;
+            memcpy(state.array, rom + offset, copied);
+            if (copied < array_size)
+                memset(state.array + copied, 0xFFu, array_size - copied);
+        }
+    }
+
+    // Restore the saved flash image from the card, or create it. Core 1 is
+    // only free when no on-cartridge audio engine has claimed it.
+    if (state.array != NULL && !dual_psg_audio_started && !scc_audio_ready)
+    {
+        flash_sd_configure((const char *)rom, state.array, state.array_size,
+                           rom + offset, active_rom_size);
+        multicore_launch_core1(flash_sd_task);
+
+        // Wait for the card pass to finish before touching the array again.
+        // Core 1 is still rewriting it, so starting the bus (and filling the
+        // bank cache from it) here would serve partially restored data and
+        // leave pinned cache pages permanently stale. The card driver has
+        // its own timeouts, so a missing or unresponsive card still gets
+        // here quickly; it just reports no backing file.
+        while (!flash_sd_ready())
+            tight_loop_contents();
+
+        state.persist = flash_sd_backed();
+    }
+
+    flash_build_cfi(&state);
+
+    if (state.array != NULL)
+        bcache_init(&state.cache, 16384u, 2, state.array, state.array_size);
+    else
+        bcache_init(&state.cache, 16384u, 2, rom + offset, active_rom_size);
     bcache_prefill(&state.cache);
 
     // Both pages start at bank 0 after reset
@@ -2775,23 +3160,82 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
 
     msx_pio_bus_init();
 
+    const uint32_t read_empty  = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_read);
+    const uint32_t write_empty = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_write);
+
     while (true)
     {
-        uint16_t addr = pio_get_read_draining_writes(handle_ascii16x_write_cached, &state);
+        uint16_t addr;
+
+        // Wait for the next read, draining bank-switch/flash writes and
+        // advancing any running erase while the bus is idle.
+        while (true)
+        {
+            dual_psg_service_io();
+
+            uint32_t fstat = msx_bus.pio->fstat;
+
+            if (!(fstat & read_empty))
+            {
+                addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+                break;
+            }
+
+            if (!(fstat & write_empty))
+                pio_drain_writes(handle_ascii16x_write_cached, &state);
+            else
+                flash_service_erase(&state);
+        }
 
         pio_drain_writes(handle_ascii16x_write_cached, &state);
 
         // ASCII16-X mirrors ROM across all 4 quadrants.
         // Bit 14 selects the page: 1 = page 1 (regs[0]), 0 = page 2 (regs[1]).
         uint8_t data = 0xFFu;
-        uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
-        int8_t slot = state.cache.page_slot[page_idx];
 
-        if (slot >= 0)
-            data = rom_sram[(uint32_t)slot * state.cache.slot_size + (addr & 0x3FFFu)];
+        if (state.erase_active)
+        {
+            // Busy status: DQ7 low, DQ6 toggling, DQ3 set (erase timer
+            // expired). Any read of the device reports it while erasing.
+            state.status_toggle ^= 0x40u;
+            data = 0x08u | state.status_toggle;
+        }
+        else if (state.flash_state == FLASH_AUTOSELECT)
+        {
+            data = flash_autoselect_byte(addr);
+        }
+        else if (state.flash_state == FLASH_CFI)
+        {
+            data = flash_cfi_byte(&state, addr);
+        }
+        else
+        {
+            uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
+            int8_t slot = state.cache.page_slot[page_idx];
+
+            if (slot >= 0)
+                data = rom_sram[(uint32_t)slot * state.cache.slot_size + (addr & 0x3FFFu)];
+        }
 
         pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(true, data));
+
+        // Keep an erase moving even while the MSX polls the cartridge
+        // without ever leaving the bus idle.
+        flash_service_erase(&state);
     }
+}
+
+// FlashROM emulation is opt-in (the tool's -fr option). Without it the
+// cartridge behaves as a read-only ASCII16-X and flash command sequences
+// are ignored, which is what almost every ASCII16-X ROM expects.
+void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache_enable, bool flashrom)
+{
+    (void)cache_enable;
+
+    if (flashrom)
+        loadrom_ascii16x_flash(offset);
+    else
+        loadrom_ascii16x_plain(offset);
 }
 
 // -----------------------------------------------------------------------
@@ -4386,7 +4830,7 @@ int __no_inline_not_in_flash_func(main)()
                 loadrom_sunrise_mapper(ROM_RECORD_SIZE, true);
             break;
         case 12:
-            loadrom_ascii16x(ROM_RECORD_SIZE, true);
+            loadrom_ascii16x(ROM_RECORD_SIZE, true, (rom_type & FLASHROM_FLAG) != 0);
             break;
         case 13:
             loadrom_planar64(ROM_RECORD_SIZE, true);

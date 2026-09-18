@@ -83,6 +83,7 @@ typedef struct {
 #define SCC_SAMPLE_RATE 44100
 #define SCC_CLOCK       3579545
 #define SCC_FLAG        0x80u   // Bit flag in rom_type for SCC emulation
+#define FLASHROM_FLAG   0x80u   // Non-SCC mapper flag for ASCII16-X FlashROM emulation
 #define SCC_PLUS_FLAG   0x40u   // Bit flag in rom_type for SCC+ (enhanced) emulation
 #define WIFI_FLAG       0x20u   // Bit flag in rom_type for Sunrise WiFi system ROM + memio UART
 #define MSX_MUSIC_FLAG  0x20u   // Non-SYSTEM ROM flag for MSX-MUSIC/YM2413 emulation

@@ -182,11 +182,6 @@ unsigned char record_mapper_code(unsigned char mapper) {
     return mapper & ~(SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
 }
 
-int record_mapper_is_override(unsigned char mapper) {
-    (void)mapper;
-    return 0;
-}
-
 static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width) {
     const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
     const char *type_label = " ROM";
@@ -805,16 +800,20 @@ static int wait_for_key_with_scroll(void)
 // mapper_description - Get the description of the mapper type
 // This function will return the description of the mapper type based on the mapper number.
 char* mapper_description(int number) {
-    // Array of strings for the descriptions
-    const char *descriptions[] = {"PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08", "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC16X", "PLN-64", "MANBW2"};
+    // Array of strings for the descriptions. Static so SDCC keeps it in ROM
+    // instead of rebuilding the pointer table on the stack at every call.
+    static const char *const descriptions[] = {"PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08", "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC16X", "PLN-64", "MANBW2"};
     number = record_mapper_code((unsigned char)number);
     if (number >= 15 && number <= 21) {
         return "SYSTEM";
     }
+    if (number == 22) {
+        return "ASC16X-FR";
+    }
     if (number <= 0 || number > 14) {
         return "Unknown";
     }
-    return descriptions[number - 1];
+    return (char *)descriptions[number - 1];
 }
 
 // --- Menu rendering ---

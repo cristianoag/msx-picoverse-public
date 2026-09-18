@@ -28,7 +28,10 @@
 #define SOURCE_SD_FLAG 0x80
 #define FOLDER_FLAG 0x40
 #define MP3_FLAG 0x20
-#define OVERRIDE_FLAG 0x10
+/* Bits 0-4 of the mapper byte hold the mapper code (up to 31). 0x10 was once
+   reserved as an "override" flag, which would have collided with every mapper
+   code from 16 up, including ASC16X-FR. */
+#define MAPPER_ASCII16X_FR 22
 #define AUDIO_TYPE_MASK 0x0F
 #define AUDIO_TYPE_WAV 0x01
 #define NAME_COL_WIDTH 22
@@ -211,7 +214,6 @@ int putchar (int character);
 void invert_chars(unsigned char startChar, unsigned char endChar);
 char* mapper_description(int number);
 unsigned char record_mapper_code(unsigned char mapper);
-int record_mapper_is_override(unsigned char mapper);
 int record_is_folder(const ROMRecord *record);
 int record_is_mp3(const ROMRecord *record);
 void trim_name_to_buffer(const char *src, char *dst, int max_len);

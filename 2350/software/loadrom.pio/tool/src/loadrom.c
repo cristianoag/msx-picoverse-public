@@ -104,6 +104,13 @@ static const char *rom_types[] = {
 #define ROM_TYPE_DUAL_PSG_FLAG 0x10
 #define ROM_TYPE_MSX_MUSIC_FLAG 0x20
 #define ROM_TYPE_WIFI_FLAG 0x20
+// FlashROM is carried as a flag bit rather than a mapper number of its own.
+// loadrom packs the audio flags into the upper nibble of the mapper byte, so
+// the firmware decodes a non-SYSTEM mapper as `rom_type & 0x0F` and only
+// values 1-15 are available - Explorer's mapper 22 would decode to 6
+// (ASCII16) here. The bit reused is the SCC flag, which is only meaningful
+// for the SCC-capable mappers (Konami SCC and Manbow2).
+#define ROM_TYPE_FLASHROM_FLAG 0x80
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
@@ -121,7 +128,25 @@ static bool equals_ignore_case(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
-static uint8_t mapper_number_from_description(const char *description) {
+// Resolve a filename tag to a mapper number (0 = unrecognised). Tags are
+// case-insensitive. `flashrom_out` is set when the tag additionally selects
+// ASCII16-X FlashROM emulation, which the firmware takes from a flag bit
+// rather than a mapper number of its own (see ROM_TYPE_FLASHROM_FLAG).
+static uint8_t mapper_number_from_description(const char *description, bool *flashrom_out) {
+    if (flashrom_out) {
+        *flashrom_out = false;
+    }
+
+    // ASCII16-X with FlashROM. Same tag Explorer uses, so a ROM tagged for
+    // one tool behaves the same way in the other.
+    if (equals_ignore_case(description, "ASC16X-FR") ||
+        equals_ignore_case(description, "ASC-16X-FR")) {
+        if (flashrom_out) {
+            *flashrom_out = true;
+        }
+        return ROM_TYPE_ASCII16X;
+    }
+
     for (size_t i = 0; i < MAPPER_DESCRIPTION_COUNT; ++i) {
         if (equals_ignore_case(description, MAPPER_DESCRIPTIONS[i])) {
             return (uint8_t)(i + 1);
@@ -140,6 +165,10 @@ static uint8_t mapper_number_from_description(const char *description) {
     }
     if (equals_ignore_case(description, "PL-64") || equals_ignore_case(description, "PLANAR64")) {
         return ROM_TYPE_PLANAR64;
+    }
+    // ASC16X is the spelling Explorer uses for the read-only variant.
+    if (equals_ignore_case(description, "ASC16X")) {
+        return ROM_TYPE_ASCII16X;
     }
     if (equals_ignore_case(description, "MANBOW2") || equals_ignore_case(description, "MBW-2")) {
         return ROM_TYPE_MANBOW2;
@@ -454,8 +483,15 @@ static void print_usage(const char *prog_name) {
         printf("%s", MAPPER_DESCRIPTIONS[i]);
         first = false;
     }
+    printf(", ASC16X-FR");
     printf("\n");
     printf("Example: \"Knight Mare.PLA-32.ROM\" forces PLA-32; \"SYSTEM\" tags are ignored.\n");
+    printf("\n");
+    printf("ASCII16-X ROMs can emulate the cartridge FlashROM, so games can erase sectors and\n");
+    printf("program bytes to store saves. Tag the file \"<name>.ASC16X-FR.ROM\" to enable it; the\n");
+    printf("flash contents are mirrored to \"<ROM name>.FLA\" in the root of the microSD card,\n");
+    printf("which is a byte exact image of the cartridge flash. A ROM detected or forced as\n");
+    printf("plain ASC-16X is read-only and flash command sequences are ignored.\n");
 }
 
 // create_uf2_file - Create the UF2 file
@@ -1044,6 +1080,7 @@ int main(int argc, char *argv[])
     }
 
     bool mapper_forced_by_tag = false;
+    bool flashrom = false;
     uint8_t mapper_from_tag = 0;
     const char *name_end = extension;
     const char *last_period = NULL;
@@ -1064,12 +1101,14 @@ int main(int argc, char *argv[])
             memcpy(mapper_token, token_start, token_length);
             mapper_token[token_length] = '\0';
 
-            uint8_t candidate = mapper_number_from_description(mapper_token);
+            bool flashrom_from_tag = false;
+            uint8_t candidate = mapper_number_from_description(mapper_token, &flashrom_from_tag);
             if (candidate == 10 || candidate == 11 || candidate == 15 || candidate == 16 || candidate == 17 || candidate == 18) {
                 printf("Ignoring SYSTEM mapper tag in %s (cannot be forced)\n", base_name);
             } else if (candidate != 0) {
                 mapper_forced_by_tag = true;
                 mapper_from_tag = candidate;
+                flashrom = flashrom_from_tag;
                 name_end = last_period;
             }
         }
@@ -1095,6 +1134,8 @@ int main(int argc, char *argv[])
         mapper_label = "[Auto-detected]";
     }
     printf("ROM Type: %s %s\n", rom_types[rom_type], mapper_label);
+
+    const uint8_t base_mapper = rom_type;
 
     if (scc_emulation) {
         if (rom_type == 3 || rom_type == ROM_TYPE_MANBOW2) {
@@ -1129,6 +1170,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (flashrom) {
+        rom_type |= ROM_TYPE_FLASHROM_FLAG;
+    }
+
     if (dual_psg) {
         rom_type |= ROM_TYPE_DUAL_PSG_FLAG;
         printf("Dual PSG Emulation: Enabled on I/O ports 0x10/0x11\n");
@@ -1157,6 +1202,26 @@ int main(int argc, char *argv[])
     printf("ROM Size: %u bytes\n", rom_size);
     printf("Pico Offset: 0x%08X\n", base_offset);
     printf("UF2 Output: %s\n", output_filename);
+
+    if (base_mapper == ROM_TYPE_ASCII16X) {
+        if (!flashrom) {
+            printf("FlashROM Emulation: Disabled (tag the ROM .ASC16X-FR.ROM to enable)\n");
+        } else {
+            // The firmware emulates a device the next power of two up from
+            // the ROM, capped by the 8MB PSRAM it is staged in.
+            uint32_t flash_size = 64u * 1024u;
+            while (flash_size < rom_size && flash_size < 8u * 1024u * 1024u) {
+                flash_size <<= 1;
+            }
+            printf("FlashROM Emulation: Enabled, %u KB device (autoselect, CFI, chip/sector erase, byte program)\n",
+                   flash_size / 1024u);
+            if (dual_psg) {
+                printf("Warning: FlashROM writes will not be saved to microSD (-d needs the core that writes the card)\n");
+            } else {
+                printf("FlashROM Image: /%s.FLA in the root of the microSD card\n", rom_name);
+            }
+        }
+    }
 
     create_uf2_file(rom_filename, NULL, rom_size, fmpac_bios_rom, fmpac_bios_size, rom_type, rom_name, base_offset, output_filename);
     return 0;

@@ -95,6 +95,8 @@ void __no_inline_not_in_flash_func(loadrom_c2_usb)(uint32_t offset, bool cache_e
 void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset);
 void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset);
 void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache_enable);
+void __no_inline_not_in_flash_func(loadrom_ascii16x_flash)(uint32_t offset, bool cache_enable,
+                                                           const char *rom_name);
 void __no_inline_not_in_flash_func(loadrom_planar64)(uint32_t offset, bool cache_enable);
 void __no_inline_not_in_flash_func(loadrom_manbow2)(uint32_t offset, bool cache_enable);
 void __no_inline_not_in_flash_func(loadrom_manbow2_scc)(uint32_t offset, bool cache_enable, uint32_t scc_type);

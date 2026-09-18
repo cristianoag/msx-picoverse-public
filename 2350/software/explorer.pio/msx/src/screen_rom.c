@@ -36,6 +36,7 @@ static void render_rom_wifi_line(unsigned char row, unsigned char wifi_enabled, 
 static void render_rom_action_line(unsigned char row, int selected);
 static void render_rom_options_block(void);
 static void render_rom_footer_line(void);
+static void render_rom_flash_notice(void);
 static void show_mp3_screen(unsigned int index);
 static void render_mp3_screen(const ROMRecord *record);
 static void render_mp3_counter_line(void);
@@ -78,6 +79,15 @@ static int sel_freq, sel_cpu, sel_part, sel_wifi, sel_action;
    handlers and the argument marshalling alone cost hundreds of ROM bytes. */
 static ROMRecord *cur_record;
 static unsigned char cur_waiting_mapper;
+/* Set once the mapper shown is a user choice rather than the detected one,
+   so the "(detected)" suffix is dropped. Covers a mapper cycled with
+   Left/Right and one restored from a saved .PVC file. */
+static unsigned char cur_mapper_overridden;
+/* The firmware updates its in-memory record as soon as a mapper is forced,
+   so on re-entry a saved override is indistinguishable from a detection.
+   Remember the entry the user last changed to keep the label right. */
+static unsigned int forced_mapper_index;
+static unsigned char forced_mapper_valid;
 static unsigned char cur_audio_profile;
 static unsigned char cur_psg_enabled;
 static unsigned char cur_wifi_enabled;
@@ -333,6 +343,7 @@ void show_rom_screen(unsigned int index) {
 
     cur_record = record;
     cur_waiting_mapper = 0;
+    cur_mapper_overridden = (forced_mapper_valid && forced_mapper_index == index) ? 1 : 0;
     cur_audio_profile = AUDIO_PROFILE_NONE;
     cur_psg_enabled = 1;
     cur_wifi_enabled = 0;
@@ -378,6 +389,13 @@ void show_rom_screen(unsigned int index) {
     if (!cur_waiting_mapper) {
         options_loaded = send_load_options(index, &cur_audio_profile, &cur_psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
         if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
+                /* CTRL_MAPPER echoes back whatever mapper the firmware
+                   resolved, which equals the detected one when no override was
+                   ever saved. Only a value that differs from what the record
+                   already carries is a real user choice. */
+                if (saved_mapper != record_mapper_code(record->Mapper)) {
+                    cur_mapper_overridden = 1;
+                }
                 record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
         }
     }
@@ -413,6 +431,9 @@ void show_rom_screen(unsigned int index) {
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
                     send_save_options(index, cur_audio_profile, cur_psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
+                    if (record_mapper_code(record->Mapper) == MAPPER_ASCII16X_FR) {
+                        render_rom_flash_notice();
+                    }
                     loadGame((int)index);
                     return;
                 }
@@ -431,7 +452,7 @@ void show_rom_screen(unsigned int index) {
                 }
             }
             if ((key == 28 || key == 29) && cur_selection == 0 && !cur_waiting_mapper && allow_mapper_override) {
-                static const unsigned char mapper_cycle[] = {1,2,3,4,5,6,7,8,9,12,13,14};
+                static const unsigned char mapper_cycle[] = {1,2,3,4,5,6,7,8,9,12,13,14,22};
                 const unsigned int mapper_count = (unsigned int)(sizeof(mapper_cycle) / sizeof(mapper_cycle[0]));
                 unsigned char mapper_code = record_mapper_code(record->Mapper);
                 int dir = (key == 28) ? 1 : -1;
@@ -456,6 +477,9 @@ void show_rom_screen(unsigned int index) {
                 unsigned char next_mapper = mapper_cycle[next_index];
                 if (send_set_mapper(index, next_mapper)) {
                     record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | next_mapper;
+                    cur_mapper_overridden = 1;
+                    forced_mapper_index = index;
+                    forced_mapper_valid = 1;
                     cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
                     render_rom_options_block();
                 }
@@ -473,7 +497,7 @@ void show_rom_screen(unsigned int index) {
                 }
                 render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && cur_selection == psg_selection && allow_psg) {
+            if ((key == 28 || key == 29) && cur_selection == psg_selection && allow_psg && !cur_wifi_enabled) {
                 cur_psg_enabled = cur_psg_enabled ? 0 : 1;
                 render_rom_options_block();
             }
@@ -510,6 +534,13 @@ void show_rom_screen(unsigned int index) {
             }
             if ((key == 28 || key == 29) && rom_allow_wifi && cur_selection == sel_wifi) {
                 cur_wifi_enabled = cur_wifi_enabled ? 0 : 1;
+                if (cur_wifi_enabled) {
+                    /* WiFi takes the cartridge exclusively (see
+                       audio_profile_is_supported): drop the audio options so
+                       the screen shows what will actually be launched. */
+                    cur_audio_profile = AUDIO_PROFILE_NONE;
+                    cur_psg_enabled = 0;
+                }
                 render_rom_options_block();
             }
             if (key == 'C' || key == 'c') {
@@ -530,6 +561,11 @@ void show_rom_screen(unsigned int index) {
             if (!options_loaded) {
                 options_loaded = send_load_options(index, &cur_audio_profile, &cur_psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
                 if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
+                    /* Same as above: only a saved mapper that differs from the
+                       one just detected counts as a user override. */
+                    if (saved_mapper != record_mapper_code(record->Mapper)) {
+                        cur_mapper_overridden = 1;
+                    }
                     record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
                 }
             }
@@ -664,6 +700,17 @@ static void render_rom_footer_line(void) {
     menu_ui_clear_rows(22, 24);
     Locate(0, 22);
     printf(menu_ui_status_text("[ESC-BACK] [L/R-CHANGE]", "[ESC - BACK] [LEFT/RIGHT - CHANGE]"));
+}
+
+/* ASC16X-FR stages the whole cartridge into PSRAM and syncs it with the
+   .FLA image on the microSD before the game starts, which takes a few
+   seconds on a multi-megabyte ROM. Say so before resetting so the pause
+   does not look like a hang. One string for both column modes: it fits in
+   40 columns, and menu ROM space is scarce. */
+static void render_rom_flash_notice(void) {
+    menu_ui_clear_rows(22, 24);
+    Locate(0, 22);
+    printf("Preparing FlashROM image, please wait...");
 }
 static void send_mp3_select(unsigned int index) {
     Poke(MP3_CTRL_INDEX_L, (unsigned char)(index & 0xFFu));
@@ -921,49 +968,38 @@ static void show_mp3_screen(unsigned int index) {
 }
 
 static void build_mapper_text(const ROMRecord *record, int waiting_mapper, char *out, size_t out_size) {
-    if (!out || out_size == 0) {
+    /* Callers pass a 48-byte buffer and the longest result is
+       "ASC16X-FR (detected)" at 20 characters, so no truncation is needed. */
+    (void)out_size;
+
+    if (!out) {
         return;
     }
 
     if (waiting_mapper) {
-        strncpy(out, "Detecting...", out_size - 1);
-        out[out_size - 1] = '\0';
+        strcpy(out, "Detecting...");
         return;
     }
 
-    unsigned char mapper_code = record_mapper_code(record->Mapper);
-    if (mapper_code == 0) {
-        strncpy(out, "Unknown mapper", out_size - 1);
-        out[out_size - 1] = '\0';
+    if (record_mapper_code(record->Mapper) == 0) {
+        strcpy(out, "Unknown mapper");
         return;
     }
 
-    const char *desc = mapper_description(record->Mapper);
-    if (record_mapper_is_override(record->Mapper)) {
-        strncpy(out, desc, out_size - 1);
-        out[out_size - 1] = '\0';
-    } else {
-        size_t desc_len = strlen(desc);
-        size_t suffix_len = strlen(" (detected)");
-        size_t max_desc = out_size - 1;
-        if (max_desc > suffix_len) {
-            max_desc -= suffix_len;
-        } else {
-            max_desc = 0;
-        }
-        if (desc_len > max_desc) {
-            desc_len = max_desc;
-        }
-        memcpy(out, desc, desc_len);
-        out[desc_len] = '\0';
-        if (out_size > 1 && desc_len + suffix_len < out_size) {
-            memcpy(out + desc_len, " (detected)", suffix_len);
-            out[desc_len + suffix_len] = '\0';
-        }
+    strcpy(out, mapper_description(record->Mapper));
+    if (!cur_mapper_overridden) {
+        strcat(out, " (detected)");
     }
 }
 
 static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigned char audio_profile) {
+    /* Audio emulation and WiFi cannot share the cartridge reliably: the audio
+       core and its I2S DMA interrupt steal Core 0 service time and QMI
+       bandwidth from the ESP-01 UART, which drops bytes. The firmware enforces
+       this at launch too; this keeps the menu honest about it. */
+    if (cur_wifi_enabled) {
+        return audio_profile == AUDIO_PROFILE_NONE;
+    }
     if (current_wavegame_rom) {
         return audio_profile == AUDIO_PROFILE_NONE;
     }

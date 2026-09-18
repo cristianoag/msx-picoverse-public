@@ -614,12 +614,12 @@ PATCH:
     ld  hl,DO_EXTBIO                ; Our EXTBIO routine address
     ld  (EXTBIO+2),hl               ; Goes to the following two bytes in the hook
 
-    ld  hl,EXTBIO+5                 ; Must patch DISINT and ENAINT as well
-    ld  b,5*2
+    ld  hl,EXTBIO+4                 ; Patch the 5th hook byte, DISINT and ENAINT as well
+    ld  b,1+5*2
 PATCH2:
     ld  (hl),#C9
     inc hl
-    djnz    PATCH2                  ; So patch all 10 bytes with return
+    djnz    PATCH2                  ; So patch all 11 bytes with return
 
     ld  hl,HOKVLD
     set 0,(hl)                      ; And set HOKVLD properly to indicate an EXTBIOS is installed

@@ -93,19 +93,48 @@ This includes the selected Nextor entries and the supported folder ROMs in one E
 For the flash entries, the PC tool analyzes each ROM to determine the mapper. If you need to override it, add a mapper tag to the filename before `.ROM`. Tags are case-insensitive.
 
 Supported tags:
-`PL-16`, `PL-32`, `KonSCC`, `Linear`, `PL-64`, `ASC-08`, `ASC-16`, `Konami`, `NEO-8`, `NEO-16`, `ASC-16X`, `MANBW2`.
+`PLA-16`, `PLA-32`, `KonSCC`, `PLN-48`, `PLN-64`, `ASC-08`, `ASC-16`, `Konami`, `NEO-8`, `NEO-16`, `ASC16X`, `ASC16X-FR`, `MANBW2`.
 
 Mapper detection on the Pico (for unknown SD ROMs) and on the PC tool both use a shared SHA-1 ROM database derived from openMSX's `softwaredb.xml`, falling back to heuristic scanning when the SHA-1 is not in the database.
 
 Example:
 
 ```
-Knight Mare.PL-32.ROM
+Knight Mare.PLA-32.ROM
 ```
 
 Notes:
 - The `SYSTEM` tag is ignored and cannot be forced.
 - Unsupported ROMs are skipped.
+
+## ASCII16-X with FlashROM (`ASC16X-FR`)
+
+ASCII16-X cartridges carry a real FlashROM chip, and the mapper specification lets software erase sectors and program bytes so a game can store save games, high scores or user created levels inside the cartridge itself.
+
+Explorer provides two ASCII16-X mappers:
+
+| Mapper | Tag | Behaviour |
+| --- | --- | --- |
+| 12 | `ASC16X` | Read-only cartridge. Bank switching only; flash command sequences are ignored. |
+| 22 | `ASC16X-FR` | Adds the writable FlashROM device and persists it to the microSD card. |
+
+Auto-detection is unchanged: a ROM recognised as ASCII16-X is always detected as plain `ASC16X`. FlashROM emulation is opt-in, either by tagging the file `<name>.ASC16X-FR.ROM` or by selecting **ASC16X-FR** in the **Mapper** field of the ROM screen.
+
+With `ASC16X-FR` the cartridge implements the command set the specification names as the guaranteed minimum — autoselect, CFI query, chip erase, sector erase and byte program — plus the software reset. Sector geometry follows the documented bottom-boot layout: eight 8 KB sectors followed by 64 KB sectors.
+
+The flash contents are mirrored to a file named after the ROM in the root of the microSD card:
+
+```
+/<ROM name>.FLA
+```
+
+The file has no header: it is a byte exact image of the cartridge flash, so it can be copied off the card and inspected, or used as a ROM image. It is matched to the running cartridge by name and size.
+
+Notes:
+- The image is only created the first time a game actually programs the flash, so a card that has never been saved to costs nothing at startup. Restoring an existing image happens while the MSX is still held at boot, and the ROM screen shows "Preparing FlashROM image, please wait..." while it runs.
+- Write-back runs on Core 0 during gaps in cartridge access, so saving works with every audio profile. The MSX may stutter briefly while a save is being written to the card.
+- Without a usable microSD card the flash is still emulated, but its contents are lost at power off.
+- The emulated device is sized to the next power of two at or above the ROM size, up to 8 MB (the full size the ASCII-X XL cartridges provide). When the MSX-MUSIC audio profile is active the bank cache has to live in PSRAM alongside the array, which lowers the ceiling to 4 MB.
 
 ## Using microSD with Explorer
 
@@ -280,7 +309,7 @@ MP3 decoding runs on the Pico side and streams stereo PCM to the cartridge I2S D
 
 Selecting a ROM entry opens a ROM details screen before running:
 
-- **Mapper**: Shows the detected mapper (for SD ROMs) and allows manual override using Left/Right.
+- **Mapper**: Shows the detected mapper (for SD ROMs) and allows manual override using Left/Right. The cycle includes **ASC16X-FR**, which runs an ASCII16-X ROM with FlashROM emulation so the game can save into the cartridge; see [ASCII16-X with FlashROM](#ascii16-x-with-flashrom-asc16x-fr).
 - **Audio**: Choose an audio profile with Left/Right (None, SCC, SCC+, external SCC/SCC+, Dual PSG, MSX-MUSIC, SFG01/SFG05, SFG01/SFG05 at 4 MHz). The menu only cycles through profiles supported by the selected ROM mapper.
 - **PSG**: Choose whether to mirror the MSX primary PSG writes through the cartridge DAC. The default is Yes unless saved `.PVC` options override it.
 - **Wifi**: For standalone Sunrise Nextor and Sunrise + 1MB mapper entries only, choose whether to expose the ESP8266P WiFi BIOS before running. Carnivore2 and MegaRAM Nextor entries do not expose WiFi. The default is No.

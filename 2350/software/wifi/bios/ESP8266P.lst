@@ -641,12 +641,12 @@
 0614   41D2 21 D5 4C        ld  hl,DO_EXTBIO                ; Our EXTBIO routine address
 0615   41D5 22 CC FF        ld  (EXTBIO+2),hl               ; Goes to the following two bytes in the hook
 0616   41D8             
-0617   41D8 21 CF FF        ld  hl,EXTBIO+5                 ; Must patch DISINT and ENAINT as well
-0618   41DB 06 0A           ld  b,5*2
+0617   41D8 21 CE FF        ld  hl,EXTBIO+4                 ; Patch the 5th hook byte, DISINT and ENAINT as well
+0618   41DB 06 0B           ld  b,1+5*2
 0619   41DD             PATCH2:
 0620   41DD 36 C9           ld  (hl),#C9
 0621   41DF 23              inc hl
-0622   41E0 10 FB           djnz    PATCH2                  ; So patch all 10 bytes with return
+0622   41E0 10 FB           djnz    PATCH2                  ; So patch all 11 bytes with return
 0623   41E2             
 0624   41E2 21 20 FB        ld  hl,HOKVLD
 0625   41E5 CB C6           set 0,(hl)                      ; And set HOKVLD properly to indicate an EXTBIOS is installed

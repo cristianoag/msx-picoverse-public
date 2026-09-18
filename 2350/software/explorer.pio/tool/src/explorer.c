@@ -61,11 +61,14 @@
 #define ROM_TYPE_MEGARAM_SD        19
 #define ROM_TYPE_MEGARAM_USB       20
 #define ROM_TYPE_MEGARAM           21
+#define ROM_TYPE_ASCII16X_FR       22
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
     "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM",
-    "SYSTEM", "ASC16X", "PLN-64", "MANBW2"
+    "SYSTEM", "ASC16X", "PLN-64", "MANBW2",
+    "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM",
+    "SYSTEM", "SYSTEM", "ASC16X-FR"
 };
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
@@ -206,7 +209,9 @@ static void print_usage(const char *prog_name) {
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("  append a mapper tag before the extension to force detection (case-insensitive)\n");
-    printf("  e.g., \"Knight Mare.PL-32.ROM\" forces PL-32; \"SYSTEM\" tags are ignored\n\n");
+    printf("  e.g., \"Knight Mare.PL-32.ROM\" forces PL-32; \"SYSTEM\" tags are ignored\n");
+    printf("  \"ASC16X-FR\" forces ASCII16-X with FlashROM emulation, so the game can save into the\n");
+    printf("  cartridge; the flash contents are kept in \"<ROM name>.FLA\" on the microSD card\n\n");
     printf("  here are the mapper descriptions you can use to force a specific mapper type:\n");
     for (size_t i = 0; i < MAPPER_DESCRIPTION_COUNT; ++i) {
         const char *tag = MAPPER_DESCRIPTIONS[i];

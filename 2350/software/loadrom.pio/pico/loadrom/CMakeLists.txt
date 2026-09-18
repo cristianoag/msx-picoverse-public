@@ -57,6 +57,7 @@ add_executable(loadrom
     memory/c2_emu.c
     storage/sunrise_ide.c
     storage/sunrise_sd.c
+    storage/flash_sd.c
     storage/hw_config.c
     )
 
