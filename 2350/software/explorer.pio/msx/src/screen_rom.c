@@ -36,7 +36,6 @@ static void render_rom_wifi_line(unsigned char row, unsigned char wifi_enabled, 
 static void render_rom_action_line(unsigned char row, int selected);
 static void render_rom_options_block(void);
 static void render_rom_footer_line(void);
-static void render_rom_flash_notice(void);
 static void show_mp3_screen(unsigned int index);
 static void render_mp3_screen(const ROMRecord *record);
 static void render_mp3_counter_line(void);
@@ -144,8 +143,6 @@ static unsigned char record_supports_dual_psg(const ROMRecord *record) {
 }
 
 static unsigned char record_supports_msx_music(const ROMRecord *record) {
-    /* Base support shared with YM2151/SFG. YM2413/FM-PAC (MSX-MUSIC) additionally
-       excludes the Sunrise 1MB-mapper options in audio_profile_is_supported(). */
     return record_supports_external_scc_audio(record);
 }
 
@@ -431,9 +428,6 @@ void show_rom_screen(unsigned int index) {
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
                     send_save_options(index, cur_audio_profile, cur_psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
-                    if (record_mapper_code(record->Mapper) == MAPPER_ASCII16X_FR) {
-                        render_rom_flash_notice();
-                    }
                     loadGame((int)index);
                     return;
                 }
@@ -700,17 +694,6 @@ static void render_rom_footer_line(void) {
     menu_ui_clear_rows(22, 24);
     Locate(0, 22);
     printf(menu_ui_status_text("[ESC-BACK] [L/R-CHANGE]", "[ESC - BACK] [LEFT/RIGHT - CHANGE]"));
-}
-
-/* ASC16X-FR stages the whole cartridge into PSRAM and syncs it with the
-   .FLA image on the microSD before the game starts, which takes a few
-   seconds on a multi-megabyte ROM. Say so before resetting so the pause
-   does not look like a hang. One string for both column modes: it fits in
-   40 columns, and menu ROM space is scarce. */
-static void render_rom_flash_notice(void) {
-    menu_ui_clear_rows(22, 24);
-    Locate(0, 22);
-    printf("Preparing FlashROM image, please wait...");
 }
 static void send_mp3_select(unsigned int index) {
     Poke(MP3_CTRL_INDEX_L, (unsigned char)(index & 0xFFu));
@@ -1024,7 +1007,8 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
         return record_supports_dual_psg(record);
     }
     if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
-        return record_supports_msx_music(record) && !record_is_sunrise_mapper_system_rom(record);
+        unsigned char mapper_code = record_mapper_code(record->Mapper);
+        return record_supports_msx_music(record) || mapper_code == 19 || mapper_code == 20;
     }
     return 0;
 }

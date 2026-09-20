@@ -397,6 +397,15 @@ typedef struct {
     uint8_t sram[8192];
 } fmpac_state_t;
 
+// Game and SYSTEM launchers are mutually exclusive. Keep one SRAM image so
+// the menu's MP3/I2S buffer allocations retain their heap headroom.
+static fmpac_state_t system_fmpac;
+#if EXPLORER_USB_STDIO_DEBUG
+static volatile uint32_t fmpac_signature_reads;
+static volatile uint32_t fmpac_memory_fm_writes;
+static volatile uint32_t fmpac_io_fm_writes;
+#endif
+
 // This symbol marks the end of the main program in flash.
 // Custom data starts right after it
 extern const uint8_t __flash_binary_end[];
@@ -1064,6 +1073,9 @@ static struct audio_buffer_pool *msx_music_audio_pool;
 static bool msx_music_ready = false;
 static bool msx_music_audio_started = false;
 static bool msx_music_core1_services_io = true;
+#if EXPLORER_AUDIO_TRACE || EXPLORER_USB_STDIO_DEBUG
+static void audio_trace_dump_opll_state(void);
+#endif
 
 typedef enum {
     YM2151_SFG05 = 0,
@@ -1111,6 +1123,57 @@ static inline bool __not_in_flash_func(megaram_scc_write)(uint16_t addr, uint8_t
 static inline bool __not_in_flash_func(megaram_scc_read)(uint16_t addr, uint8_t *data);
 static inline void __not_in_flash_func(sfg_write)(uint16_t addr, uint8_t data);
 static inline bool __not_in_flash_func(sfg_read)(const uint8_t *bios_base, uint16_t addr, uint8_t *data);
+
+static void prepare_rom_audio_handoff_pool(void)
+{
+    struct audio_buffer_pool *pool = rom_audio_handoff_pool;
+    if (!pool)
+        return;
+
+    // Core 1 has stopped and /WAIT is held. Keep the I2S connection, but
+    // discard queued music and compact only producer buffers we can acquire.
+    // A buffer retained by the copying connection must remain untouched.
+    audio_i2s_set_enabled(false);
+    struct audio_buffer *buffer;
+    while ((buffer = get_full_audio_buffer(pool, false)) != NULL)
+    {
+        buffer->sample_count = 0;
+        queue_free_audio_buffer(pool, buffer);
+    }
+
+    struct audio_buffer *pending = NULL;
+    uint32_t released = 0;
+    while ((buffer = get_free_audio_buffer(pool, false)) != NULL)
+    {
+        released += buffer->buffer->size;
+        free(buffer->buffer->bytes);
+        free(buffer->buffer);
+        buffer->buffer = NULL;
+        buffer->sample_count = 0;
+        buffer->next = pending;
+        pending = buffer;
+    }
+
+    // Free all acquired payloads first so the allocator can coalesce a region
+    // large enough for OPLL, rather than leaving one hole per MP3 buffer.
+    uint32_t retained = 0;
+    while (pending)
+    {
+        buffer = pending;
+        pending = buffer->next;
+        buffer->next = NULL;
+        size_t bytes = SCC_AUDIO_BUFFER_SAMPLES * buffer->format->sample_stride;
+        buffer->buffer = pico_buffer_alloc(bytes);
+        if (!buffer->buffer)
+            panic("Audio handoff: cannot allocate game buffer");
+        buffer->max_sample_count = SCC_AUDIO_BUFFER_SAMPLES;
+        retained += bytes;
+        queue_free_audio_buffer(pool, buffer);
+    }
+    debug_trace("DBG compact_pool released=%lu retained=%lu",
+                (unsigned long)released, (unsigned long)retained);
+    // The selected renderer re-enables I2S when it claims the pool.
+}
 
 static struct audio_buffer_pool *claim_rom_audio_handoff_pool(void)
 {
@@ -1189,6 +1252,8 @@ static bool mapper_supports_scc_audio(uint8_t mapper) {
 
 static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile) {
     if (is_system_mapper(mapper)) {
+        if (requested_profile == AUDIO_PROFILE_MSX_MUSIC && mapper != MAPPER_MEGARAM)
+            return AUDIO_MODE_MSX_MUSIC;
         if (is_megaram_mapper(mapper)) {
             if (requested_profile == AUDIO_PROFILE_MEGARAM_SCC_PLUS)
                 return AUDIO_MODE_MEGARAM_SCC_PLUS;
@@ -1202,11 +1267,6 @@ static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile
             return AUDIO_MODE_SCC_EXTERNAL;
         if (requested_profile == AUDIO_PROFILE_DUAL_PSG)
             return AUDIO_MODE_DUAL_PSG;
-        if (requested_profile == AUDIO_PROFILE_MSX_MUSIC &&
-            mapper != MAPPER_SUNRISE_MAPPER_USB && mapper != MAPPER_SUNRISE_MAPPER_SD &&
-            mapper != MAPPER_C2_SD && mapper != MAPPER_C2_USB &&
-            mapper != MAPPER_MEGARAM_SD && mapper != MAPPER_MEGARAM_USB)
-            return AUDIO_MODE_MSX_MUSIC; // YM2413/FM-PAC only for non-mapper Sunrise Nextor options
         if (requested_profile == AUDIO_PROFILE_YM2151_SFG05 || requested_profile == AUDIO_PROFILE_YM2151_SFG05_4MHZ)
             return AUDIO_MODE_YM2151_SFG05;
         if (requested_profile == AUDIO_PROFILE_YM2151_SFG01 || requested_profile == AUDIO_PROFILE_YM2151_SFG01_4MHZ)
@@ -4362,6 +4422,10 @@ static inline void audio_trace_service(void)
                         msx_io_bus.pio_write, msx_io_bus.sm_io_write,
                         msx_io_bus.sm_io_read);
     atrace_poll();
+#elif EXPLORER_USB_STDIO_DEBUG
+    // On-demand only: continuous CDC printing can itself cause lost writes.
+    if (msx_music_audio_started && getchar_timeout_us(0) == 'f')
+        audio_trace_dump_opll_state();
 #endif
 }
 
@@ -4999,14 +5063,20 @@ static system_audio_profile_t system_audio_resolve_profile(void)
     return SYSTEM_AUDIO_PROFILE_NONE;
 }
 
+// Shared Core 1 yields to the storage backend between these render slices.
+#define MSX_MUSIC_SHARED_SLICE_SAMPLES 16u
+#define MSX_MUSIC_SHARED_IO_BUDGET 16u
+static bool msx_music_shared_audio = false;
+
 static void system_audio_init_for_sunrise(bool service_io_on_core1)
 {
-    system_audio_profile = system_audio_resolve_profile();
-    switch (system_audio_profile)
+    system_audio_profile_t profile = system_audio_resolve_profile();
+    switch (profile)
     {
     case SYSTEM_AUDIO_PROFILE_MSX_MUSIC:
-        msx_music_init();
+        msx_music_shared_audio = true;
         msx_music_core1_services_io = service_io_on_core1;
+        msx_music_init();
         if (ctrl_psg_emulation != 0u)
         {
             // Use the same high-quality PSG renderer as every other profile.
@@ -5029,7 +5099,7 @@ static void system_audio_init_for_sunrise(bool service_io_on_core1)
         break;
     case SYSTEM_AUDIO_PROFILE_YM2151_SFG05:
     case SYSTEM_AUDIO_PROFILE_YM2151_SFG01:
-        ym2151_init(system_audio_profile == SYSTEM_AUDIO_PROFILE_YM2151_SFG01 ? YM2151_SFG01 : YM2151_SFG05);
+        ym2151_init(profile == SYSTEM_AUDIO_PROFILE_YM2151_SFG01 ? YM2151_SFG01 : YM2151_SFG05);
         if (ctrl_psg_emulation != 0u)
         {
             main_psg_init(PSG_QUALITY_HIGH);
@@ -5039,7 +5109,7 @@ static void system_audio_init_for_sunrise(bool service_io_on_core1)
         break;
     case SYSTEM_AUDIO_PROFILE_SCC_EXTERNAL:
     case SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL:
-        scc_audio_init_for_type(system_audio_profile == SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL ? SCC_ENHANCED : SCC_STANDARD);
+        scc_audio_init_for_type(profile == SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL ? SCC_ENHANCED : SCC_STANDARD);
         if (ctrl_psg_emulation != 0u)
         {
             main_psg_init(PSG_QUALITY_HIGH);
@@ -5053,6 +5123,8 @@ static void system_audio_init_for_sunrise(bool service_io_on_core1)
     default:
         break;
     }
+    __dmb();
+    system_audio_profile = profile;
 }
 
 static inline bool __not_in_flash_func(system_audio_handle_io_write)(uint8_t port, uint8_t data)
@@ -5134,7 +5206,7 @@ static void __not_in_flash_func(msx_music_init)(void)
     }
     debug_trace("DBG music_init allocated=%p", (void *)msx_music_instance);
     if (!msx_music_instance)
-        return;
+        panic("MSX-MUSIC: cannot allocate OPLL state");
 
     if (!msx_music_lock) {
         debug_trace("DBG music_init lock claim");
@@ -5208,10 +5280,19 @@ static inline int32_t __not_in_flash_func(msx_music_calc_sample)(void)
     if (!msx_music_ready)
         return 0;
 
-    uint32_t save = spin_lock_blocking(msx_music_lock);
     int16_t sample;
-    ATRACE_TIME_FM(sample = OPLL_calc(msx_music_instance));
-    spin_unlock(msx_music_lock, save);
+    if (msx_music_shared_audio && !msx_music_core1_services_io)
+    {
+        // SYSTEM producers only queue writes; Core 1 exclusively owns OPLL.
+        // Avoid disabling interrupts and taking a spinlock at every native tick.
+        ATRACE_TIME_FM(sample = OPLL_calc(msx_music_instance));
+    }
+    else
+    {
+        uint32_t save = spin_lock_blocking(msx_music_lock);
+        ATRACE_TIME_FM(sample = OPLL_calc(msx_music_instance));
+        spin_unlock(msx_music_lock, save);
+    }
     int32_t filtered = msx_music_filter_sample(sample);
     return (filtered * MSX_MUSIC_GAIN_NUM) >> MSX_MUSIC_GAIN_SHIFT;
 }
@@ -5235,18 +5316,47 @@ static inline void __not_in_flash_func(msx_music_drain_write_ring)(void)
     if (!msx_music_ready)
         return;
     uint32_t tail = msx_music_write_ring_tail;
-    while (tail != msx_music_write_ring_head)
+    const uint32_t head = msx_music_write_ring_head;
+    __dmb();
+    if (tail == head)
+        return;
+
+    uint32_t remaining = msx_music_shared_audio ? MSX_MUSIC_SHARED_IO_BUDGET : UINT32_MAX;
+    uint32_t save = spin_lock_blocking(msx_music_lock);
+    while (tail != head && remaining-- != 0u)
     {
-        __dmb();
         uint16_t entry = msx_music_write_ring[tail];
         uint8_t port = (uint8_t)(entry >> 8);
         uint8_t data = (uint8_t)(entry & 0xFFu);
-        uint32_t save = spin_lock_blocking(msx_music_lock);
         OPLL_writeIO(msx_music_instance, port, data);
-        spin_unlock(msx_music_lock, save);
         tail = (tail + 1u) & MSX_MUSIC_WRITE_RING_MASK;
+        __dmb();
+        msx_music_write_ring_tail = tail;
     }
-    msx_music_write_ring_tail = tail;
+    spin_unlock(msx_music_lock, save);
+}
+
+static inline void __not_in_flash_func(msx_music_drain_psg_write_ring)(void)
+{
+    if (!main_psg_ready)
+        return;
+    uint32_t tail = main_psg_write_ring_tail;
+    const uint32_t head = main_psg_write_ring_head;
+    __dmb();
+    if (tail == head)
+        return;
+
+    uint32_t remaining = msx_music_shared_audio ? MSX_MUSIC_SHARED_IO_BUDGET : UINT32_MAX;
+    uint32_t save = spin_lock_blocking(main_psg_lock);
+    while (tail != head && remaining-- != 0u)
+    {
+        uint16_t entry = main_psg_write_ring[tail];
+        PSG_writeIO(&main_psg_instance, (uint8_t)(entry >> 8), (uint8_t)entry);
+        tail = (tail + 1u) & MAIN_PSG_WRITE_RING_MASK;
+        __dmb();
+        main_psg_write_ring_tail = tail;
+    }
+    spin_unlock(main_psg_lock, save);
 }
 
 static inline void __not_in_flash_func(msx_music_write_io)(uint8_t port, uint8_t data)
@@ -5254,12 +5364,20 @@ static inline void __not_in_flash_func(msx_music_write_io)(uint8_t port, uint8_t
     if (!msx_music_ready)
         return;
 
-    if (!msx_music_core1_services_io)
+    // The YM2413 has a single address latch: a register write is an address
+    // write followed by a data write, and the two must be applied by the same
+    // core. Core 1 owns the emulator, so anything originating on Core 0 - the
+    // memory-mapped FM-PAC aperture (0x7FF4/0x7FF5) dispatched from the bus
+    // loop - is queued for Core 1 rather than applied here.
+    //
+    // Applying it directly, which is what the FM-PAC loaders used to do
+    // whenever Core 1 owned the I/O FIFO, let the two cores interleave halves
+    // of different register writes: Core 1 latches 0x30, Core 0 overwrites the
+    // latch with 0x21, and Core 1's data byte then lands in 0x21. The intended
+    // write is lost and a stray value is poked into a key/block register, which
+    // is heard as missing or wrong instruments and notes that never stop.
+    if (get_core_num() != 1u)
     {
-        // core0 owns the MSX I/O write FIFO (mapper mode): defer to core1 through
-        // the lock-free ring instead of taking msx_music_lock. This also covers
-        // the FM-PAC memory-mapped register writes (0x7FF4/0x7FF5) dispatched
-        // from core0 in the Sunrise + FM-PAC loaders.
         msx_music_write_ring_push(port, data);
         return;
     }
@@ -5274,30 +5392,35 @@ static inline void __not_in_flash_func(msx_music_service_io)(void)
     if (!msx_music_ready)
         return;
 
+    // Core 0 queues its memory-mapped FM-PAC register writes in both ownership
+    // modes, so the hand-off rings are drained here regardless of which core
+    // owns the I/O FIFO.
+    msx_music_drain_psg_write_ring();
+    msx_music_drain_write_ring();
+
     if (!msx_music_core1_services_io)
-    {
-        // core0 owns the MSX I/O write FIFO (mapper mode); apply the writes it
-        // queued for the mirrored PSG and the YM2413 here on core1.
-        main_psg_drain_write_ring();
-        msx_music_drain_write_ring();
         return;
-    }
 
     uint16_t io_addr;
     uint8_t io_data;
-    while (pio_try_get_io_write(&io_addr, &io_data))
+    uint32_t remaining = msx_music_shared_audio ? MSX_MUSIC_SHARED_IO_BUDGET : UINT32_MAX;
+    while (remaining-- != 0u && pio_try_get_io_write(&io_addr, &io_data))
     {
         uint8_t port = io_addr & 0xFFu;
         if (main_psg_handle_io_write(port, io_data))
             continue;
         if (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA)
         {
+#if EXPLORER_USB_STDIO_DEBUG
+            fmpac_io_fm_writes++;
+#endif
             atrace_note_opll_write(port, port == MSX_MUSIC_PORT_DATA, io_data);
             msx_music_write_io(port, io_data);
         }
     }
 
-    while (pio_try_get_io_read(&io_addr))
+    remaining = msx_music_shared_audio ? MSX_MUSIC_SHARED_IO_BUDGET : UINT32_MAX;
+    while (remaining-- != 0u && pio_try_get_io_read(&io_addr))
     {
         pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read,
                             pio_build_token(false, 0xFFu));
@@ -5346,12 +5469,33 @@ static inline void __not_in_flash_func(msx_music_write_stereo_sample)(int16_t *s
     atrace_note_fm_sample(music, psg, mixed, mag > MSX_MUSIC_LIMIT_KNEE, psg_audible);
 }
 
-#if EXPLORER_AUDIO_TRACE
-// Emitted once at the start of the FM log and every 5 s afterwards. Kept to a
-// few lines so it never dominates the stream: it answers "is the FM actually
-// configured and playing" and "is the PSG mirror on and contributing".
+#if EXPLORER_AUDIO_TRACE || EXPLORER_USB_STDIO_DEBUG
+// The full tracer calls this periodically; CDC-only builds request it with
+// 'f' so register inspection does not continuously interrupt audio service.
 static void audio_trace_dump_opll_state(void)
 {
+    // Read sticky flags before printing: the snapshot output can itself stall
+    // servicing, so flags from subsequent snapshots may include this overhead.
+    uint32_t mem_debug = msx_bus.pio ? msx_bus.pio->fdebug : 0;
+    uint32_t io_debug = msx_io_bus.pio_write ? msx_io_bus.pio_write->fdebug : 0;
+#if EXPLORER_USB_STDIO_DEBUG
+    const uint8_t *bios = flash_rom + FMPAC_BIOS_FLASH_OFFSET;
+    printf("[fm.bios] header=%02X%02X signature=%.8s bank=%u control=%02X keys=%02X/%02X reads=%lu io_wr=%lu mem_wr=%lu\n",
+           bios[0], bios[1], (const char *)(bios + 0x18),
+           (unsigned)system_fmpac.page, (unsigned)system_fmpac.control,
+           (unsigned)system_fmpac.sram_key_5ffe, (unsigned)system_fmpac.sram_key_5fff,
+           (unsigned long)fmpac_signature_reads, (unsigned long)fmpac_io_fm_writes,
+           (unsigned long)fmpac_memory_fm_writes);
+#endif
+    printf("[fm.bus] mem_fdebug=%08lX io_fdebug=%08lX io_core1=%u shared=%u\n",
+           (unsigned long)mem_debug, (unsigned long)io_debug,
+           (unsigned)msx_music_core1_services_io, (unsigned)msx_music_shared_audio);
+    printf("[fm.rate] output=%lu opll_clk=%lu opll_rate=%lu resampler=%u mask=%08lX\n",
+           (unsigned long)(msx_music_audio_pool ? msx_music_audio_pool->format->sample_freq : 0),
+           (unsigned long)(msx_music_instance ? msx_music_instance->clk : 0),
+           (unsigned long)(msx_music_instance ? msx_music_instance->rate : 0),
+           (unsigned)(msx_music_instance && msx_music_instance->conv),
+           (unsigned long)(msx_music_instance ? msx_music_instance->mask : 0));
     printf("[fm.cfg] ready=%u audio=%u gain=%u/%u knee=%d vol=%u%% | FMring depth=%lu/%lu | "
            "PSGmirror=%s ready=%u PSGring depth=%lu/%lu\r\n",
            (unsigned)msx_music_ready, (unsigned)msx_music_audio_started,
@@ -5373,6 +5517,11 @@ static void audio_trace_dump_opll_state(void)
         uint8_t rhythm = msx_music_instance->rhythm_mode;
         spin_unlock(msx_music_lock, save);
 
+        printf("[fm.reg00-0f]");
+        for (uint8_t i = 0; i < 16; i++)
+            printf(" %02X", reg[i]);
+        printf("\n");
+
         // One line for all nine channels: F-number, block, key and volume are
         // what tell us whether the FM is being driven sensibly.
         printf("[fm.ch] rhythm=%u", (unsigned)rhythm);
@@ -5390,11 +5539,18 @@ static void audio_trace_dump_opll_state(void)
 
     if (main_psg_ready)
     {
+        printf("[fm.psg_rate] clock=%lu rate=%lu quality=%u mask=%08lX\n",
+               (unsigned long)main_psg_instance.clk, (unsigned long)main_psg_instance.rate,
+               (unsigned)main_psg_instance.quality, (unsigned long)main_psg_instance.mask);
         uint32_t psave = spin_lock_blocking(main_psg_lock);
         uint8_t preg[16];
         memcpy(preg, main_psg_instance.reg, sizeof(preg));
         bool audible = main_psg_has_audible_channels_unlocked();
         spin_unlock(main_psg_lock, psave);
+        printf("[fm.psg00-0f]");
+        for (uint8_t i = 0; i < 16; i++)
+            printf(" %02X", preg[i]);
+        printf("\n");
         printf("[fm.psg] mixer=%02X volA=%02X volB=%02X volC=%02X env=%02X/%02X%02X gate=%s\r\n",
                preg[7], preg[8], preg[9], preg[10], preg[13], preg[12], preg[11],
                audible ? "OPEN" : "closed");
@@ -5524,10 +5680,31 @@ static void start_msx_music_audio(void)
 static void start_msx_music_audio_output(void)
 {
     debug_trace("DBG start_music_output init");
-    msx_music_core1_services_io = true;
+    // Standalone FM-PAC renders whole buffers, so there is no storage backend
+    // to yield to: clear the shared-audio flag, which is set when a SYSTEM ROM
+    // shares Core 1 with a backend and was never cleared, so a later game
+    // launch in the same power cycle inherited the bounded drain budgets that
+    // only the shared scheduler needs.
+    msx_music_shared_audio = false;
+
+    // Core 0 owns the MSX I/O write FIFO, exactly as the SYSTEM FM-PAC loader
+    // does. The FIFO is only eight entries deep and a Z80 OUT burst fills it in
+    // roughly 35 us, but Core 1 could only drain it once per rendered sample
+    // (~20 us) and not at all while it was swapping audio buffers, so bursts of
+    // FM register writes were silently lost - heard as missing or wrong
+    // instruments and notes that never stop. Core 0's bus loop polls
+    // continuously, which is why the same game is correct under a Nextor
+    // SYSTEM ROM and wrong launched directly. Core 1 now only drains the
+    // hand-off rings and renders.
+    msx_music_core1_services_io = false;
+    main_psg_core1_services_io = false;
+
     msx_music_audio_init();
     debug_trace("DBG start_music_output pool=%p", (void *)msx_music_audio_pool);
     if (msx_music_audio_pool) {
+#if EXPLORER_USB_STDIO_DEBUG && !EXPLORER_AUDIO_TRACE
+        debug_trace("DBG FM diagnostic: send lowercase f for one register/rate/FIFO snapshot");
+#endif
         debug_trace("DBG start_music_output launch core1");
         multicore_launch_core1(core1_msx_music_audio);
     }
@@ -5535,21 +5712,35 @@ static void start_msx_music_audio_output(void)
 
 static inline void __not_in_flash_func(msx_music_audio_service_buffer)(void)
 {
+    static struct audio_buffer *buffer = NULL;
+    static uint32_t rendered = 0;
+
     if (!msx_music_audio_started || !msx_music_audio_pool)
         return;
 
-    struct audio_buffer *buffer = take_audio_buffer(msx_music_audio_pool, false);
+    msx_music_service_io();
+    if (!buffer)
+    {
+        buffer = take_audio_buffer(msx_music_audio_pool, false);
+        rendered = 0;
+    }
     if (!buffer)
         return;
 
     int16_t *samples = (int16_t *)buffer->buffer->bytes;
-    for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
+    uint32_t end = rendered + MSX_MUSIC_SHARED_SLICE_SAMPLES;
+    if (end > SCC_AUDIO_BUFFER_SAMPLES)
+        end = SCC_AUDIO_BUFFER_SAMPLES;
+    for (; rendered < end; rendered++)
     {
-        msx_music_service_io();
-        msx_music_write_stereo_sample(samples, i);
+        msx_music_write_stereo_sample(samples, rendered);
     }
-    buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
-    give_audio_buffer(msx_music_audio_pool, buffer);
+    if (rendered == SCC_AUDIO_BUFFER_SAMPLES)
+    {
+        buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
+        give_audio_buffer(msx_music_audio_pool, buffer);
+        buffer = NULL;
+    }
 }
 
 static void ym2151_init(ym2151_sfg_variant_t variant)
@@ -5922,6 +6113,10 @@ static inline bool __not_in_flash_func(fmpac_sram_enabled)(const fmpac_state_t *
 
 static inline void __not_in_flash_func(fmpac_handle_write)(fmpac_state_t *fmpac, uint16_t addr, uint8_t data)
 {
+#if EXPLORER_USB_STDIO_DEBUG
+    if (addr == 0x7FF4u || addr == 0x7FF5u)
+        fmpac_memory_fm_writes++;
+#endif
     if (addr == 0x7FF4u)
     {
         atrace_note_opll_write(addr, false, data);
@@ -5960,6 +6155,10 @@ static inline void __not_in_flash_func(fmpac_handle_write)(fmpac_state_t *fmpac,
 
 static inline uint8_t __not_in_flash_func(fmpac_handle_read)(const fmpac_state_t *fmpac, const uint8_t *bios_base, uint16_t addr)
 {
+#if EXPLORER_USB_STDIO_DEBUG
+    if (addr >= 0x4018u && addr <= 0x401Fu)
+        fmpac_signature_reads++;
+#endif
     if (addr == 0x7FF6u)
         return fmpac->control;
     if (addr == 0x7FF7u)
@@ -9907,6 +10106,8 @@ static inline void __not_in_flash_func(c2_handle_memory_write)(
             SCC_write(&scc_instance, waddr, wdata);
         else if (sfg_audio)
             sfg_write(waddr, wdata);
+        else if (system_audio_profile == SYSTEM_AUDIO_PROFILE_MSX_MUSIC)
+            fmpac_handle_write(&system_fmpac, waddr, wdata);
     }
 }
 
@@ -9980,7 +10181,6 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
     sunrise_ide_init(&ide);
 
     attach_ctx(&ide);
-    multicore_launch_core1(core1_task);
 
     uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
     uint8_t subslot_reg = 0x10u;
@@ -9993,7 +10193,10 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
     uint8_t c2_signature_overlay_index = 0u;
 
     msx_pio_io_bus_init();
+    memset(&system_fmpac, 0, sizeof(system_fmpac));
+    system_fmpac.control = 0x10u;
     system_audio_init_for_sunrise(false);
+    multicore_launch_core1(core1_task);
 
     bool external_scc_audio = system_audio_profile == SYSTEM_AUDIO_PROFILE_SCC_EXTERNAL ||
                               system_audio_profile == SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL;
@@ -10174,6 +10377,12 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
                         in_window = external_scc_read(addr, &data);
                     else if (sfg_audio)
                         in_window = sfg_read(sfg_bios_base, addr, &data);
+                    else if (system_audio_profile == SYSTEM_AUDIO_PROFILE_MSX_MUSIC &&
+                             addr >= 0x4000u && addr <= 0x7FFFu)
+                    {
+                        in_window = true;
+                        data = fmpac_handle_read(&system_fmpac, flash_rom + FMPAC_BIOS_FLASH_OFFSET, addr);
+                    }
                 }
             }
 
@@ -11093,11 +11302,6 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
 // MSX is executing from ROM the loop never spins this long, so write-back
 // waits for the RAM-resident save routine the specification mandates.
 #define FLASH_SD_BUS_QUIET_SPINS 20000u
-// Blocks written per step while creating a fresh image. Creation has to push
-// the whole device through the card, so it moves in bigger batches than
-// incremental write-back, but not so big that one step blocks the bus for
-// an unbounded time.
-#define FLASH_SD_CREATE_BLOCKS  4u
 
 typedef enum {
     FLASH_IDLE = 0,       // Normal read mode
@@ -11114,7 +11318,6 @@ typedef enum {
 typedef enum {
     FLASH_STORE_OFF = 0,  // No card backing; flash emulation is volatile
     FLASH_STORE_READY,    // Image file open, write-back active
-    FLASH_STORE_CREATE,   // Image file must be created before write-back
 } flash_store_state_t;
 
 typedef struct {
@@ -11146,7 +11349,6 @@ typedef struct {
     bool              dirty_pending;
     uint32_t          dirty_stamp_us;
     uint32_t          last_write_us;
-    uint32_t          create_pos;
 } ascii16x_flash_state_t;
 
 static FIL  flash_image_fil;
@@ -11574,65 +11776,45 @@ static void __no_inline_not_in_flash_func(flash_store_open)(
         f_close(&flash_image_fil);
     }
 
-    // No usable image yet. Creating one means writing the whole array to the
-    // card, so it is deferred until the MSX actually programs the flash. A
-    // card that has never been saved to costs nothing at startup.
-    st->store = FLASH_STORE_CREATE;
-    st->create_pos = 0;
-}
+    // No usable image yet. Create the whole thing now, while the MSX is still
+    // held in /WAIT by the caller. Deferring this until the game programs the
+    // flash does not work: the file has to be opened with FA_CREATE_ALWAYS,
+    // which truncates it to zero immediately, and the remaining blocks can
+    // only be written while the bus is idle - a running game never idles that
+    // long, so the card was left holding an empty file that the next boot then
+    // rejected for having the wrong size.
+    if (f_open(&flash_image_fil, flash_image_path,
+               FA_CREATE_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
+        return;
 
-// Write one chunk of a brand new image. Returns true when the file is
-// complete and normal block write-back can take over.
-static bool __not_in_flash_func(flash_store_create_step)(ascii16x_flash_state_t *st)
-{
-    if (st->create_pos == 0u)
+    for (uint32_t off = 0; off < st->array_size; off += FLASH_SD_BLOCK_SIZE)
     {
-        if (f_open(&flash_image_fil, flash_image_path,
-                   FA_CREATE_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
-        {
-            st->store = FLASH_STORE_OFF;
-            return false;
-        }
-    }
-
-    for (uint32_t i = 0; i < FLASH_SD_CREATE_BLOCKS && st->create_pos < st->array_size; i++)
-    {
-        uint32_t n = st->array_size - st->create_pos;
+        uint32_t n = st->array_size - off;
         if (n > FLASH_SD_BLOCK_SIZE) n = FLASH_SD_BLOCK_SIZE;
 
-        memcpy(flash_image_chunk, st->array + st->create_pos, n);
+        memcpy(flash_image_chunk, st->array + off, n);
 
         UINT written = 0;
         sd_activity_note();
-        if (f_write(&flash_image_fil, flash_image_chunk, (UINT)n, &written) != FR_OK || written != n)
+        if (f_write(&flash_image_fil, flash_image_chunk, (UINT)n, &written) != FR_OK ||
+            written != n)
         {
             f_close(&flash_image_fil);
             f_unlink(flash_image_path);
-            st->store = FLASH_STORE_OFF;
-            return false;
+            return;
         }
-
-        st->create_pos += n;
     }
-
-    if (st->create_pos < st->array_size)
-        return false;
 
     if (f_sync(&flash_image_fil) != FR_OK)
     {
         f_close(&flash_image_fil);
         f_unlink(flash_image_path);
-        st->store = FLASH_STORE_OFF;
-        return false;
+        return;
     }
 
-    // The file now holds the whole array, including whatever prompted the
-    // creation, so nothing is left outstanding.
-    memset(st->dirty_map, 0, sizeof(st->dirty_map));
-    st->dirty_pending = false;
     st->store = FLASH_STORE_READY;
-    return true;
 }
+
 
 // Write back one dirty block. Returns true if a block was written.
 static bool __not_in_flash_func(flash_store_flush_step)(ascii16x_flash_state_t *st)
@@ -11698,10 +11880,7 @@ static inline void __not_in_flash_func(flash_store_service)(ascii16x_flash_state
 
     st->last_write_us = now;
 
-    if (st->store == FLASH_STORE_CREATE)
-        (void)flash_store_create_step(st);
-    else
-        (void)flash_store_flush_step(st);
+    (void)flash_store_flush_step(st);
 
     flash_update_gates(st);
 }
@@ -12149,9 +12328,8 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
     const uint8_t *fmpac_bios_base = flash_rom + FMPAC_BIOS_FLASH_OFFSET;
 
     uint8_t subslot_reg = 0x00u;
-    static fmpac_state_t fmpac;
-    memset(&fmpac, 0, sizeof(fmpac));
-    fmpac.control = 0x10u;
+    memset(&system_fmpac, 0, sizeof(system_fmpac));
+    system_fmpac.control = 0x10u;
 
     bank8_ctx_t bank8_ctx = { .bank_regs = bank8_regs };
     bank8_ctx_t ascii16_ctx = { .bank_regs = ascii16_regs };
@@ -12164,6 +12342,8 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
     start_msx_music_audio_output();
     debug_trace("DBG fmpac loop start");
 
+    bool read_pending = false;
+    uint16_t pending_addr = 0;
     while (true)
     {
         uint16_t waddr;
@@ -12193,13 +12373,50 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
             }
             else if (active_subslot == 3)
             {
-                fmpac_handle_write(&fmpac, waddr, wdata);
+                fmpac_handle_write(&system_fmpac, waddr, wdata);
             }
         }
 
-        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        // Core 0 services the MSX I/O bus here, matching the SYSTEM FM-PAC
+        // loader. The captor FIFO is eight entries deep, so it has to be
+        // emptied by the loop that polls continuously; leaving it to the audio
+        // core cost whole bursts of FM register writes.
         {
-            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            uint16_t io_addr;
+            uint8_t io_data;
+            while (pio_try_get_io_write(&io_addr, &io_data))
+            {
+                uint8_t port = io_addr & 0xFFu;
+                if (main_psg_handle_io_write(port, io_data))
+                    continue;
+                if (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA)
+                {
+#if EXPLORER_USB_STDIO_DEBUG
+                    fmpac_io_fm_writes++;
+#endif
+                    atrace_note_opll_write(port, port == MSX_MUSIC_PORT_DATA, io_data);
+                    msx_music_write_io(port, io_data);
+                }
+            }
+
+            while (pio_try_get_io_read(&io_addr))
+            {
+                pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read,
+                                    pio_build_token(false, 0xFFu));
+            }
+        }
+
+        if (!read_pending && !pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            pending_addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            read_pending = true;
+            // /WAIT holds this read. Revisit the write drain before decoding
+            // it, including any late-captured 0xFFFF subslot switch.
+            continue;
+        }
+        if (read_pending)
+        {
+            uint16_t addr = pending_addr;
             uint8_t data = 0xFFu;
             bool in_window = true;
 
@@ -12282,11 +12499,12 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
                 }
                 else if (active_subslot == 3 && addr >= 0x4000u && addr <= 0x7FFFu)
                 {
-                    data = fmpac_handle_read(&fmpac, fmpac_bios_base, addr);
+                    data = fmpac_handle_read(&system_fmpac, fmpac_bios_base, addr);
                 }
             }
 
             pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+            read_pending = false;
         }
 
         tight_loop_contents();
@@ -13018,13 +13236,66 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_sfg_common)(
     }
 }
 
+typedef struct {
+    sunrise_ide_t *ide;
+    uint8_t mapper_reg[4];
+    uint8_t megaram_bank_reg[4];
+    uint8_t subslot_reg;
+    uint8_t nextor_subslot;
+    uint8_t mapper_subslot;
+    uint8_t fmpac_subslot;
+    bool wifi_enable;
+    bool mapper_enable;
+    bool megaram_enable;
+    bool megaram_write_enabled;
+} sunrise_fmpac_bus_t;
+
+static inline void __not_in_flash_func(sunrise_fmpac_drain_writes)(sunrise_fmpac_bus_t *bus)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        if (addr == 0xFFFFu)
+        {
+            bus->subslot_reg = data;
+            continue;
+        }
+        uint8_t page = addr >> 14;
+        uint8_t subslot = (bus->subslot_reg >> (page * 2)) & 0x03u;
+        if (bus->wifi_enable && subslot == 0u)
+            (void)wifi_handle_mem_write(addr, data);
+        else if (subslot == bus->nextor_subslot)
+        {
+            if (addr >= 0x4000u && addr <= 0x7FFFu)
+                sunrise_ide_handle_write(bus->ide, addr, data);
+        }
+        else if (bus->mapper_enable && subslot == bus->mapper_subslot)
+        {
+            uint32_t offset = ((uint32_t)mapper_page_from_reg(bus->mapper_reg[page]) << 14) |
+                              (addr & 0x3FFFu);
+            mapper_write_byte(offset, data);
+        }
+        else if (subslot == bus->fmpac_subslot)
+            fmpac_handle_write(&system_fmpac, addr, data);
+        else if (bus->megaram_enable && subslot == 3u && addr >= 0x4000u && addr <= 0xBFFFu)
+        {
+            if (bus->megaram_write_enabled)
+                megaram_write_byte(addr, data, bus->megaram_bank_reg);
+            else
+                megaram_bank_switch_write(addr, data, bus->megaram_bank_reg);
+        }
+    }
+}
+
 static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
     uint32_t offset,
     bool cache_enable,
     sunrise_backend_task_fn_t core1_task,
     sunrise_backend_attach_fn_t attach_ctx,
     bool wifi_enable,
-    bool mapper_enable)
+    bool mapper_enable,
+    bool megaram_enable)
 {
     static const uint8_t bootstrap_rom[] = {
         0x41, 0x42, 0x0A, 0x40, 0x00, 0x00, 0x00, 0x00,
@@ -13091,26 +13362,43 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
         mapper_fill_ff();
     }
 
+    if (megaram_enable)
+    {
+        if (!psram_prepare_megaram_region())
+        {
+            panic("FMPAC: cannot allocate MegaRAM");
+        }
+        megaram_fill_ff();
+    }
+
     static sunrise_ide_t ide;
     sunrise_ide_init(&ide);
 
     attach_ctx(&ide);
-    multicore_launch_core1(core1_task);
     if (wifi_enable)
         wifi_uart_init_once();
 
-    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
-    uint8_t subslot_reg = wifi_enable ? 0x20u : 0x10u;
     const uint8_t nextor_subslot = wifi_enable ? 1u : 0u;
     const uint8_t mapper_subslot = wifi_enable ? 2u : 1u;
     const uint8_t fmpac_subslot = wifi_enable ? 3u : 2u;
-
-    static fmpac_state_t fmpac;
-    memset(&fmpac, 0, sizeof(fmpac));
-    fmpac.control = 0x10u;
+    sunrise_fmpac_bus_t bus = {
+        .ide = &ide,
+        .mapper_reg = { 3, 2, 1, 0 },
+        .megaram_bank_reg = { 0, 1, 2, 3 },
+        .subslot_reg = wifi_enable ? 0x20u : 0x10u,
+        .nextor_subslot = nextor_subslot,
+        .mapper_subslot = mapper_subslot,
+        .fmpac_subslot = fmpac_subslot,
+        .wifi_enable = wifi_enable,
+        .mapper_enable = mapper_enable,
+        .megaram_enable = megaram_enable,
+    };
+    memset(&system_fmpac, 0, sizeof(system_fmpac));
+    system_fmpac.control = 0x10u;
 
     msx_pio_io_bus_init();
     system_audio_init_for_sunrise(false);
+    multicore_launch_core1(core1_task);
     msx_pio_bus_init();
 
     while (true)
@@ -13118,39 +13406,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
         if (wifi_enable)
             wifi_service();
 
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr == 0xFFFFu)
-            {
-                subslot_reg = wdata;
-                continue;
-            }
-
-            uint8_t page = (waddr >> 14) & 0x03u;
-            uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-
-            if (wifi_enable && active_subslot == 0u)
-            {
-                (void)wifi_handle_mem_write(waddr, wdata);
-            }
-            else if (active_subslot == nextor_subslot)
-            {
-                if (waddr >= 0x4000u && waddr <= 0x7FFFu)
-                    sunrise_ide_handle_write(&ide, waddr, wdata);
-            }
-            else if (mapper_enable && active_subslot == mapper_subslot)
-            {
-                uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
-                mapper_write_byte(mapper_offset, wdata);
-            }
-            else if (active_subslot == fmpac_subslot)
-            {
-                fmpac_handle_write(&fmpac, waddr, wdata);
-            }
-        }
+        sunrise_fmpac_drain_writes(&bus);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -13160,7 +13416,9 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
             if (system_audio_handle_io_write(port, io_data))
                 continue;
             if (mapper_enable && port >= 0xFCu && port <= 0xFFu)
-                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+                bus.mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+            else if (megaram_enable && (port == 0x8Eu || port == 0x8Fu))
+                bus.megaram_write_enabled = false;
         }
 
         while (pio_try_get_io_read(&io_addr))
@@ -13175,26 +13433,31 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
             else if (mapper_enable && port >= 0xFCu && port <= 0xFFu)
             {
                 in_window = true;
-                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
+                data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
             }
+            else if (megaram_enable && (port == 0x8Eu || port == 0x8Fu))
+                bus.megaram_write_enabled = true;
             pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
         {
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            // /WAIT holds this read; commit writes captured during I/O service
+            // before decoding its subslot, ROM bank or mapper page.
+            sunrise_fmpac_drain_writes(&bus);
             uint8_t data = 0xFFu;
             bool in_window = false;
 
             if (addr == 0xFFFFu)
             {
                 in_window = true;
-                data = (uint8_t)~subslot_reg;
+                data = (uint8_t)~bus.subslot_reg;
             }
             else
             {
                 uint8_t page = (addr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+                uint8_t active_subslot = (bus.subslot_reg >> (page * 2)) & 0x03u;
 
                 if (wifi_enable && active_subslot == 0u)
                 {
@@ -13226,14 +13489,19 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
                 else if (mapper_enable && active_subslot == mapper_subslot)
                 {
                     in_window = true;
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint8_t mapper_page = mapper_page_from_reg(bus.mapper_reg[page]);
                     uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
                     data = mapper_read_byte(mapper_offset);
                 }
                 else if (active_subslot == fmpac_subslot && addr >= 0x4000u && addr <= 0x7FFFu)
                 {
                     in_window = true;
-                    data = fmpac_handle_read(&fmpac, fmpac_bios_base, addr);
+                    data = fmpac_handle_read(&system_fmpac, fmpac_bios_base, addr);
+                }
+                else if (megaram_enable && active_subslot == 3u && addr >= 0x4000u && addr <= 0xBFFFu)
+                {
+                    in_window = true;
+                    data = megaram_read_byte(addr, bus.megaram_bank_reg);
                 }
             }
 
@@ -13244,22 +13512,22 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
 
 static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac)(uint32_t offset, bool cache_enable, bool mapper_enable)
 {
-    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, false, mapper_enable);
+    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, false, mapper_enable, false);
 }
 
 static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_sd)(uint32_t offset, bool cache_enable, bool mapper_enable)
 {
-    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, false, mapper_enable);
+    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, false, mapper_enable, false);
 }
 
 static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_wifi)(uint32_t offset, bool cache_enable, bool mapper_enable)
 {
-    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, true, mapper_enable);
+    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, true, mapper_enable, false);
 }
 
 static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_wifi_sd)(uint32_t offset, bool cache_enable, bool mapper_enable)
 {
-    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, true, mapper_enable);
+    loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, true, mapper_enable, false);
 }
 
 static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
@@ -13762,6 +14030,7 @@ int __no_inline_not_in_flash_func(main)()
     // PSG Mirror is unstable on Sunrise Nextor + 1MB mapper: heavy disk I/O can
     // drop mapper segment-register writes, so force it off for those variants.
     if (mapper == MAPPER_SUNRISE_MAPPER_USB || mapper == MAPPER_SUNRISE_MAPPER_SD ||
+        mapper == MAPPER_C2_SD || mapper == MAPPER_C2_USB ||
         mapper == MAPPER_MEGARAM_SD || mapper == MAPPER_MEGARAM_USB || mapper == MAPPER_MEGARAM) {
         ctrl_psg_emulation = 0;
     }
@@ -13836,6 +14105,8 @@ int __no_inline_not_in_flash_func(main)()
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);
+    if (!wavegame_active && (cartridge_audio || psg_emulation))
+        prepare_rom_audio_handoff_pool();
     if (wavegame_active) {
         msx_pio_io_write_bus_init();
     }
@@ -14028,10 +14299,16 @@ int __no_inline_not_in_flash_func(main)()
             loadrom_c2_usb(rom_offset, cache_enable);
             break;
         case MAPPER_MEGARAM_SD:
-            loadrom_sunrise_megaram_sd(rom_offset, cache_enable);
+            if (audio_mode == AUDIO_MODE_MSX_MUSIC)
+                loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, false, true, true);
+            else
+                loadrom_sunrise_megaram_sd(rom_offset, cache_enable);
             break;
         case MAPPER_MEGARAM_USB:
-            loadrom_sunrise_megaram_usb(rom_offset, cache_enable);
+            if (audio_mode == AUDIO_MODE_MSX_MUSIC)
+                loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, false, true, true);
+            else
+                loadrom_sunrise_megaram_usb(rom_offset, cache_enable);
             break;
         case MAPPER_MEGARAM:
             loadrom_megaram(rom_offset, cache_enable);

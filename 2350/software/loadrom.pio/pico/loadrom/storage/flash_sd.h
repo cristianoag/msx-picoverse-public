@@ -44,9 +44,8 @@ void flash_sd_task(void);
 // not. Core 0 must wait for this before serving the MSX bus.
 bool flash_sd_ready(void);
 
-// True when the microSD card is mounted and the flash is being persisted.
-// The image file itself is only created the first time the MSX programs
-// the flash, so this can be true before the file exists.
+// True when the microSD card is mounted and the flash image file is open,
+// so writes are being persisted.
 bool flash_sd_backed(void);
 
 // Path of the image file on the card, for diagnostics.

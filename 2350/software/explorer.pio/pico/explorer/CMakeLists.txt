@@ -40,11 +40,13 @@ pico_sdk_init()
 
 # Set to 1 to enable USB stdio debug output, 0 to disable. If enabled, the pico will appear as a USB CDC device when connected to a host, and printf output will be sent over USB instead of UART. Note that enabling this will prevent the use of the USB host stack, so it is not recommended for normal use.
 # I used to debug some pico crashes during development...
-# This also builds the audio bus tracer (debug/audio_trace.c), which records MSX
+# The optional audio bus tracer (debug/audio_trace.c) records MSX
 # I/O writes, PSG register traffic, SCC register writes, YM2413/FM-PAC register
 # traffic and the MSX-MUSIC output level history into per-core ring buffers and
 # reports them over the same CDC link.
 set(EXPLORER_USB_STDIO_DEBUG 0)
+# Keep the FM/PSG trace buffers off while diagnosing MP3 memory/startup.
+set(EXPLORER_AUDIO_TRACE 0)
 
 # Add executable. Default name is the project name, version 0.1
 set(EXPLORER_SOURCES
@@ -99,9 +101,12 @@ if (NOT EXPLORER_USB_STDIO_DEBUG)
 endif()
 
 target_compile_definitions(explorer PRIVATE
+    # MP3: 6*1152*4 producer PCM + 2*256*4 I2S PCM + 13KB allocation reserve.
+    # Make SRAM growth fail at link time rather than during menu playback.
+    PICO_HEAP_SIZE=0xA800
     PICO_AUDIO_I2S_PIO=1
     EXPLORER_USB_STDIO_DEBUG=$<BOOL:${EXPLORER_USB_STDIO_DEBUG}>
-    EXPLORER_AUDIO_TRACE=$<BOOL:${EXPLORER_USB_STDIO_DEBUG}>
+    EXPLORER_AUDIO_TRACE=$<BOOL:${EXPLORER_AUDIO_TRACE}>
     EXPLORER_VERSION="${EXPLORER_VERSION}"
     PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=5000
     PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0

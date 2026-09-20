@@ -131,7 +131,7 @@ The flash contents are mirrored to a file named after the ROM in the root of the
 The file has no header: it is a byte exact image of the cartridge flash, so it can be copied off the card and inspected, or used as a ROM image. It is matched to the running cartridge by name and size.
 
 Notes:
-- The image is only created the first time a game actually programs the flash, so a card that has never been saved to costs nothing at startup. Restoring an existing image happens while the MSX is still held at boot, and the ROM screen shows "Preparing FlashROM image, please wait..." while it runs.
+- The image is created in full the first time the cartridge runs with a card that has no matching `.FLA`, while the MSX is still held at boot. Restoring an existing image happens at the same point, and the ROM screen shows "Preparing FlashROM image, please wait..." while either runs.
 - Write-back runs on Core 0 during gaps in cartridge access, so saving works with every audio profile. The MSX may stutter briefly while a save is being written to the card.
 - Without a usable microSD card the flash is still emulated, but its contents are lost at power off.
 - The emulated device is sized to the next power of two at or above the ROM size, up to 8 MB (the full size the ASCII-X XL cartridges provide). When the MSX-MUSIC audio profile is active the bank cache has to live in PSRAM alongside the array, which lowers the ceiling to 4 MB.

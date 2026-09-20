@@ -56,7 +56,6 @@ static volatile uint32_t dirty_stamp_us = 0;
 
 static FIL     flash_fil;
 static bool    flash_fil_open = false;
-static bool    create_pending = false;
 static uint8_t flash_chunk[FLASH_SD_BLOCK_SIZE];
 
 // -----------------------------------------------------------------------
@@ -258,19 +257,13 @@ static void flash_sd_open_image(void)
         f_close(&flash_fil);
     }
 
-    // No usable image yet. Creating one means writing the whole array to
-    // the card, which for a multi-megabyte cartridge takes seconds, so it
-    // is deferred until the MSX actually programs something. A card that
-    // has never been written to therefore costs nothing at boot.
-    create_pending = true;
-}
-
-// Write the whole array out as a fresh image. Runs on Core 1 after the bus
-// is already live, so the MSX keeps running while the card is written.
-static void flash_sd_create_image(void)
-{
-    create_pending = false;
-
+    // No usable image yet. Create the whole thing now, before the bus goes
+    // live. Deferring this until the MSX programs the flash does not work:
+    // the file has to be opened with FA_CREATE_ALWAYS, which truncates it to
+    // zero straight away, and the rest is only written once the MSX has been
+    // quiet for a while - a game that saves and is then switched off leaves
+    // an empty or partial file on the card, which the next boot rejects for
+    // having the wrong size.
     if (f_open(&flash_fil, flash_file_path, FA_CREATE_ALWAYS | FA_READ | FA_WRITE) != FR_OK)
     {
         flash_sd_file_ok = false;
@@ -286,11 +279,6 @@ static void flash_sd_create_image(void)
     }
 
     flash_fil_open = true;
-
-    // The file now holds the complete array, including whatever prompted
-    // the creation, so nothing is left outstanding.
-    for (uint32_t w = 0; w < FLASH_SD_MAP_WORDS; w++)
-        __atomic_store_n(&dirty_map[w], 0u, __ATOMIC_RELAXED);
 }
 
 // -----------------------------------------------------------------------
@@ -376,7 +364,7 @@ void __not_in_flash_func(flash_sd_task)(void)
 
     while (true)
     {
-        if ((!flash_fil_open && !create_pending) || !dirty_pending)
+        if (!flash_fil_open || !dirty_pending)
         {
             tight_loop_contents();
             continue;
@@ -391,10 +379,6 @@ void __not_in_flash_func(flash_sd_task)(void)
         }
 
         dirty_pending = false;
-
-        if (create_pending)
-            flash_sd_create_image();
-        else
-            flash_sd_flush();
+        flash_sd_flush();
     }
 }

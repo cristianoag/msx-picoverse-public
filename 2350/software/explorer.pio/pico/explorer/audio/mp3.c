@@ -12,6 +12,20 @@
 #include "mp3dec.h"
 #include "../storage/sd_activity.h"
 
+#if EXPLORER_USB_STDIO_DEBUG
+#include <malloc.h>
+extern char __end__, __HeapLimit;
+static bool mp3_first_frame_logged;
+
+static void mp3_debug_heap(const char *stage) {
+    struct mallinfo info = mallinfo();
+    unsigned long capacity = (uintptr_t)&__HeapLimit - (uintptr_t)&__end__;
+    printf("MP3: %s heap capacity=%lu allocated=%lu arena=%lu arena_free=%lu top_free=%lu\n",
+           stage, capacity, (unsigned long)info.uordblks, (unsigned long)info.arena,
+           (unsigned long)info.fordblks, (unsigned long)info.keepcost);
+}
+#endif
+
 // I2S clock pins must be consecutive: clock_pin_base = BCLK, clock_pin_base+1 = LRCLK.
 #define MP3_I2S_DATA_PIN 29
 #define MP3_I2S_BCLK_PIN 30
@@ -33,7 +47,9 @@
 #define MP3_BUFFER_FALLBACK 8192
 #define MP3_READ_ERROR_LIMIT 8
 #define MP3_I2S_BUFFER_SAMPLES 1152
-#define MP3_I2S_BUFFER_COUNT 8
+// Six full stereo frames retain ~157 ms at 44.1kHz while leaving room for
+// menu allocations and allocator fragmentation (eight exhausted the heap).
+#define MP3_I2S_BUFFER_COUNT 6
 #define MP3_MIN_BUFFER_SIZE 2048
 #define MP3_MAX_SAMPLES_PER_CH 1152
 #define MP3_PATH_MAX 256
@@ -239,6 +255,9 @@ static void set_mute(bool enable) {
 }
 
 static void reset_decoder_state(void) {
+#if EXPLORER_USB_STDIO_DEBUG
+    mp3_first_frame_logged = false;
+#endif
     if (mp3_decoder) {
         MP3FreeDecoder(mp3_decoder);
         mp3_decoder = NULL;
@@ -880,6 +899,12 @@ void mp3_init(void) {
     gpio_set_dir(MP3_I2S_MUTE_PIN, GPIO_OUT);
     set_mute(true);  // Start muted to prevent noise during folder browsing
 
+#if EXPLORER_USB_STDIO_DEBUG
+    printf("MP3: producer buffers=%u frames=%u PCM_bytes=%u\n",
+           MP3_I2S_BUFFER_COUNT, MP3_I2S_BUFFER_SAMPLES,
+           MP3_I2S_BUFFER_COUNT * MP3_I2S_BUFFER_SAMPLES * producer_format.sample_stride);
+    mp3_debug_heap("before producer pool");
+#endif
     audio_pool = audio_new_producer_pool(&producer_format, MP3_I2S_BUFFER_COUNT, MP3_I2S_BUFFER_SAMPLES);
     if (!audio_pool) {
         printf("MP3: audio pool alloc failed\n");
@@ -888,6 +913,9 @@ void mp3_init(void) {
         return;
     }
 
+#if EXPLORER_USB_STDIO_DEBUG
+    mp3_debug_heap("producer pool ready; starting I2S");
+#endif
     i2s_config.dma_channel = (uint)mp3_dma_channel;
     if (!i2s_start()) {
         printf("MP3: i2s setup/connect failed\n");
@@ -897,6 +925,9 @@ void mp3_init(void) {
     }
     reset_decoder_state();
     update_status_flags();
+#if EXPLORER_USB_STDIO_DEBUG
+    mp3_debug_heap("init complete");
+#endif
 }
 
 // Called from Core 1 only
@@ -1365,14 +1396,21 @@ void mp3_update(void) {
     }
 
     if (!mp3_decoder) {
+#if EXPLORER_USB_STDIO_DEBUG
+        mp3_debug_heap("before decoder init");
+#endif
         mp3_decoder = MP3InitDecoder();
         if (!mp3_decoder) {
+            printf("MP3: decoder init failed\n");
             error_flag = true;
             playing = false;
             set_mute(true);
             update_status_flags();
             return;
         }
+#if EXPLORER_USB_STDIO_DEBUG
+        printf("MP3: decoder ready\n");
+#endif
     }
 
     int decode_errors = 0;
@@ -1404,7 +1442,17 @@ void mp3_update(void) {
         read_ptr += offset;
         bytes_left -= offset;
 
+#if EXPLORER_USB_STDIO_DEBUG
+        bool log_frame = !mp3_first_frame_logged;
+        mp3_first_frame_logged = true;
+        if (log_frame)
+            printf("MP3: first decode bytes=%d\n", bytes_left);
+#endif
         int err = MP3Decode(mp3_decoder, &read_ptr, &bytes_left, pcm_scratch, 0);
+#if EXPLORER_USB_STDIO_DEBUG
+        if (log_frame)
+            printf("MP3: first decode result=%d remaining=%d\n", err, bytes_left);
+#endif
         if (read_ptr >= mp3_buf && read_ptr <= (mp3_buf + mp3_buf_used)) {
             mp3_buf_pos = (size_t)(read_ptr - mp3_buf);
         }
@@ -1430,7 +1478,15 @@ void mp3_update(void) {
         }
 
         if (info.outputSamps > 0 && info.nChans > 0) {
+#if EXPLORER_USB_STDIO_DEBUG
+            if (log_frame)
+                printf("MP3: first I2S submit samples=%d channels=%d\n", info.outputSamps, info.nChans);
+#endif
             int frames_sent = output_pcm_to_i2s(pcm_scratch, info.outputSamps, info.nChans);
+#if EXPLORER_USB_STDIO_DEBUG
+            if (log_frame)
+                printf("MP3: first I2S submit complete frames=%d\n", frames_sent);
+#endif
             if (frames_sent > 0) {
                 elapsed_samples += (uint64_t)frames_sent;
                 if (sample_rate > 0) {

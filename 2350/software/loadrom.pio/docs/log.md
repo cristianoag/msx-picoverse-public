@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.77
+
+- Fixed the `.FLA` image being written to the microSD card empty, which left ASCII16-X FlashROM saves working only when a valid image happened to be there already. Creating the image was deferred until the MSX actually programmed the flash, and the file has to be opened with `FA_CREATE_ALWAYS`, which truncates it to zero straight away; the rest was then written only after the MSX had been quiet for a while. A game that saves and is then switched off left a zero-byte or partial file on the card, and because the restore path requires the file to match the emulated device size exactly, the next boot rejected it and started over. The image is now created in full during cartridge start-up, before the bus goes live, so the file on the card is always a complete, valid image.
+- Bumped the loadrom build version to v2.77 (top-level and tool Makefiles).
+
 ## PicoVerse 2350 Loadrom v2.76
 
 - Implemented the FlashROM half of the [ASCII16-X specification](https://www.grauw.nl/projects/ascii-x/ascii16-x/), so ASCII16-X cartridges can now erase and reprogram their own memory the way the real hardware does. Games and tools that use it for save games, high scores or user created levels work instead of silently failing.

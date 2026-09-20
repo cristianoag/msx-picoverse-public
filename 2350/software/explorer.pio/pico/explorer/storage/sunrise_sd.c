@@ -456,10 +456,11 @@ void __not_in_flash_func(sunrise_sd_task)(void)
 
     while (true)
     {
-        service_system_audio();
-
         if (sd_ide_ctx == NULL)
+        {
+            service_system_audio();
             continue;
+        }
 
         // --- Handle read request from Core 0 ---
         if (usb_read_requested && sd_device_mounted)
@@ -576,5 +577,9 @@ void __not_in_flash_func(sunrise_sd_task)(void)
             sd_ide_ctx->error = 0;
             sd_ide_ctx->state = IDE_STATE_READ_DATA;
         }
+
+        // Publish disk completions before yielding a bounded slice to audio.
+        // The raw SD calls above remain synchronous and may still stall audio.
+        service_system_audio();
     }
 }

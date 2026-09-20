@@ -707,10 +707,11 @@ void __not_in_flash_func(sunrise_usb_task)(void)
     {
         tuh_task();
 
-        service_system_audio();
-
         if (usb_ide_ctx == NULL)
+        {
+            service_system_audio();
             continue;
+        }
 
         // --- Timeout watchdog for in-progress USB transfers ---
         // Slow or stalled USB devices must not leave IDE in permanent BSY.
@@ -876,6 +877,9 @@ void __not_in_flash_func(sunrise_usb_task)(void)
             usb_ide_ctx->error = 0;
             usb_ide_ctx->state = IDE_STATE_READ_DATA;
         }
+
+        // Submit requests and publish completions before the shared audio slice.
+        service_system_audio();
     }
 }
 

@@ -926,6 +926,17 @@ void loadGame(int index)
     Poke(MP3_CTRL_CMD, MP3_CMD_STOP);
     if ((record->Mapper & ~SOURCE_SD_FLAG) != 0)
     {
+        /* ASC16X-FR syncs the cartridge with its .FLA image on the microSD
+           before the game starts, which takes a few seconds on a large ROM.
+           Warn here rather than in the ROM screen so both ways of launching
+           a game - Enter from the detail page and Space from the list - show
+           it. */
+        if (record_mapper_code(record->Mapper) == MAPPER_ASCII16X_FR)
+        {
+            menu_ui_clear_rows(22, 24);
+            Locate(0, 22);
+            printf("Preparing FlashROM image, please wait...");
+        }
         save_last_selection((unsigned int)index); // Remember it for the next boot
         Poke(ROM_SELECT_REGISTER, index); // Set the game index (absolute)
         execute_rst00(); // Execute RST 00h to reset the MSX computer and load the game
