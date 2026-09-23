@@ -197,6 +197,11 @@ or a separate spacer. Overall height above the PCB is 7.6 mm.
 3.5 mm jack exits the left wall (3.13 mm past the board outline, centre ≈ 3.5 mm above the board
 surface) and the BOOTSEL button needs a side hole at S1.
 
+**The 3.5 mm jack is a line output, not a headphone output.** The UDA1334A has no headphone
+amplifier stage. Feed it to powered speakers, an amplifier or a line input — a load of **3 kΩ or
+higher**. Earphones or headphones (16–32 Ω) will play, but quietly and with the output stage
+clipping. That is the load, not a fault in the board.
+
 ---
 
 ## Repository contents
@@ -366,3 +371,7 @@ OCM 은 FPGA 구현이라 드라이브 특성이 다르다. WiFi · USB 메모�
 **만들기 전에 알아둘 것** — MSX 에 꽂은 상태로 PC 에 USB 를 연결하면 안 된다(역급전).
 F1 은 점퍼로 대체 금지(USB 호스트 전류 제한을 겸한다). U2 는 6mm 스탠드오프가 필요하다.
 사출 셸에는 잭 타공과 버튼 구멍을 직접 가공해야 한다.
+
+**3.5mm 잭은 라인 출력이다. 헤드폰 출력이 아니다.** UDA1334A 에는 헤드폰 앰프단이 없다.
+앰프 내장 스피커나 앰프, 또는 라인 입력에 연결한다 — **3 kΩ 이상 부하**. 이어폰·헤드폰
+(16~32Ω)을 직접 물리면 소리는 나지만 작고 출력단이 클리핑한다. 보드 불량이 아니라 부하 문제다.
