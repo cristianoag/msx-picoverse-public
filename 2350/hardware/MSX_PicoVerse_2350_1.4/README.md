@@ -32,6 +32,11 @@ Verified on a real MSX:
 | PSG / SCC / MSX-MUSIC / YM2151 / MP3 | ✅ |
 | ESP-01 WiFi | ✅ — **firmware update required, see below** |
 
+Verification was done on the rev 1.3 board with **D2 replaced by a 0 Ω link** — electrically
+identical to rev 1.4, where D2 is simply not fitted. USB mass storage was confirmed working that
+way. The rev 1.4 PCB itself has not been fabricated yet; the differences from the verified board
+are listed under [What changed in rev 1.4](#what-changed-in-rev-14).
+
 ### ESP-01 needs a firmware update
 
 The ESP-01 / ESP-01S modules sold today ship with **factory AT-command firmware**, which this
@@ -76,7 +81,7 @@ shell**, and every mechanical decision follows from it:
 | PAD01 / PAD02 | Ø4.3 mm NPTH, positioned on the shell's screw bosses taken from the case drawing |
 | S1 | **side-actuated** SMD switch (A06-B6-1), actuator protruding 0.5 mm past the board outline to meet the shell's button hole. A top-actuated part such as a PTS645 will not work |
 | U2 3.5 mm jack | overhangs the left board edge by 3.13 mm for the shell's audio cutout |
-| U2 mounting | component-side down on a 6 mm standoff, moved to the top side so it clears the bottom shell |
+| U2 mounting | component-side down on a 6 mm standoff, on the top side — the jack has to exit through the shell's left wall |
 | J3 | right-angle header only — a vertical header hits the shell |
 | U1 / U2 / J2 | no female sockets, and the header plastic spacers must be removed; socket height prevents the shell from closing |
 
@@ -136,14 +141,20 @@ The ESP-01 is now powered from `+3V3` whenever the board is powered. The four st
 `R8 / R9 / R10 / R39` were unified to **4.7 kΩ** for margin against the RP2350's internal
 pull-downs.
 
-### U2 moved to the top side
+### U2 placement corrected
 
-The UDA1334A module moved from B.Cu to F.Cu and was rotated 180° so the 3.5 mm jack overhangs the
-left board edge by 3.13 mm. This removed the ~5.5 mm bottom-shell interference of rev 1.3.
+**This is a file correction, not a design change.** The rev 1.3 board file placed U2 on B.Cu, and
+its 3D model had the module's components on the wrong face. Neither matched how the board was
+actually built and verified. rev 1.4 corrects the file — U2 on F.Cu, rotated 180°, with the 3.5 mm
+jack overhanging the left board edge by 3.13 mm, which is how the working board has always been
+assembled.
 
 **The module is mounted component-side down**, so a **6.0 mm standoff is required** (the 47 µF
 cans are 5.4 mm tall). The header's plastic spacer alone is not enough — use long-pin headers
 (≥ 11 mm) or a separate spacer. Overall height above the PCB is 7.6 mm.
+
+The 3D model is now generated from the board file itself (`tools/make_uda_model.py`, reading U2's
+pad coordinates and F.Fab outline), so it cannot drift away from the footprint again.
 
 ### Removed parts
 
