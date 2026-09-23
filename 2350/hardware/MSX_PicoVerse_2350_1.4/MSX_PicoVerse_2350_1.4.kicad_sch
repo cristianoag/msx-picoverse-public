@@ -6,13 +6,13 @@
 	(paper "User" 445 340)
 	(title_block
 		(title "MSX PicoVerse 2350")
-		(date "2026-08-28")
-		(rev "1.3")
+		(date "2026-09-23")
+		(rev "1.4")
 		(company "The Retro Hacker")
-		(comment 1 "rev 1.3 : series-resistor MSX bus, AP63200 buck, ideal-diode ORing, SW1 ESP power")
+		(comment 1 "rev 1.4 : D2 removed (USB MSC), SW1/Q3/Q4/R40/C12 removed, ESP-01 always on +3V3")
 		(comment 2 "Original design : The Retro Hacker (rev 1.0-1.2)")
 		(comment 3 "rev 1.2 netlist reconstructed from released Gerber X2 / IBOM")
-		(comment 4 "4L JLC04161H-3313A 1.58mm / USB 90ohm diff L1-L2 / DNP: R43 R44 C16 / rev 1.3 by ESLAB")
+		(comment 4 "4L JLC04161H-3313 1.6mm / USB 90ohm diff L1-L2 / DNP: R43 R44 C16 / rev 1.4 by ESLAB")
 	)
 	(lib_symbols
 		(symbol "MSX_PicoVerse_2350:+3V3"
@@ -10143,7 +10143,7 @@
 		)
 		(uuid "523c95aa-1aef-4df3-92a5-d8af81909382")
 	)
-	(text "USB D+/D- : 90 Ω 차동\nF.Cu(L1) 전용, 기준면 In1.Cu(L2) GND\n선폭 0.29 / 간격 0.203 mm (JLC04161H-3313A)\n비아·스터브 금지, 길이차 ±5 mm, 총 60 mm 이하"
+	(text "USB D+/D- : 90 Ω 차동\nF.Cu(L1) 전용, 기준면 In1.Cu(L2) GND\n선폭 0.29 / 간격 0.203 mm (JLC04161H-3313)\n비아·스터브 금지, 길이차 ±5 mm, 총 60 mm 이하"
 		(exclude_from_sim no)
 		(at 300.228 178.562 0)
 		(effects
@@ -10156,7 +10156,7 @@
 		)
 		(uuid "5681d9df-0141-4250-b972-035da95c7d5a")
 	)
-	(text "설계 주기\n1. 기판 : 4층, JLC04161H-3313A, 완성 두께 1.58 mm. 엣지 커넥터 물림 규격이므로 두께 변경 금지.\n2. 내층 In1.Cu 는 통짜 GND. USB 쌍과 고속 신호 아래에서 절대 자르지 말 것.\n3. GNDA 는 U2(DAC) 출력부만 감싸는 F.Cu 로컬 폴리곤. R50(0R) 한 점으로만 GND 와 연결.\n4. 골드핑거 영역 전 층 구리 제거(키아웃) 완료. 표면처리 ENIG 권장, 45도 베벨.\n5. 넷클래스 : Power 0.6 / Analog 0.3 / USB 0.29 차동 / 기타 0.25 mm, 클리어런스 0.2 mm.\n6. 미실장(DNP) : R43·R44 = U2 모듈에 PLL·DEEM 풀 저항이 없을 때만 실장\n                 C16(100uF) = WiFi 동작이 불안정할 때만 실장\n7. J11 패드 44(CART_SW)만 1 mm 짧다 - 카트리지 검출이 마지막에 접촉하는 라스트 메이트.\n8. 최소 트랙 0.20 mm / 최소 드릴 0.30 mm / M4 마운팅홀 2개(비도금)."
+	(text "설계 주기\n1. 기판 : 4층, JLC04161H-3313, 완성 두께 1.58 mm. 엣지 커넥터 물림 규격이므로 두께 변경 금지.\n2. 내층 In1.Cu 는 통짜 GND. USB 쌍과 고속 신호 아래에서 절대 자르지 말 것.\n3. GNDA 는 U2(DAC) 출력부만 감싸는 F.Cu 로컬 폴리곤. R50(0R) 한 점으로만 GND 와 연결.\n4. 골드핑거 영역 전 층 구리 제거(키아웃) 완료. 표면처리 ENIG 권장, 45도 베벨.\n5. 넷클래스 : Power 0.6 / Analog 0.3 / USB 0.29 차동 / 기타 0.25 mm, 클리어런스 0.2 mm.\n6. 미실장(DNP) : R43·R44 = U2 모듈에 PLL·DEEM 풀 저항이 없을 때만 실장\n                 C16(100uF) = WiFi 동작이 불안정할 때만 실장\n7. J11 패드 44(CART_SW)만 1 mm 짧다 - 카트리지 검출이 마지막에 접촉하는 라스트 메이트.\n8. 최소 트랙 0.20 mm / 최소 드릴 0.30 mm / M4 마운팅홀 2개(비도금)."
 		(exclude_from_sim no)
 		(at 20 292 0)
 		(effects

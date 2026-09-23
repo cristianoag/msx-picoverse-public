@@ -189,9 +189,9 @@ python3 tools/make_uda_model.py MSX_PicoVerse_2350_1.3.3dshapes
 
 ### 7.2 발주 전에 결정 — 고칠지 말지
 
-- [ ] **실크 잔재 `USB POWER` / `INT POWER`.** rev1.3 SW1 위치 표시였고
-      1.4 에는 스위치가 없어 의미 없는 글자다. 기능엔 무영향.
-      지우려면 F.SilkS 만 수정 → 거버 재플롯 → JLCPCB zip 재생성
+- [x] ~~**실크 잔재 `USB POWER` / `INT POWER`**~~ — 2026-09-23 삭제 완료.
+      SWD 라벨(DBUG / GND / SWDIO / SWLCK)도 J3 옆으로 정위치 이동.
+      **거버 재플롯 + JLCPCB zip 재생성 필요** (실크만 바뀌었지만 전 레이어 재출력 권장)
 - [ ] **`.pretty/UDA1334MOD.kicad_mod` 의 패드 방향 동기화 여부.**
       PCB 인스턴스는 라이브러리를 180° 회전 + (2.40, 0.08) 이동한 상태로
       패드가 굳어 있다. KiCad 에서 "라이브러리에서 풋프린트 업데이트" 를

@@ -82,7 +82,7 @@ jlcpcb.com → Order now(PCB)
 | Surface Finish | **ENIG** | ★ 골드핑거 때문에 필수. HASL 이면 핑거가 주석 도금된다 |
 | Outer Copper Weight | 1 oz | 설계 F/B 0.035 mm |
 | Inner Copper Weight | 0.5 oz | 설계 In1/In2 0.0152 mm |
-| Impedance Control | Yes → **JLC04161H-3313A** | 스택업 지정. 필요 없으면 No 로 두어도 제조는 된다 |
+| Impedance Control | Yes → **JLC04161H-3313** | ★ USB 차동쌍용. **추가 비용 없음**(2026-09 확인). 단 이 특수 스택업은 **Economic PCB Assembly 미지원** |
 | Via Covering | **Tented** | 설계가 앞뒤 모두 테팅 |
 | Min via hole size/diameter | 0.3 mm / 0.4 mm | 설계 최소 드릴 0.30 |
 | Board Outline Tolerance | ±0.2 mm (Regular) | |
@@ -145,6 +145,11 @@ NPTH 드릴  0.65 / 0.75 / 1.00 / 4.30 mm
 
 이 보드는 **ENIG + 골드핑거**가 필수다. Economic 은 표면처리 선택이 제한되므로
 주문 화면에서 ENIG 가 선택되는지 확인하고, 안 되면 Standard 로 간다.
+
+여기에 더해, 임피던스 스택업을 `JLC04161H-3313` 으로 지정하면 JLCPCB 가
+`특수 스택업이므로 경제적인 PCB 조립을 지원하지 않습니다` 경고를 띄우고
+**Economic 조립 자체가 막힌다.** 결국 이 보드는 Standard 로 가는 것이 맞다.
+Economic 을 꼭 써야 하면 스택업을 기본값으로 되돌려야 한다 (`doc/JLCPCB_ORDER.md` 2절).
 (가격은 변동되니 화면 값을 기준으로 볼 것)
 
 ---
