@@ -152,9 +152,9 @@ rev 1.3 board, which is electrically identical in the ways that matter.
 
 ## Verified on hardware
 
-The rev 1.3 board was run on four machines spanning the range that matters electrically and
-for timing — an original MSX2 for hard 5 V TTL slot drive, a Turbo R for the tightest bus
-timing, and an FPGA implementation for a completely different drive characteristic.
+The rev 1.3 board was run on four machines. The original MSX2 drives the bus with 5 V TTL,
+the Turbo R has the tightest bus timing, and the OCM is an FPGA implementation with different
+drive characteristics.
 
 | Machine | |
 |---|---|
@@ -346,8 +346,8 @@ The Retro Hacker 의 MSX PicoVerse 2350 을 KiCad 10 에서 4층 기판으로 �
 원본 설계와의 하드웨어 호환성은 그대로이며 기존 펌웨어를 수정 없이 쓴다.
 
 검증에 쓴 기기는 **파나소닉 MSX2 2기종 · FS-A1ST(Turbo R) · OCM(원칩 MSX)** 네 대다.
-5V TTL 로 세게 드라이브하는 오리지널기, 버스 타이밍이 가장 빡빡한 Turbo R, 드라이브 특성이
-아예 다른 FPGA 구현으로 양 끝을 물렸다. WiFi · USB 메모리 · microSD · DAC 를 모두 확인했다.
+오리지널기는 5V TTL 로 버스를 드라이브하고, Turbo R 은 버스 타이밍이 가장 빡빡하며,
+OCM 은 FPGA 구현이라 드라이브 특성이 다르다. WiFi · USB 메모리 · microSD · DAC 를 모두 확인했다.
 
 **원작자 v1.2 와의 차이**는 두 갈래다.
 
