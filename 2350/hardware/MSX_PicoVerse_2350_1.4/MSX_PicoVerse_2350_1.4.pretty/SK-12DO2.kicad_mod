@@ -1,0 +1,347 @@
+(footprint "SK-12DO2"
+(version 20260206)
+(generator "pcbnew")
+(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at -6.4 0.11 270)
+		(layer "F.SilkS")
+		(uuid "94e9bf4d-8315-4f53-b27d-9b8475aed0cc")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "SK-12DO2"
+		(at 0 0 180)
+		(layer "F.Fab")
+		(uuid "dd80ef41-fa0d-43b2-a1fa-6669bc47916f")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 180)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "335e6943-50a5-47d4-95db-bd089f8b2aef")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" "SLIDING SWITCH\n\nDistributor Buerklin, 11G810"
+		(at 0 0 180)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "f2b7b2d4-fcd1-420c-9093-54ddef71839d")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(units
+		(unit
+			(name "A")
+			(pins "1" "2" "3")
+		)
+	)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start 4.3 2.2)
+		(end 2 2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "e70f9231-a290-4dc3-8bf8-d60524bb25e0")
+	)
+	(fp_line
+		(start 4.3 1.61)
+		(end 4.3 2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "664d4e94-b2dd-402b-9cb5-7be254d45eec")
+	)
+	(fp_line
+		(start 4.3 -2.2)
+		(end 4.3 -1.61)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c8dfc15b-43f5-475b-9756-4aa37ea99574")
+	)
+	(fp_line
+		(start 2 4.2)
+		(end 1.5 4.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "a1d3a464-8529-4bb2-91e2-cb2dcbd10f2e")
+	)
+	(fp_line
+		(start 2 3.81)
+		(end 2 4.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "cd4d508e-8aff-4af7-b0e4-9faecfcf7e10")
+	)
+	(fp_line
+		(start 2 2.81)
+		(end 2 3.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "76e9cf95-2012-419a-8dde-10983980d56e")
+	)
+	(fp_line
+		(start 2 2.2)
+		(end 2 1.61)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "dfdf99cc-2015-4044-ad23-a27215be5a35")
+	)
+	(fp_line
+		(start 2 2.2)
+		(end -2 2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "59bab7db-a4f2-4921-a79c-ae8db1e5e881")
+	)
+	(fp_line
+		(start 2 1.81)
+		(end 2 2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "f44c21b7-89e2-4bfd-97a6-412e2d714e52")
+	)
+	(fp_line
+		(start 2 -1.61)
+		(end 2 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3ad4dac7-a8b9-4701-9e1a-e2ae76c1acb9")
+	)
+	(fp_line
+		(start 2 -2.2)
+		(end 4.3 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "78363796-a829-4b73-9fc9-4d2009293db8")
+	)
+	(fp_line
+		(start 1 4.2)
+		(end 0.5 4.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "b409d7e0-8f93-4567-ba52-b03ea3f359c1")
+	)
+	(fp_line
+		(start 0 4.2)
+		(end -2 4.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "23879c92-d962-4bb3-af77-bb1ee4da10a4")
+	)
+	(fp_line
+		(start 0 1.27)
+		(end 0 4.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "aa27fde4-75c9-4000-843d-bd98ac8a70d2")
+	)
+	(fp_line
+		(start -2 4.2)
+		(end -2 1.27)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0c8ed820-43e2-4da4-86cc-eee128534d08")
+	)
+	(fp_line
+		(start -2 2.2)
+		(end -2 1.61)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "28208de6-3588-4d7c-be1a-7bca77e63e36")
+	)
+	(fp_line
+		(start -2 2.2)
+		(end -4.3 2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "07ef43f3-fec4-4014-92cb-fe949d7f7131")
+	)
+	(fp_line
+		(start -2 -1.61)
+		(end -2 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "f08c3eed-9d0e-41d5-9ffb-d930ada62615")
+	)
+	(fp_line
+		(start -2 -2.2)
+		(end 2 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "484201bd-3376-4eaf-816c-9389aaf151a1")
+	)
+	(fp_line
+		(start -4.3 2.2)
+		(end -4.3 1.61)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "54cf7e76-7456-4b3e-98d3-59b0fdf98321")
+	)
+	(fp_line
+		(start -4.3 -1.61)
+		(end -4.3 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "400ae17c-bab4-49b0-ba34-908c0676e80c")
+	)
+	(fp_line
+		(start -4.3 -2.2)
+		(end -2 -2.2)
+		(stroke
+			(width 0.127)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "56573769-1bb6-4bc5-a16b-4ed7242dedfa")
+	)
+	(fp_rect
+		(start -4.3 -2.2)
+		(end 4.3 2.2)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "214e5bde-04f1-4393-8e86-e4cbbe434615")
+	)
+	(pad "" thru_hole circle
+		(at -4.1 0)
+		(size 2.1 2.1)
+		(drill 1.4)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 0)
+		(uuid "f7cf59b8-9d33-4d2e-8595-864f5d9af937")
+	)
+	(pad "" thru_hole circle
+		(at 4.1 0)
+		(size 2.1 2.1)
+		(drill 1.4)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 0)
+		(uuid "3899e604-c680-4344-81bc-c5920346be10")
+	)
+	(pad "1" thru_hole circle
+		(at -2 0)
+		(size 1.208 1.208)
+		(drill 0.7)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 0)
+		(uuid "788df9ff-9655-4d38-b344-497cccac28ca")
+	)
+	(pad "2" thru_hole circle
+		(at 0 0)
+		(size 1.208 1.208)
+		(drill 0.7)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 0)
+		(uuid "0791492d-99d0-46fb-a7fc-3ad9f7d0d0d0")
+	)
+	(pad "3" thru_hole circle
+		(at 2 0)
+		(size 1.208 1.208)
+		(drill 0.7)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(thermal_bridge_angle 0)
+		(uuid "cc08d7de-baad-4c79-bfe5-94e2790e489c")
+	)
+	(embedded_fonts no)
+	(model "${KIPRJMOD}/MSX_PicoVerse_2350_1.3.3dshapes/SK-12DO2.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

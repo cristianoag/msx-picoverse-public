@@ -1,0 +1,1253 @@
+#VRML V2.0 utf8
+# WaveShare Core2350B (RP2350B) module - 25.4 x 25.4 mm, 1.00 mm thick.
+# Sits 2.54 mm off the carrier on header spacers; components face away from
+# the carrier. Tallest point is the USB-C shell at 6.80 mm, and it hangs
+# 1.00 mm past the -Y edge of the module.
+# Board outline and the USB edge come from the footprint; the flash, crystal
+# and buttons are a single envelope because no WaveShare drawing was available.
+# 1 unit = 2.54 mm.
+Transform {
+  children [
+    # header spacer, -Y edge
+    Transform {
+      translation -0.00394 4.00394 0.50000
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.06 0.06 0.07
+            specularColor 0.10 0.10 0.11
+            shininess 0.10
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 9.98425 2.00000 1.00000 }
+        }
+      ]
+    }
+    # header spacer, +Y edge
+    Transform {
+      translation -0.00394 -4.00394 0.50000
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.06 0.06 0.07
+            specularColor 0.10 0.10 0.11
+            shininess 0.10
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 9.98425 2.00000 1.00000 }
+        }
+      ]
+    }
+    # header spacer, -X edge
+    Transform {
+      translation -4.00394 -0.00000 0.50000
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.06 0.06 0.07
+            specularColor 0.10 0.10 0.11
+            shininess 0.10
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 2.00000 6.00787 1.00000 }
+        }
+      ]
+    }
+    # header spacer, +X edge
+    Transform {
+      translation 4.00394 -0.00000 0.50000
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.06 0.06 0.07
+            specularColor 0.10 0.10 0.11
+            shininess 0.10
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 2.00000 6.00787 1.00000 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -2.50394 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -1.50394 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -0.50394 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 0.49606 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 1.49606 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 2.49606 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 4.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -2.50394 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -1.50394 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -0.50394 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 0.49606 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 1.49606 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 2.49606 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 3.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -2.50394 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -1.50394 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -0.50394 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 0.49606 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 1.49606 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 2.49606 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 -3.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -2.50394 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -1.50394 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -0.50394 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 0.49606 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 1.49606 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 2.49606 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 -4.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 2.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 1.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 0.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 -0.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 -1.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -4.50394 -2.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 2.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 1.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 0.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 -0.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 -1.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation -3.50394 -2.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 2.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 1.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 0.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 -0.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 -1.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 3.49606 -2.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 2.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 1.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 0.50394 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 -0.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 -1.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # pad pin
+    Transform {
+      translation 4.49606 -2.49606 0.32283
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.85 0.70 0.25
+            specularColor 0.35 0.29 0.10
+            shininess 0.30
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 0.25197 0.25197 3.16535 }
+        }
+      ]
+    }
+    # Core2350B PCB 25.4 x 25.4 x 1.00
+    Transform {
+      translation -0.00394 0.00394 1.19685
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.10 0.12 0.10
+            specularColor 0.16 0.18 0.16
+            shininess 0.20
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 9.98425 9.98425 0.39370 }
+        }
+      ]
+    }
+    # USB-C receptacle, overhangs the -Y edge by 1.00
+    Transform {
+      translation 0.00000 3.94291 2.03543
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.68 0.69 0.72
+            specularColor 0.45 0.45 0.48
+            shininess 0.45
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 3.51969 2.89370 1.28346 }
+        }
+      ]
+    }
+    # RP2350B QFN-80
+    Transform {
+      translation 0.00000 -0.00000 1.57087
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.06 0.06 0.07
+            specularColor 0.10 0.10 0.11
+            shininess 0.10
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 3.93701 3.93701 0.35433 }
+        }
+      ]
+    }
+    # small parts envelope - flash / crystal / buttons, positions assumed
+    Transform {
+      translation -2.59843 -2.71654 1.78740
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.28 0.28 0.30
+            specularColor 0.20 0.20 0.22
+            shininess 0.15
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 1.57480 1.18110 0.78740 }
+        }
+      ]
+    }
+    # small parts envelope - flash / crystal / buttons, positions assumed
+    Transform {
+      translation 2.59843 -2.71654 1.78740
+      children [
+        Shape {
+        appearance Appearance {
+          material Material {
+            diffuseColor 0.28 0.28 0.30
+            specularColor 0.20 0.20 0.22
+            shininess 0.15
+            ambientIntensity 0.30
+          }
+        }
+          geometry Box { size 1.57480 1.18110 0.78740 }
+        }
+      ]
+    }
+  ]
+}

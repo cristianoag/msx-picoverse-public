@@ -1,0 +1,13 @@
+# build intermediates
+pcbdata.json
+cu.json
+model.json
+pads.json
+matched.json
+sch_nets.json
+net_out.net
+netlist.txt
+erc.rpt
+drc.rpt
+drcall.rpt
+drc.json

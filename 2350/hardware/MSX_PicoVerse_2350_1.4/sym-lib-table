@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "MSX_PicoVerse_2350") (type "KiCad") (uri "${KIPRJMOD}/MSX_PicoVerse_2350.kicad_sym") (options "") (descr "MSX PicoVerse 2350 project symbols"))
+)

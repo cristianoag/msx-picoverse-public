@@ -1,0 +1,15 @@
+const fs=require('fs');
+const d=JSON.parse(fs.readFileSync('cu.json','utf8'));
+const all=[...d.F.pads,...d.B.pads];
+const map=new Map();
+all.filter(p=>p.P).forEach(p=>{ const k=p.P[0]+'|'+p.P[1];
+  if(!map.has(k)) map.set(k,{ref:p.P[0],pin:p.P[1],fn:p.P.slice(2).join(','),net:p.net,layers:[p.layer],x:p.x,y:p.y,aper:p.aper});
+  else map.get(k).layers.push(p.layer);
+});
+const pads=[...map.values()];
+fs.writeFileSync('pads.json',JSON.stringify(pads,null,1));
+const nets={};
+pads.forEach(p=>{ const n=p.net||'(none)'; (nets[n]=nets[n]||[]).push(p.ref+'.'+p.pin+(p.fn?' ['+p.fn+']':'')); });
+const keys=Object.keys(nets).sort();
+console.log('NET COUNT', keys.length);
+keys.forEach(k=>console.log(k.padEnd(34),'::', nets[k].join(', ')));
