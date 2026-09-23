@@ -12,10 +12,11 @@ gerbers, BOM and JLCPCB fabrication data).
 
 ## Status
 
-**rev 1.3 was built and tested on real hardware. The problems found there were fixed, and the
-result is rev 1.4 — the design published here.** Hardware compatibility with the original is
-maintained: the existing PicoVerse 2350 firmware (`explorer.pio`, `loadrom.pio`, `multirom.pio`)
-runs unmodified, and no firmware change is needed for this board.
+**rev 1.3 was built and tested on real hardware — a Panasonic MSX2, an FS-A1ST Turbo R and an
+OCM. The problems found there were fixed, and the result is rev 1.4 — the design published
+here.** Hardware compatibility with the original is maintained: the existing PicoVerse 2350
+firmware (`explorer.pio`, `loadrom.pio`, `multirom.pio`) runs unmodified, and no firmware change
+is needed for this board.
 
 | Function | Status |
 |---|---|
@@ -131,8 +132,9 @@ Measured shell dimensions are recorded in [`doc/case_measured_params.md`](doc/ca
 
 ## Revision history
 
-**rev 1.3** — the first ESLAB board. Built, assembled and tested on a real MSX. Everything worked
-except **USB mass storage**, which never enumerated.
+**rev 1.3** — the first ESLAB board. Built, assembled and tested on real machines (see
+[Verified on hardware](#verified-on-hardware)). Everything worked except **USB mass storage**,
+which never enumerated.
 
 **rev 1.4** — fixes what rev 1.3 got wrong, and is the design published here.
 
@@ -145,6 +147,34 @@ except **USB mass storage**, which never enumerated.
 
 The rev 1.4 PCB has not been fabricated yet — the verification above was done on the reworked
 rev 1.3 board, which is electrically identical in the ways that matter.
+
+---
+
+## Verified on hardware
+
+The rev 1.3 board was run on four machines spanning the range that matters electrically and
+for timing — an original MSX2 for hard 5 V TTL slot drive, a Turbo R for the tightest bus
+timing, and an FPGA implementation for a completely different drive characteristic.
+
+| Machine | |
+|---|---|
+| Panasonic MSX2 | two different models |
+| **Panasonic FS-A1ST** (MSX Turbo R) | R800, tightest bus timing of the four |
+| **OCM** (one-chip MSX) | FPGA implementation |
+
+All functions were exercised on these: WiFi, USB mass storage, microSD, DAC audio and the
+cartridge bus itself.
+
+![File-Hunter browser running on the Turbo R over WiFi](pcb_image/turbo_r_filehunter.jpg)
+
+*File-Hunter Browser listing 428 ROMs over WiFi — the ESP-01 link working end to end.*
+
+![The cartridge in the FS-A1ST slot](pcb_image/turbo_r_cartridge.jpg)
+
+*The board in the FS-A1ST cartridge slot. Photographed bare, before the shell.*
+
+These photographs are of rev 1.3 with D2 replaced by a 0 Ω link, which is the change rev 1.4
+makes permanent.
 
 ---
 
@@ -185,7 +215,7 @@ MSX_PicoVerse_2350_1.4/
 ├─ MSX_PicoVerse_2350_1.4_BOM.csv         detailed BOM with assembly notes (Korean)
 ├─ tools/                                 BOM / CPL / 3D model generators (Python)
 ├─ doc/                                   engineering notes (Korean)
-└─ pcb_image/                             renders used in this README
+└─ pcb_image/                             renders and test photos used in this README
 ```
 
 The `.3dshapes` folder still carries the `1.3` name from when the project was branched; the model
@@ -314,6 +344,10 @@ This revision is released under the same licence.
 The Retro Hacker 의 MSX PicoVerse 2350 을 KiCad 10 에서 4층 기판으로 다시 그린 파생 리비전이다.
 **rev 1.3 을 제작해 실기에서 검증했고, 거기서 드러난 문제를 고친 것이 rev 1.4 다.**
 원본 설계와의 하드웨어 호환성은 그대로이며 기존 펌웨어를 수정 없이 쓴다.
+
+검증에 쓴 기기는 **파나소닉 MSX2 2기종 · FS-A1ST(Turbo R) · OCM(원칩 MSX)** 네 대다.
+5V TTL 로 세게 드라이브하는 오리지널기, 버스 타이밍이 가장 빡빡한 Turbo R, 드라이브 특성이
+아예 다른 FPGA 구현으로 양 끝을 물렸다. WiFi · USB 메모리 · microSD · DAC 를 모두 확인했다.
 
 **원작자 v1.2 와의 차이**는 두 갈래다.
 

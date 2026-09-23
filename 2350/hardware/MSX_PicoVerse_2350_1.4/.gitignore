@@ -40,3 +40,6 @@ __pycache__/
 # 윈도우 로컬 경로와 계정명이 들어 있어 공개 저장소에는 올리지 않는다
 doc/GITHUB_UPLOAD.md
 doc/PR_PACK.md
+
+# --- 사진 원본(고해상도) — 저장소에는 리사이즈본만 올린다 ---
+pcb_image/_original/
