@@ -144,7 +144,7 @@ XY 는 풋프린트에서 그대로 읽으므로 패드와 핀이 정확히 일�
 | 파일 | 내용 |
 |---|---|
 | `MSX_PicoVerse_2350_1.4_BOM.csv` | 한글 상세 BOM — 39품목 / 실장 97 / DNP 4 |
-| `MSX_PicoVerse_2350_1.4_JLCPCB_CPL.csv` | SMT 좌표 97개 |
+| `MSX_PicoVerse_2350_1.4_JLCPCB_CPL.csv` | SMT 좌표 96개 |
 | `MSX_PicoVerse_2350_1.4_JLCPCB_BOM.csv` | JLCPCB BOM 36품목 (LCSC 번호 기입 필요) |
 | `tools/rev14_bom.py` | 한글 BOM 생성 — `.kicad_pcb` 직접 파싱, 외부 의존 없음 |
 | `tools/rev14_jlcpcb.py` | CPL + JLCPCB BOM 생성 |

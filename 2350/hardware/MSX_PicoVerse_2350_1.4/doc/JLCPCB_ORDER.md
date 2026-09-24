@@ -39,7 +39,7 @@ ESP 전원 :  rev 1.3  SW1/Q3/Q4 경유 ESP_POW  →  rev 1.4  +3V3 상시
 | 파일 | 용도 |
 |---|---|
 | `gerbers/` 폴더를 zip 압축 | PCB 제조 (거버 + PTH/NPTH 드릴) |
-| `MSX_PicoVerse_2350_1.4_JLCPCB_CPL.csv` | SMT 부품 좌표 — 97개 |
+| `MSX_PicoVerse_2350_1.4_JLCPCB_CPL.csv` | SMT 부품 좌표 — 96개 |
 | `MSX_PicoVerse_2350_1.4_JLCPCB_BOM.csv` | SMT 부품 목록 — 36품목 (LCSC 번호 기입 필요) |
 | `MSX_PicoVerse_2350_1.4_BOM.csv` | 한글 상세 BOM — 39품목. 발주용 아님, 조립 참고용 |
 
@@ -135,14 +135,40 @@ Bottom    0.035
 기본 4층 스택업은 L1-L2 프리프레그가 이보다 두꺼워서, 같은 선폭·간격으로는
 차동 임피던스가 90 Ω 에서 벗어난다.
 
-**주의** — JLCPCB 는 이 스택업을 특수 스택업으로 분류하며
-`특수 스택업이므로 경제적인 PCB 조립을 지원하지 않습니다` 라는 경고가 뜬다.
-즉 **Economic PCB Assembly 를 쓸 수 없다.**
+**Impedance Control 은 `No requirement` 로 둔다.**
+`Specify Stackup = Yes` 로 스택업을 지정하면 유전체 두께가 고정되고, 이 설계가
+전제로 하는 것은 그것뿐이다. 별도 항목인 **Impedance Control ±10%** 는 JLCPCB 가
+실제로 측정해서 보증해 주는 유료 서비스이고, **이것을 켜면 조립 옵션이 제한된다.**
+끄고 스택업만 지정하면 `-3313` 과 **Economic PCBA 가 동시에 가능하다**
+(2026-09-24 실제 견적에서 확인 — 5개 기준 Economic 총액 $135.54).
 
-- 생기판만 주문하거나 Standard 조립을 쓸 것이면 그대로 `-3313` 을 고른다
-- Economic 조립을 쓰고 싶으면 기본 스택업으로 두어도 된다.
-  USB 2.0 Full Speed 이고 배선 길이가 짧아 임피던스가 다소 어긋나도 동작한다.
-  권장 사항이지 필수 사항은 아니다
+USB 2.0 Full Speed 이고 배선이 짧아 임피던스 보증까지는 필요 없다.
+
+**Via Tented 는 선택할 수 없다.** JLCPCB 가 **Via Plugged 로 무상 업그레이드**한다는
+안내가 뜬다. Plugged 가 충전 품질도 더 낫다. `Filled & Capped` 계열을 고르면
+Horizontal Electroless Copper Plating 이 강제되어 둘이 합쳐 약 $21 이 붙는다.
+
+### 2026-09-24 실제 주문 화면 설정값
+
+$25.40 (생기판 5개) 견적의 기준이 된 설정이다. 아래에 없는 항목은 전부 기본값.
+
+| 항목 | 값 | 비용 |
+|---|---|---|
+| Layers / Thickness | 4 / 1.6 mm | — |
+| Outer / Inner Copper | 1 oz / 0.5 oz | — |
+| **Surface Finish** | **ENIG**, Gold Thickness 1 U" | **+$17.40** |
+| **Gold Fingers** | **Yes**, 베벨 30° | 무료 |
+| **Specify Stackup** | **Yes → `JLC04161H-3313`** | 무료 |
+| Impedance Control | **No requirement** | — |
+| Via Covering | **Plugged** | 무료 |
+| Via Plating Method | Not Specified | — |
+| Min via hole | 0.3 mm (0.4/0.45) | — |
+| Board Outline Tolerance | ±0.2 mm (Regular) | — |
+| Mark on PCB | Remove Mark | — |
+| Electrical Test | Flying Probe Fully Test | — |
+| PCB Build Time | 3-4 days | 무료 |
+
+화면 캡처 : `pcb_image/jlcpcb_pcb_options.jpg`
 
 ### 표면처리를 ENIG로 하는 이유
 
@@ -161,57 +187,94 @@ J11은 MSX 카트리지 슬롯에 직접 꽂히는 골드핑거다. HASL은 표�
 CPL도 동일 원점을 쓴다.
 
 ```
-Mid X =   KiCad X
-Mid Y = −(KiCad Y)     ← KiCad는 Y 아래가 +, 거버/CPL은 Y 위가 +
+Mid X =   KiCad X + 중심보정 dx
+Mid Y = −(KiCad Y + 중심보정 dy)   ← KiCad는 Y 아래가 +, 거버/CPL은 Y 위가 +
 Layer =  top / bottom
 ```
 
+**중심 보정(centroid)** — JLCPCB는 CPL 좌표를 *부품 중심*으로 읽는다.
+KiCad 풋프린트 원점은 커넥터류에서 핀1이나 기구 기준점에 있는 경우가 많아
+그대로 내보내면 부품이 엉뚱한 곳에 앉는다. `tools/rev14_jlcpcb.py` 가
+**패드(기구홀 제외) 바운딩박스 중심**을 계산해 보정한다.
+
+| 부품 | dx | dy | 설명 |
+|---|---:|---:|---|
+| J4 microSD | 0.00 | **−5.30** | 원점이 카드 삽입구 쪽에 있음 |
+| J5 USB-C | 0.00 | **−1.46** | 원점이 실드 기준 |
+| S1 | 0.00 | +0.30 | |
+| 나머지 93개 | 0.00 | 0.00 | 원점 = 패드 중심 |
+
+> 2026-09-24 : 처음에는 **코트야드** 중심으로 보정했는데 풋프린트마다 코트야드
+> 정의가 달라 오히려 더 틀어졌다(J4가 기판 밖으로 7 mm 이상). 패드 바운딩박스
+> 중심이 JLCPCB 기준과 가장 잘 맞는다.
+
 CPL 헤더는 JLCPCB 표준 그대로다: `Designator, Mid X, Mid Y, Layer, Rotation`
-배치 범위는 X[−46.380 … 45.000], Y[13.190 … 64.800].
 
 ### 3.2 반드시 확인할 것
 
-**① LCSC 부품번호를 채울 것**
-`LCSC Part #` 열이 비어 있다. JLCPCB는 이 번호로 부품을 매칭하므로 비워두면
-아무것도 매칭되지 않는다. 부품별로 LCSC에서 조회해 채워 넣는다.
+**① LCSC 부품번호**
+`tools/rev14_jlcpcb.py` 의 `LCSC` 표에 2026-09 기준으로 확인한 번호가 들어 있고
+BOM 에 자동으로 기입된다. 35품목 중 32품목이 채워져 있다. 나머지 3개는 §3.4 참조.
 
 **② 회전값을 미리보기에서 확인할 것**
 JLCPCB 부품 라이브러리의 기준 각도가 KiCad와 다른 패키지가 많다.
-특히 SOT-23, SOT-23-6, TSOT-26, SOD-323 계열은 90° 또는 180° 차이가 흔하다.
-업로드 후 렌더링 미리보기에서 부품별로 눈으로 확인하고 보정한다.
-이 단계를 건너뛰면 트랜지스터·다이오드가 뒤집혀 실장된다.
+2026-09-24 미리보기에서 실측해 확정한 보정값 (`ROT_FIX`) :
 
-현재 회전값 분포: 0°:21개 / 90°:47개 / 180°:8개 / 270°:21개
+| 풋프린트 | 보정 | 확인 기준 |
+|---|---:|---|
+| SOT23 (Q2) | +90° | 바디 긴축이 패드 배열과 같은 방향 |
+| SOT23-6L (Q1) | +270° | 핀1 마커가 실제 패드 1 위 |
+| SOD323 (D1) | +180° | 캐소드 밴드 방향 |
+| DO214SMB (TVS1) | +180° | |
+
+이 단계를 건너뛰면 트랜지스터·다이오드가 뒤집혀 실장된다.
 
 **③ 뒷면 부품 없음**
 rev 1.4 에서 U2 가 앞면으로 정정되어 **이 보드에는 뒷면 부품이 하나도 없다.**
-CPL 의 `Layer` 열은 전부 `top` 이다. bottom 부품 회전 규약을 따질 필요가 없다.
+CPL 의 `Layer` 열은 전부 `top` 이다.
+
+**④ 미리보기는 참고용이다**
+JLCPCB 뷰어는 자기네 3D 모델을 CPL 좌표에 얹어 그린다. 모델 원점이 부품마다
+달라서 커넥터가 기판 밖으로 조금 나와 보일 수 있다. 화면에도
+*"The preview for reference only. Check final part placement at DFM Analysis"*
+라고 적혀 있다. 최종 확인은 주문 후 4~6시간 뒤 **Order History → DFM Analysis** 에서 한다.
 
 ### 3.3 CPL 수록 범위
 
-CPL에는 **97개 부품**이 들어 있다. 아래는 제외되어 있다.
+CPL에는 **96개 부품**이 들어 있다. 아래는 제외되어 있다.
 
 | 구분 | 부품 | 사유 |
 |---|---|---|
 | DNP | C16, J3, R43, R44 | 기본 미실장 |
 | 기판 일체 | J11, PAD01, PAD02 | 골드핑거 / 마운팅홀 — 부품 아님 |
+| DIP 모듈 | J2 | ESP-01 은 스루홀 모듈. 직접 꽂아 납땜한다 |
 
-### 3.4 SMT로 실장할 수 없는 부품
+### 3.4 주문 화면에서 "Do not place" 로 빠지는 부품
 
-CPL에는 들어 있지만 SMT 서비스로는 실장되지 않는다.
-**주문 화면에서 해제하고 수동 납땜한다.**
+업로드는 되지만 JLCPCB 가 실장하지 않는다. 주문 화면에서 **Do not place** 를
+선택하고 넘어간 뒤, 받아서 직접 납땜한다.
 
-| 부품 | 값 | 패드 구성 | 비고 |
+| 부품 | 값 | 사유 | 대응 |
 |---|---|---|---|
-| U1 | Core2350B | 스루홀 64 | 모듈 |
-| U2 | UDA1334MOD | 스루홀 15 | 모듈, 앞면 |
-| J2 | ESP-01 | 스루홀 8 | 2x4 헤더 |
-| J5 | USB-C 16P | SMD 16 + 스루홀 4 | 혼합. 미리보기로 가능 여부 확인 |
+| **S1** | A06-B6-1 측면 푸시 스위치 | **JLCPCB / LCSC 라이브러리에 없다.** 검색해도 나오지 않는다 | 데브마트에서 직접 구매 — `datasheet/A06-B6-1.pdf`, <https://www.devicemart.co.kr/goods/view?no=1322059> |
+| **IC1** | AP63200WU-7 (C2071868) | **재고 부족.** 2026-09 기준 JLCPCB 재고가 이 보드 수량을 못 채운다 | LCSC 에서 따로 구매하거나, 재고가 찰 때까지 기다린다. TSOT-26 이라 손납땜 가능 |
+| U1 | Core2350B 모듈 | 스루홀 모듈 | 직접 구매·납땜 |
+| U2 | UDA1334A 모듈 | 스루홀 모듈, 6 mm 스탠드오프 필요 | 직접 구매·납땜 |
 
-> rev 1.3 의 SW1(슬라이드 스위치)은 삭제되어 목록에서 빠졌다.
+> 결과적으로 JLCPCB SMT 로 실장되는 것은 **32품목**이다.
+> BOM 화면에서 `Select` 를 전체 체크하고 **Next** 를 누르면 위 4개에 대해
+> 팝업이 뜨는데 **Do not place** 를 고르면 된다.
+
+> **⚠ J5 가 미리보기에서 사라지면** — BOM/CPL 을 다시 올리면 J5 가 수량 0 에
+> 체크 해제 상태로 돌아오는 경우가 있다. 선택되지 않은 부품은 배치 미리보기에
+> **아예 그려지지 않으므로** "USB 커넥터가 없어졌다" 로 보인다.
+> *Bill of Materials* 탭에서 J5 의 `Select` 를 다시 체크하면 복구된다.
+> JLCPCB 가 `The processing of this component is difficult` 경고와 함께
+> 보드당 $0.03 의 special component fee 를 붙이는데, SMD + 스루홀 혼합
+> 커넥터에서는 정상이다.
 
 J4(microSD)는 SMD 13핀 + NPTH 2개 구성이라 **SMT 실장 가능**하다.
-나머지 93개는 순수 SMD로 실장 가능하다.
+J5(USB-C)는 SMD 16 + 스루홀 4 혼합인데 2026-09-24 미리보기에서 실장 대상으로 잡혔다.
 
 ---
 

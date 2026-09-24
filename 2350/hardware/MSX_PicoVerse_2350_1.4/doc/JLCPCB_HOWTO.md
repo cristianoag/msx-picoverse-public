@@ -82,8 +82,9 @@ jlcpcb.com → Order now(PCB)
 | Surface Finish | **ENIG** | ★ 골드핑거 때문에 필수. HASL 이면 핑거가 주석 도금된다 |
 | Outer Copper Weight | 1 oz | 설계 F/B 0.035 mm |
 | Inner Copper Weight | 0.5 oz | 설계 In1/In2 0.0152 mm |
-| Impedance Control | Yes → **JLC04161H-3313** | ★ USB 차동쌍용. **추가 비용 없음**(2026-09 확인). 단 이 특수 스택업은 **Economic PCB Assembly 미지원** |
-| Via Covering | **Tented** | 설계가 앞뒤 모두 테팅 |
+| Specify Stackup | Yes → **JLC04161H-3313** | ★ USB 차동쌍용. **추가 비용 없음**(2026-09 확인) |
+| Impedance Control | **No requirement** | ★ 켜지 말 것. 켜면 조립 옵션이 제한된다. 스택업 지정만으로 충분하다 |
+| Via Covering | **Plugged** | Tented 는 선택 불가 — JLCPCB 가 Plugged 로 무상 업그레이드한다 |
 | Min via hole size/diameter | 0.3 mm / 0.4 mm | 설계 최소 드릴 0.30 |
 | Board Outline Tolerance | ±0.2 mm (Regular) | |
 | Gold Fingers | **Yes** | 3절 |
@@ -132,24 +133,32 @@ NPTH 드릴  0.65 / 0.75 / 1.00 / 4.30 mm
 | PCBA Qty | 2장 이상 |
 | Tooling holes | Added by JLCPCB |
 
-### Economic 이 아니라 Standard 를 쓰는 이유
+### Economic / Standard 중 무엇으로 갈 것인가
 
 | | Economic | Standard |
 |---|---|---|
 | 수량 | 2 ~ 50 | 2 ~ 80,000 |
 | 층수 | 2 ~ 4 | 1 ~ 32 |
-| 표면처리·색상 | **제한 있음** | 제한 없음 |
+| 재고 범위 | **좁음** | 넓음 |
 | 검사 | — | SPI 포함 |
-| Setup fee | $8.18 | $25.56 (단면) |
-| 스텐실 | $1.53 | $8.21 (단면) |
+| 부품 비용 방식 | 확장부품 수수료 | **피더 장착비**(부품 종류당) |
+| Setup fee / 스텐실 | $8.24 / $1.55 | $25.75 / $8.27 |
 
-이 보드는 **ENIG + 골드핑거**가 필수다. Economic 은 표면처리 선택이 제한되므로
-주문 화면에서 ENIG 가 선택되는지 확인하고, 안 되면 Standard 로 간다.
+2026-09-24 실제 견적 (5개, 같은 기판 사양) :
 
-여기에 더해, 임피던스 스택업을 `JLC04161H-3313` 으로 지정하면 JLCPCB 가
-`특수 스택업이므로 경제적인 PCB 조립을 지원하지 않습니다` 경고를 띄우고
-**Economic 조립 자체가 막힌다.** 결국 이 보드는 Standard 로 가는 것이 맞다.
-Economic 을 꼭 써야 하면 스택업을 기본값으로 되돌려야 한다 (`doc/JLCPCB_ORDER.md` 2절).
+| | Economic | Standard |
+|---|---|---|
+| PCB | $74.20 | — |
+| 조립 | **$61.34** | $116.67 |
+| **합계** | **$135.54** | $142.07 |
+
+**임피던스 스택업 때문에 Economic 이 막히는 것이 아니다.**
+막는 것은 별도 항목인 **Impedance Control ±10%** 다. 이것을 `No requirement` 로 두고
+`Specify Stackup = JLC04161H-3313` 만 지정하면 Economic 이 정상적으로 선택된다.
+ENIG + 골드핑거도 Economic 에서 그대로 선택된다 (2026-09-24 확인).
+
+판단 기준은 **재고**다. Economic 은 부품 재고 범위가 좁아서 Standard 에서는 잡히는
+부품이 안 잡힐 수 있다. 주문 화면에서 매칭 결과를 보고 고르면 된다.
 (가격은 변동되니 화면 값을 기준으로 볼 것)
 
 ---
@@ -172,7 +181,7 @@ CPL : Designator, Mid X, Mid Y, Layer, Rotation
 수록 범위
 
 ```
-CPL 97개   ← 실장 대상 전부
+CPL 96개   ← 실장 대상 전부 (J2 ESP-01 은 DIP 모듈이라 제외)
 BOM 36품목
 제외 : DNP 4개(C16, J3, R43, R44) + 기판일체 3개(J11, PAD01, PAD02)
 배치 범위 X −46.380 … 45.000 / Y 13.190 … 64.800
@@ -272,7 +281,7 @@ J4(microSD)는 SMD 13핀 + NPTH 2개라 **SMT 가능**하다.
 - [ ] `..._JLCPCB_GERBER.zip` 을 올렸는가 (`gerbers_v1.4.zip` 아님)
 - [ ] 화면에 뜬 치수가 101.15 × 66.05 인가
 - [ ] 4층 / 1.6 mm / **ENIG** / **Gold Fingers Yes**
-- [ ] Via Covering = Tented
+- [ ] Via Covering = Plugged (Tented 는 선택 불가)
 - [ ] Assembly Side = Top Side
 - [ ] BOM 36품목 전부 LCSC 번호 기입
 - [ ] 미리보기에서 SOT-23 / TSOT-26 / SOD-323 회전 전수 확인

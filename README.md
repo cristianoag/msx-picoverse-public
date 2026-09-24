@@ -152,6 +152,45 @@ Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/
 |J1| USB-C 16 Pin Connector | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4PtBc51) |
 |J2| microSD Card Slot | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4Pzbd7Z) |
 
+#### rev 1.4 — 4-layer derivative (community fork)
+
+A 4-layer redraw of this cartridge, laid out to fit a **moulded MSX cartridge shell**, is kept in
+[`2350/hardware/MSX_PicoVerse_2350_1.4/`](2350/hardware/MSX_PicoVerse_2350_1.4/). It adds a
+dedicated buck regulator, ideal-diode ORing, MSX bus series resistors, a TVS and a polyfuse, and
+fixes the VBUS path so USB mass storage works. The KiCad 10 project, gerbers, BOM and placement
+data are all there, and the firmware runs unmodified.
+
+Verified on Panasonic MSX2 (two models), Panasonic FS-A1ST (MSX Turbo R), and a one-chip MSX FPGA
+implementation.
+
+| Placement preview | JLCPCB PCB options |
+|---|---|
+| ![Placement preview](2350/hardware/MSX_PicoVerse_2350_1.4/pcb_image/jlcpcb_placement_preview.jpg) | ![PCB options](2350/hardware/MSX_PicoVerse_2350_1.4/pcb_image/jlcpcb_pcb_options.jpg) |
+
+**Roughly what it costs**, quoted at JLCPCB in September 2026 — 4 layer, 1.6 mm, ENIG, gold
+fingers with a 30° bevel, `JLC04161H-3313` stackup, assembled on the top side:
+
+| | 5 boards | 10 boards |
+|---|---|---|
+| Bare PCB only | $25.40 | $32.40 |
+| **Assembled (Standard PCBA)** | **$131.40** — $26.28 each | **$193.94** — $19.39 each |
+
+![JLCPCB assembled quote for five boards](2350/hardware/MSX_PicoVerse_2350_1.4/pcb_image/jlcpcb_quote_5pcs.jpg)
+
+**What that price does not include.** The assembled quote covers 31 of the 35 BOM line items.
+Four parts are left out and you buy and solder them yourself:
+
+- `IC1` AP63200WU-7 — **out of stock** at JLCPCB in the quantity this board needs.
+- `S1` A06-B6-1 side switch — **not in the JLCPCB / LCSC library at all**; it does not come up in
+  search. A datasheet and a purchase link are in the folder.
+- `U1` Waveshare Core2350B and `U2` UDA1334A breakout — **through-hole modules**, so no assembly
+  service places them.
+- The ESP-01 (`J2`) is a through-hole module in a socket and is not in the placement file either.
+
+Gold fingers, the 30° bevel and the impedance stackup are all free; ENIG and the per-part feeder
+loading fee ($48.05, charged once per order regardless of quantity) are what cost money. Ordering
+notes, the full option list and the parts-matching walkthrough are in that folder's README.
+
 ## Repository Contents
 - `hardware/` – Production-ready Gerbers, fabrication notes, and BOMs for each supported dev board.
 - `software/` – MultiROM PC utilities (`multirom.exe`) and menu ROM assets for both cartridge families.
