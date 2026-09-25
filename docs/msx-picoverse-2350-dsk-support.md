@@ -2,10 +2,6 @@
 
 This document describes how the PicoVerse 2350 Explorer firmware boots `.DSK` floppy disk images from the microSD card. It covers the user-visible behaviour, the design choices, the launch sequence, the storage backend, the write-through mechanism, the flash layout change, the MSX menu changes, the tests, and the known limitations. The feature was introduced in **Explorer v2.52**.
 
-Implementation phase: **Phase A (Nextor-backed)**. A later Phase B (custom MSX-DOS 1 disk ROM with multi-disk swapping) is outlined in [section 13](#13-roadmap-phase-b).
-
-> Status: the firmware builds and all host test suites pass. Booting on real MSX hardware has not been validated yet.
-
 ## 1. Overview
 
 Explorer lists `.DSK` files from the microSD card next to the `.ROM` files, with the type label **DSK**. When you select one and choose Run, the MSX boots from that image as if it were a floppy disk:
@@ -20,18 +16,6 @@ No floppy disk controller (FDC) is emulated. The disk is reached through Nextor'
 ## 2. Why this design
 
 A `.DSK` file is a raw sector image of a floppy disk: a FAT12 volume that starts with a boot sector and has no partition table. Explorer already emulates a Sunrise IDE interface for Nextor, and its microSD backend already presents a single **partition** (with no partition table in front of it) as the IDE device. A `.DSK` image has exactly the same shape, so it can be served by a sibling backend with no changes to the Nextor kernel or to the ATA front-end.
-
-Two alternatives were evaluated:
-
-| Approach | Pros | Cons |
-|---|---|---|
-| **Nextor + Sunrise IDE backed by the image (chosen for Phase A)** | Reuses the proven Sunrise IDE emulation and the Nextor ROM already shipped with Explorer; no copyrighted kernel; small firmware change | Compatibility depends on Nextor (RAM use, drive order); disk swapping needs media-change support that the Sunrise path does not provide |
-| **Custom FDC-less MSX-DOS 1 disk ROM (Phase B)** | Behaves like a real floppy disk ROM; lowest RAM use; full control of `DSKCHG`, which enables disk swapping | Needs an MSX-DOS 1 kernel. The available kernel source (used by Rookie Drive / MsxUsbFDD) is marked "Copyrighted by ASCII… study only". The alternative is patching a Disk ROM dump the user supplies, as OmniSCC does |
-
-Reference implementations reviewed:
-
-- **MsxUsbFDD** (MSXUSB project, based on Konamiman's Rookie Drive USB FDD BIOS): the MSX-DOS 1 kernel plus a `DSKIO`/`DSKCHG`/`GETDPB` driver that turns sector numbers into CH376 `BYTE_LOCATE` + read/write calls on an open `.DSK` file.
-- **OmniSCC** (RBSC, RP2040): patches a user-supplied 16 KB Disk ROM so that its driver entries talk to the microcontroller through a memory-mapped mailbox. OmniSCC is GPLv3, which is not compatible with PicoVerse's CC BY-NC-SA licence, so only its ideas were used — no code.
 
 ## 3. Using it
 
@@ -73,7 +57,7 @@ Options are saved in a per-image file named after the full image name, for examp
             MSX bus (cartridge slot)
                    │
           ┌────────┴─────────┐
-          │ PIO bus engine    │
+          │ PIO bus engine   │
           └────────┬─────────┘
                    │ read/write tokens
    Core 0 ─────────┴──────────────────────────────────────────────
@@ -247,7 +231,7 @@ A one-off check also unpacked a generated UF2 and confirmed that the bytes at `N
 - A machine with an internal floppy drive: check drive letters
 - PSG Mirror on and off
 
-## 12. Limitations (Phase A)
+## 12. Limitations 
 
 - **One image per boot.** Multi-disk games cannot swap disks yet; go back to the menu to change the image.
 - **Two sizes only.** Only 360 KB and 720 KB images are listed; other sizes are hidden.
@@ -259,18 +243,9 @@ A one-off check also unpacked a generated UF2 and confirmed that the bytes at `N
 - **microSD only.** DSK files are not downloaded from File Hunter and are not embedded in flash by the tool.
 - **Timestamps.** The file's modification time does not change after the MSX writes to it.
 
-## 13. Roadmap: Phase B
-
-Phase B would add a second DSK mode with a custom 32 KB FDC-less disk ROM:
-
-- An MSX-DOS 1 kernel in bank 0 and a small driver in bank 1. `DSKIO`, `DSKCHG` and `GETDPB` would talk to the Pico through a memory-mapped mailbox: a 512-byte sector window plus command/status registers in page 1, with `/WAIT` held while sectors are served from PSRAM. Transfers into page 1 would go through a page-3 bounce routine.
-- Kernel source: either the MsxUsbFDD/Rookie Drive kernel (licensing caveat above), or patching a Disk ROM dump that the user supplies on the SD card (copyright-clean, as OmniSCC does).
-- Multi-disk support: group sibling images (`NAME1.DSK`, `NAME2.DSK`, `(Disk n of m)`), add a swap trigger (a `CALL` statement, an MSX-DOS tool, or keyboard snooping), and have `DSKCHG` report "changed" after a swap.
-
 ## 14. References
 
 - Nextor 2.1 documentation — Konamiman: <https://github.com/Konamiman/Nextor/tree/v2.1/docs>
 - MSXUSB / MsxUsbFDD driver (based on Rookie Drive USB FDD BIOS)
-- OmniSCC — RBSC: <https://github.com/RBSC/OmniSCC> (GPLv3; used for design ideas only)
 - [MSX PicoVerse 2350 Sunrise IDE Emulation for Nextor](./msx-picoverse-2350-sunrise-nextor.md)
 - [MSX PicoVerse 2350 Explorer Tool Manual](./msx-picoverse-2350-explorer-tool-manual.en-us.md)
