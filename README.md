@@ -45,7 +45,7 @@ If you find any issues, have questions, or want to contribute, please open an is
 - [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-us.md)
 - [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
 
-**Explorer Guides:** Use the Explorer tool to manage flash, embedded Sunrise Nextor, and microSD ROMs, cycle supported microSD partitions, delete selected SD files, play MP3/WAV files from the microSD card, browse File Hunter over ESP-01 WiFi, select ROM audio/PSG options, and search for titles on the device.
+**Explorer Guides:** Use the Explorer tool to manage flash, embedded Sunrise Nextor, and microSD ROMs, boot 360 KB/720 KB `.DSK` disk images from the microSD card, cycle supported microSD partitions, delete selected SD files, play MP3/WAV files from the microSD card, browse File Hunter over ESP-01 WiFi, select ROM audio/PSG options, and search for titles on the device.
 - [MSX PicoVerse 2350 Explorer Tool Manual (English)](/docs/msx-picoverse-2350-explorer-tool-manual.en-us.md)
 
 **Yamanooto Guides:** Use the Yamanooto tool to create a UF2 that emulates a Yamanooto flash cartridge (Konami-SCC compatible, SCC/SCC+, dual PSG, primary PSG mirror, and MSX-MUSIC/FM-PAC) from a single ROM image, with the firmware choosing SCC/FM/PSG automatically at runtime.
@@ -67,6 +67,7 @@ If you find any issues, have questions, or want to contribute, please open an is
 - [MSX PicoVerse 2350 SCC Emulation](/docs/msx-picoverse-2350-scc.md)
 - [MSX PicoVerse 2040 Sunrise IDE Emulation for Nextor](/docs/msx-picoverse-2040-sunrise-nextor.md) 
 - [MSX PicoVerse 2350 Sunrise IDE Emulation for Nextor](/docs/msx-picoverse-2350-sunrise-nextor.md) 
+- [MSX PicoVerse 2350 DSK Disk Image Support](/docs/msx-picoverse-2350-dsk-support.md)
 - [MSX PicoVerse 2040 Mapper Implementation (Sunrise + Nextor)](/docs/msx-picoverse-2040-mapper.md) 
 - [MSX PicoVerse 2040 USB Keyboard](/docs/msx-picoverse-2040-keyboard.md)
 - [MSX PicoVerse 2040 MSX-MIDI](/docs/msx-picoverse-2040-msx-midi.md) 
@@ -236,9 +237,19 @@ Consult the LoadROM manuals linked above for screenshots, troubleshooting, and i
 
 Explorer is a PicoVerse 2350-only firmware that merges ROMs stored in flash, optional embedded Sunrise Nextor SYSTEM entries, and additional ROMs and MP3/WAV files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 and WAV entries open a player screen with Play/Stop and Pause/Resume controls, the list supports paging, and you can search by name directly in the menu. Explorer can add individual Nextor entries with `-s1`, `-m1`, `-c1`, `-r1`, `-s2`, `-m2`, `-c2`, or `-r2`, or add all of them with `-a` / `--allnextor`, while still appending supported folder ROMs to the UF2. In the `F2` microSD screen, `P` cycles supported FAT16, FAT32, and exFAT browsing partitions, while `D` deletes the selected file after confirmation; folders are protected. With an ESP-01 / ESP8266 module installed and WiFi configured, pressing `F3` opens the integrated File Hunter browser. File Hunter results show the ROM name and size, can be searched from the MSX, and selected ROMs are downloaded through the Pico into PSRAM before being saved as `.ROM` files in the microSD root. microSD ROMs up to 4 MB can be executed directly from there. Use the Explorer tool to build the UF2 and copy extra ROMs and audio files to the microSD card. See the Explorer manual for limits, File Hunter requirements, and supported formats.
 
-For Sunrise Nextor SYSTEM entries in Explorer, SD storage is limited to FAT16 microSD partitions up to 4 GB. If more than one compatible partition exists, choose the desired one from the ROM detail screen's `SD Part` option; Explorer saves that selection in the ROM's `.PVC` options file. FAT32 and exFAT partitions remain supported for normal Explorer file browsing but are not offered to Nextor.
+For Sunrise Nextor SYSTEM entries in Explorer, SD storage is limited to FAT16 microSD partitions up to 4 GB. If more than one compatible partition exists, choose the desired one from the ROM detail screen's `SD Part` option; Explorer saves that selection in the ROM's `.PVC` options file. FAT32 and exFAT partitions remain supported for normal Explorer file browsing but are not offered to Nextor. Nextor entries always show the Nextor version in the menu, for example `Nextor Sunrise 2.1.4 (SD)` or `Nextor Sunrise 2.1.4 + 1MB Mapper (USB)`.
 
-You can have up to 1024 entries per folder view (folders + ROMs + MP3s; the root view can also include flash entries). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
+Starting with Explorer v2.52, the menu also lists `.DSK` floppy disk images found on the microSD card, with the `DSK` type label, and can boot the MSX from them. The image is loaded into the cartridge's PSRAM and served to the MSX as the disk of an emulated Sunrise IDE interface. That interface runs the Nextor Sunrise 2.1.4 kernel, which every Explorer UF2 now embeds as a hidden payload, so no extra build option is needed. Disks with an MSX-DOS 1 boot sector start in MSX-DOS 1 mode automatically. Game saves and other disk writes are written straight through to the `.DSK` file on the card. Current limitations:
+- Only 360 KB and 720 KB images are listed.
+- One image is used per boot, so multi-disk games cannot swap disks yet.
+- No floppy controller is emulated, so copy-protected disks and software that programs the FDC directly will not work.
+- Nextor uses more RAM than a plain disk ROM.
+- An image boots read-only if the file is marked read-only or is split into more than 16 fragments on the card.
+- Only the PSG Mirror option is available for DSK entries.
+
+See [MSX PicoVerse 2350 DSK Disk Image Support](/docs/msx-picoverse-2350-dsk-support.md) for the full design, the write-through details, and the test matrix.
+
+You can have up to 1024 entries per folder view (folders + ROMs + DSKs + MP3s; the root view can also include flash entries). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
 
 Explorer ROM entries open a detail screen where you can inspect mapper detection, choose a cartridge audio profile, and toggle **PSG** mirroring. Konami SCC and Manbow2 ROMs can use SCC/SCC+ profiles. For other supported non-SYSTEM ROMs, select **Dual PSG** to enable the second cartridge-side PSG on ports `0x10` and `0x11`, **MSX-MUSIC** to enable YM2413/FM-PAC audio, external **SCC/SCC+** to expose a virtual SCC cartridge in another subslot, or **YM2151 (SFG05/SFG01)** to expose a virtual Yamaha SFG-style YM2151 cartridge in a secondary subslot while the game mapper remains active. Supported Sunrise Nextor SYSTEM entries can also select external **SCC/SCC+** or **YM2151 (SFG05/SFG01)**; Explorer keeps Nextor storage and mapper RAM availability intact and places the added cartridge surface in a free expanded subslot. MegaRAM Nextor entries reserve their expanded layout for Nextor, mapper RAM, and MegaRAM, so PSG Mirror, MSX-MUSIC, WiFi, and external audio profiles are not offered for those entries. Set **PSG: Yes** to also mirror the normal primary PSG ports `0xA0`/`0xA1` through the cartridge DAC; this primary PSG mirror can be mixed with SCC/SCC+, Dual PSG, MSX-MUSIC, YM2151/SFG, or WAVEGAME WAV playback. When **Dual PSG** and **PSG: Yes** are enabled together, Explorer routes Dual PSG to the left channel and the mirrored primary PSG to the right channel. Explorer hides cartridge audio profiles where the cartridge audio slot is reserved, including folders and File Hunter folder records.
 
@@ -327,9 +338,11 @@ Those projects remain copyright by Oduvaldo Pavan Junior and their respective co
 
 **The per-ROM CPU speed feature** in PicoVerse 2350 Explorer was implemented with reference to two public MSX projects. `Z80-R800` by GDX (https://github.com/gdx-msx/Z80-R800) provides MSX-DOS/BASIC commands that switch the MSX turbo R CPU mode and demonstrates the `CHGCPU` (`#0180`) call convention along with the MSXVER check used to detect a turbo R. `msx-turbo` by Papipapito (https://github.com/Papipapito/msx-turbo), licensed under the MIT License, is a command-line 3.58/5.37 MHz switch for Panasonic MSX2+ machines and documents the switched-I/O device 8 protocol on ports `#40`/`#41` and its polarity. The port and BIOS definitions were cross-checked against the MSX Assembly Page (https://map.grauw.nl). PicoVerse keeps its own RP2350 cartridge-side implementation (a per-ROM option persisted in `.PVC` files and applied by injecting the switch into the launched game's cartridge INIT), while gratefully acknowledging GDX's and Papipapito's reference work.
 
+**The .DSK disk image support in PicoVerse 2350 Explorer** was designed after studying the MSXUSB **MsxUsbFDD** driver, which is based on Konamiman's Rookie Drive USB FDD BIOS and serves `.DSK` files through a CH376 USB host. PicoVerse keeps its own RP2350 implementation, which serves the image from PSRAM through the existing Sunrise IDE emulation and Konamiman's Nextor 2.1.4 kernel.
+
 ## Feedback & Community
 
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.
 
 Author: Cristiano Goncalves
-Last updated: 08/22/2026
+Last updated: 09/24/2026

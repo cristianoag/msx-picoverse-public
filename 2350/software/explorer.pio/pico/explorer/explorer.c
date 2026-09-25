@@ -41,6 +41,7 @@
 #include "pico/audio_i2s.h"
 #include "storage/sunrise_ide.h"
 #include "storage/sunrise_sd.h"
+#include "storage/sunrise_dsk.h"
 #include "storage/sd_activity.h"
 #include "debug/audio_trace.h"
 
@@ -61,6 +62,9 @@
 #define FMPAC_BIOS_ROM_SIZE (64u * 1024u)
 #define SFG_BIOS_FLASH_OFFSET (FMPAC_BIOS_FLASH_OFFSET + FMPAC_BIOS_ROM_SIZE)
 #define SFG_BIOS_ROM_SIZE (64u * 1024u)
+// Hidden Nextor Sunrise IDE kernel used to boot .DSK images from the microSD.
+#define NEXTOR_DSK_FLASH_OFFSET (SFG_BIOS_FLASH_OFFSET + SFG_BIOS_ROM_SIZE)
+#define NEXTOR_DSK_ROM_SIZE (128u * 1024u)
 #define WIFI_CONFIG_RETURN_MENU 0xE0u
 #define MONITOR_ADDR    (0xBF7F)    // ROM select register just below the menu control window
 #define CACHE_SIZE      (256u * 1024u)     // 256KB cache size for ROM data
@@ -797,6 +801,13 @@ ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 #define MAPPER_MEGARAM_USB        20
 #define MAPPER_MEGARAM            21
 #define MAPPER_ASCII16X_FR        22
+// SD-only .DSK disk image, booted through the hidden Nextor kernel. It sits
+// past MAPPER_DESCRIPTIONS on purpose: it is never a filename tag or override.
+#define MAPPER_DSK                23
+// Only standard single-disk floppy images are listed (360KB: 1DD, 720KB: 2DD)
+// until multi-disk/disk-change support exists.
+#define DSK_SIZE_360K             (360u * 1024u)
+#define DSK_SIZE_720K             (720u * 1024u)
 
 // Indexed by mapper number - 1. Entries 15-21 are reserved for the system
 // (Nextor/Sunrise/C2/MegaRAM) ROMs, which are never user selectable, so they
@@ -1318,6 +1329,11 @@ static bool is_system_record(const ROMRecord *record) {
     return is_system_mapper(mapper_code_from_record_byte(record->Mapper));
 }
 
+static bool is_dsk_record(const ROMRecord *record) {
+    return (record->Mapper & (FOLDER_FLAG | MP3_FLAG)) == 0 &&
+           mapper_code_from_record_byte(record->Mapper) == MAPPER_DSK;
+}
+
 static bool is_folder_record(const ROMRecord *record) {
     return (record->Mapper & FOLDER_FLAG) != 0;
 }
@@ -1730,6 +1746,25 @@ static bool has_mp3_extension(const char *filename) {
     return equals_ignore_case(dot + 1, "MP3");
 }
 
+static bool has_dsk_extension(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if (!dot || dot[1] == '\0') {
+        return false;
+    }
+    return equals_ignore_case(dot + 1, "DSK");
+}
+
+// .DSK images boot through the hidden Nextor payload; a UF2 built without it
+// (for example an older tool) must not list images it cannot launch.
+static bool dsk_support_available(void) {
+    const uint8_t *nextor = flash_rom + NEXTOR_DSK_FLASH_OFFSET;
+    return nextor[0] == 'A' && nextor[1] == 'B';
+}
+
+static bool dsk_size_supported(uint32_t size) {
+    return size == DSK_SIZE_360K || size == DSK_SIZE_720K;
+}
+
 static bool has_wav_extension(const char *filename) {
     const char *dot = strrchr(filename, '.');
     if (!dot || dot[1] == '\0') {
@@ -1868,7 +1903,8 @@ static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_
         memcpy(out, rom_path, len + 1);
         char *slash = strrchr(out, '/');
         char *dot = strrchr(out, '.');
-        if (!dot || (slash && dot < slash)) {
+        // Keep the .DSK extension so GAME.DSK and GAME.ROM never share GAME.PVC.
+        if (!dot || (slash && dot < slash) || is_dsk_record(rec)) {
             dot = out + len;
         }
         if ((size_t)(dot - out) + 5u > out_size) {
@@ -2134,7 +2170,7 @@ static void process_load_options_request(void) {
     if (ctrl_wavegame_rom) {
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
     }
-    if (br >= PVC_OPTIONS_MAPPER_SIZE && data[6] != 0 && !is_system_mapper(data[6]) && data[6] <= MAPPER_DESCRIPTION_COUNT) {
+    if (br >= PVC_OPTIONS_MAPPER_SIZE && data[6] != 0 && !is_system_mapper(data[6]) && data[6] <= MAPPER_DESCRIPTION_COUNT && !is_dsk_record(rec)) {
         uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
         if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0) {
             rec->Mapper = (uint8_t)(flags | data[6]);
@@ -2856,12 +2892,13 @@ static void refresh_records_for_current_path(void) {
                 bool is_mp3 = has_mp3_extension(fno.fname);
                 bool is_wav = has_wav_extension(fno.fname);
                 bool is_rom = has_rom_extension(fno.fname);
+                bool is_dsk = has_dsk_extension(fno.fname) && dsk_support_available();
 #if EXPLORER_MP3_DISABLED
                 // MP3 player temporarily disabled — skip MP3 entries.
                 if (is_mp3 || is_wav) continue;
 #endif
 
-                if (!is_mp3 && !is_wav && !is_rom) {
+                if (!is_mp3 && !is_wav && !is_rom && !is_dsk) {
                     continue;
                 }
 
@@ -2882,6 +2919,14 @@ static void refresh_records_for_current_path(void) {
                     }
                     record_index = add_sd_mp3_record(record_index, path, fno.fname, (uint32_t)fno.fsize, is_wav);
                     sd_record_count++;
+                    continue;
+                }
+
+                if (is_dsk) {
+                    if (dsk_size_supported((uint32_t)fno.fsize)) {
+                        record_index = add_sd_rom_record(record_index, path, fno.fname, (uint32_t)fno.fsize, MAPPER_DSK);
+                        sd_record_count++;
+                    }
                     continue;
                 }
 
@@ -3030,11 +3075,12 @@ static bool refresh_records_chunked(void) {
             bool is_mp3 = has_mp3_extension(fno.fname);
             bool is_wav = has_wav_extension(fno.fname);
             bool is_rom = has_rom_extension(fno.fname);
+            bool is_dsk = has_dsk_extension(fno.fname) && dsk_support_available();
 #if EXPLORER_MP3_DISABLED
             // MP3 player temporarily disabled — skip MP3 entries.
             if (is_mp3 || is_wav) continue;
 #endif
-            if (!is_mp3 && !is_wav && !is_rom) continue;
+            if (!is_mp3 && !is_wav && !is_rom && !is_dsk) continue;
 
             char path[SD_PATH_MAX];
             int written;
@@ -3051,6 +3097,14 @@ static bool refresh_records_chunked(void) {
                 if (fno.fsize == 0) continue;
                 refresh_record_index = add_sd_mp3_record(refresh_record_index, path, fno.fname, (uint32_t)fno.fsize, is_wav);
                 sd_record_count++;
+                continue;
+            }
+
+            if (is_dsk) {
+                if (dsk_size_supported((uint32_t)fno.fsize)) {
+                    refresh_record_index = add_sd_rom_record(refresh_record_index, path, fno.fname, (uint32_t)fno.fsize, MAPPER_DSK);
+                    sd_record_count++;
+                }
                 continue;
             }
 
@@ -3636,6 +3690,58 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
     }
     printf("SDLOAD: loaded %u bytes\n", (unsigned)total);
     return true;
+}
+
+// Map the staged .DSK image back to its sectors on the card so Core 1 can
+// write each MSX write through in place. FatFs fast seek resolves the cluster
+// chain once here, while Core 0 still owns FatFs. Returns the extent count; 0
+// means the image runs read-only (read-only file, too fragmented, or error).
+static uint8_t dsk_build_write_map(uint16_t record_index, uint32_t size, sunrise_dsk_extent_t *extents) {
+#if FF_MAX_SS != 512
+    (void)record_index; (void)size; (void)extents;
+    return 0;
+#else
+    if (record_index >= full_record_count || sd_path_offsets[record_index] == 0xFFFF) {
+        return 0;
+    }
+    const char *path = sd_path_buffer + sd_path_offsets[record_index];
+    // Opening for write makes FatFs refuse read-only files and write-protected
+    // cards (FR_DENIED / FR_WRITE_PROTECTED); nothing is written on close.
+    FIL fil;
+    FRESULT fr = f_open(&fil, path, FA_READ | FA_WRITE);
+    if (fr != FR_OK) {
+        printf("DSK: %s not writable (fr=%d), booting read-only\n", path, (int)fr);
+        return 0;
+    }
+    DWORD clmt[1 + 2u * SUNRISE_DSK_MAX_EXTENTS + 1];
+    clmt[0] = (DWORD)(sizeof(clmt) / sizeof(clmt[0]));
+    fil.cltbl = clmt;
+    fr = f_lseek(&fil, CREATE_LINKMAP);
+    FATFS *fs = fil.obj.fs;
+    uint8_t count = 0;
+    uint32_t mapped = 0;
+    if (fr == FR_OK) {
+        const DWORD *tbl = &clmt[1];
+        while (tbl[0] != 0 && count < SUNRISE_DSK_MAX_EXTENTS) {
+            uint32_t sectors = (uint32_t)tbl[0] * fs->csize;
+            extents[count].image_sector = mapped;
+            extents[count].lba = (uint32_t)(fs->database + (LBA_t)fs->csize * (tbl[1] - 2u));
+            extents[count].count = sectors;
+            mapped += sectors;
+            count++;
+            tbl += 2;
+        }
+    } else {
+        printf("DSK: link map failed fr=%d (fragmented?)\n", (int)fr);
+    }
+    fil.cltbl = NULL;
+    f_close(&fil);
+
+    if (count == 0 || mapped < size / SUNRISE_DSK_SECTOR_SIZE) {
+        return 0;
+    }
+    return count;
+#endif
 }
 
 // Initialize GPIO pins
@@ -6463,7 +6569,7 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
                  if (record_index < full_record_count) {
                     ROMRecord *rec = &records[record_index];
                     uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
-                    if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0) {
+                    if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0 && !is_dsk_record(rec)) {
                         rec->Mapper = (uint8_t)(flags | mapper);
                         ctrl_ack_value = 1;
                     }
@@ -8838,7 +8944,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                             if (record_index < full_record_count) {
                                 ROMRecord *rec = &records[record_index];
                                 uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
-                                if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0) {
+                                if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0 && !is_dsk_record(rec)) {
                                     rec->Mapper = (uint8_t)(flags | mapper);
                                     ctrl_ack_value = 1;
                                 }
@@ -9793,7 +9899,11 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool
     }
 }
 
-void __no_inline_not_in_flash_func(loadrom_sunrise_sd)(uint32_t offset, bool cache_enable)
+// Plain Nextor Sunrise IDE loader shared by the microSD partition and .DSK
+// image backends; only the Core 1 storage task differs.
+static void __no_inline_not_in_flash_func(loadrom_sunrise_storage)(uint32_t offset, bool cache_enable,
+                                                                  void (*core1_task)(void),
+                                                                  void (*attach_ctx)(sunrise_ide_t *ide))
 {
     const uint8_t *rom_base;
     uint32_t available_length;
@@ -9802,8 +9912,8 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_sd)(uint32_t offset, bool cac
     static sunrise_ide_t ide;
     sunrise_ide_init(&ide);
 
-    sunrise_sd_set_ide_ctx(&ide);
-    multicore_launch_core1(sunrise_sd_task);
+    attach_ctx(&ide);
+    multicore_launch_core1(core1_task);
 
     system_audio_init_for_sunrise(true);
 
@@ -9847,6 +9957,18 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_sd)(uint32_t offset, bool cac
 
         pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
     }
+}
+
+void loadrom_sunrise_sd(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_storage(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx);
+}
+
+// Boots a .DSK image: the hidden Nextor Sunrise IDE kernel is served from
+// flash (offset) while Core 1 exposes the PSRAM-staged image as the IDE disk.
+void loadrom_sunrise_dsk(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_storage(offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx);
 }
 
 void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, bool cache_enable)
@@ -14059,6 +14181,14 @@ int __no_inline_not_in_flash_func(main)()
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
         ctrl_psg_emulation = 0;
     }
+    // A .DSK boots through the plain Nextor Sunrise loader, whose storage core
+    // services only the PSG Mirror; no cartridge audio profile or WiFi BIOS.
+    bool is_dsk = is_dsk_record(selected);
+    if (is_dsk) {
+        audio_mode = AUDIO_MODE_NONE;
+        ctrl_audio_selection = AUDIO_PROFILE_NONE;
+        ctrl_wifi_support = 0;
+    }
     debug_trace("DBG launch rom=%d mapper=%u audio=%u mp3_started=%u", rom_index, mapper, (unsigned)audio_mode, mp3_core1_started ? 1u : 0u);
     if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
         force_mp3_core1_handoff_before_rom_launch();
@@ -14086,6 +14216,23 @@ int __no_inline_not_in_flash_func(main)()
         hold_msx_wait();
     }
 
+    if (is_dsk) {
+        // The image stays staged in PSRAM as the IDE disk; the ROM actually
+        // served to the MSX is the hidden Nextor kernel in flash.
+        static sunrise_dsk_extent_t dsk_extents[SUNRISE_DSK_MAX_EXTENTS];
+        uint8_t extent_count = dsk_build_write_map((uint16_t)rom_index, (uint32_t)selected->Size, dsk_extents);
+        sunrise_dsk_attach_image(sd_rom_region.ptr, (uint32_t)selected->Size / SUNRISE_DSK_SECTOR_SIZE,
+                                 dsk_extents, extent_count);
+        printf("DSK: %lu sectors, %s (%u extents)\n",
+               (unsigned long)(selected->Size / SUNRISE_DSK_SECTOR_SIZE),
+               extent_count ? "write-through" : "read-only", (unsigned)extent_count);
+        rom_data = flash_rom;
+        rom_data_in_ram = false;
+        rom_offset = NEXTOR_DSK_FLASH_OFFSET;
+        active_rom_size = NEXTOR_DSK_ROM_SIZE;
+        hold_msx_wait();
+    }
+
     // Cache the leading window into rom_sram for both flash- and PSRAM-resident
     // ROMs (SD ROMs are staged to PSRAM, so caching them into SRAM mirrors the
     // flash path and keeps the mapper hot loop fast).
@@ -14097,7 +14244,7 @@ int __no_inline_not_in_flash_func(main)()
     bool sfg_audio = (audio_mode == AUDIO_MODE_YM2151_SFG05 || audio_mode == AUDIO_MODE_YM2151_SFG01);
     bool cartridge_audio = scc_audio || sfg_audio || audio_mode == AUDIO_MODE_DUAL_PSG || audio_mode == AUDIO_MODE_MSX_MUSIC;
     bool psg_emulation = (ctrl_psg_emulation != 0u);
-    bool system_mapper = is_system_mapper(mapper);
+    bool system_mapper = is_system_mapper(mapper) || is_dsk;
     // The 50/60Hz INIT patch only applies to regular game ROMs; the system ROMs
     // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
     vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
@@ -14312,6 +14459,9 @@ int __no_inline_not_in_flash_func(main)()
             break;
         case MAPPER_MEGARAM:
             loadrom_megaram(rom_offset, cache_enable);
+            break;
+        case MAPPER_DSK:
+            loadrom_sunrise_dsk(rom_offset, cache_enable);
             break;
         case 12:
             loadrom_ascii16x(rom_offset, cache_enable);

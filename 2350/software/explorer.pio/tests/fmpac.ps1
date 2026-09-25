@@ -31,7 +31,7 @@ $code = "#define __not_in_flash_func(name) name`n"
 $code += "#define __no_inline_not_in_flash_func(name) name`n"
 $code += ([regex]::Matches($firmware, '(?m)^#define (?:AUDIO_PROFILE_|MAPPER_)\w+[^\r\n]*') |
     ForEach-Object { $_.Value }) -join "`n"
-$layoutNames = 'ROM_NAME_MAX|ROM_RECORD_SIZE|MENU_ROM_SIZE|CONFIG_AREA_SIZE|WIFI_(?:CONFIG|BIOS)_(?:FLASH_OFFSET|ROM_SIZE)|(?:FMPAC|SFG)_BIOS_(?:FLASH_OFFSET|ROM_SIZE)'
+$layoutNames = 'ROM_NAME_MAX|ROM_RECORD_SIZE|MENU_ROM_SIZE|CONFIG_AREA_SIZE|WIFI_(?:CONFIG|BIOS)_(?:FLASH_OFFSET|ROM_SIZE)|(?:FMPAC|SFG)_BIOS_(?:FLASH_OFFSET|ROM_SIZE)|NEXTOR_DSK_(?:FLASH_OFFSET|ROM_SIZE)'
 $code += "`n" + (([regex]::Matches($firmware, "(?m)^#define (?:$layoutNames)\b[^\r\n]*") |
     ForEach-Object { $_.Value }) -join "`n") + "`n"
 $header = Get-Content (Join-Path $root "pico\explorer\explorer.h") -Raw

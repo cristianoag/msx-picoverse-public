@@ -106,7 +106,7 @@ static void clear_query_tail(unsigned char start) {
 
 static unsigned char record_is_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 9 || (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 21);
+    return mapper_code == 9 || (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 21) || mapper_code == 23;
 }
 
 static unsigned char record_is_wifi_capable_system_rom(const ROMRecord *record) {

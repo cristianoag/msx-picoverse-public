@@ -53,6 +53,7 @@ set(EXPLORER_SOURCES
     storage/hw_config.c
     storage/sunrise_ide.c
     storage/sunrise_sd.c
+    storage/sunrise_dsk.c
     memory/c2_emu.c
     explorer.c 
     audio/mp3.c

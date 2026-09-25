@@ -198,6 +198,8 @@ static void build_menu_row_text(const ROMRecord *record, const char *name_overri
     } else if (record_is_mp3(record)) {
         type_label = " MP3";
         source = "SD";
+    } else if (record_mapper_code(record->Mapper) == 23) {
+        type_label = " DSK";
     }
 
     if (!record_is_folder(record)) {
@@ -809,6 +811,9 @@ char* mapper_description(int number) {
     }
     if (number == 22) {
         return "ASC16X-FR";
+    }
+    if (number == 23) {
+        return "DSK";
     }
     if (number <= 0 || number > 14) {
         return "Unknown";

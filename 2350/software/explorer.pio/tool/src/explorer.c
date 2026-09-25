@@ -42,6 +42,7 @@
 #define WIFI_BIOS_ROM_SIZE      (16 * 1024)     // Hidden ESP8266P UNAPI BIOS payload used by Sunrise WiFi support
 #define FMPAC_BIOS_ROM_SIZE     (64 * 1024)     // Hidden FM-PAC BIOS payload used by Explorer MSX-MUSIC support
 #define SFG_BIOS_ROM_SIZE       (64 * 1024)     // Hidden Yamaha SFG ROM payload used by Explorer YM2151/SFG support
+#define NEXTOR_DSK_ROM_SIZE     (128 * 1024)    // Hidden Nextor Sunrise IDE kernel used to boot .DSK images from SD
 #define MAX_FILE_NAME_LENGTH    71              // Maximum length of a ROM name on the 80-column detail screen
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
@@ -62,6 +63,10 @@
 #define ROM_TYPE_MEGARAM_USB       20
 #define ROM_TYPE_MEGARAM           21
 #define ROM_TYPE_ASCII16X_FR       22
+
+// Menu label for every embedded Nextor entry. The version is always shown so
+// entries stay unambiguous once other Nextor releases (e.g. 3.x) are added.
+#define NEXTOR_SUNRISE_LABEL       "Nextor Sunrise 2.1.4"
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
@@ -197,14 +202,14 @@ static void print_usage(const char *prog_name) {
     printf("  -h   Show this help message\n");
     printf("  -a, --allnextor  Include all embedded Nextor system ROM options\n");
     printf("  -r, --megaram    Include standalone 1MB MegaRAM without Nextor or memory mapper\n");
-    printf("  -s1, --sunrise-sd  Include Sunrise IDE Nextor ROM (microSD card)\n");
-    printf("  -m1, --mapper-sd   Include Sunrise IDE Nextor ROM + 1MB mapper (microSD card)\n");
-    printf("  -c1, --carnivore2-sd  Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM (microSD card)\n");
-    printf("  -r1, --megaram-sd  Include Sunrise IDE Nextor ROM + 1MB mapper + 1MB MegaRAM (microSD card)\n");
-    printf("  -s2, --sunrise-usb Include Sunrise IDE Nextor ROM (USB pendrive)\n");
-    printf("  -m2, --mapper-usb  Include Sunrise IDE Nextor ROM + 1MB mapper (USB pendrive)\n");
-    printf("  -c2, --carnivore2-usb Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM (USB pendrive)\n");
-    printf("  -r2, --megaram-usb Include Sunrise IDE Nextor ROM + 1MB mapper + 1MB MegaRAM (USB pendrive)\n");
+    printf("  -s1, --sunrise-sd  Include " NEXTOR_SUNRISE_LABEL " (microSD card)\n");
+    printf("  -m1, --mapper-sd   Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (microSD card)\n");
+    printf("  -c1, --carnivore2-sd  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + Carnivore2 RAM (microSD card)\n");
+    printf("  -r1, --megaram-sd  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + 1MB MegaRAM (microSD card)\n");
+    printf("  -s2, --sunrise-usb Include " NEXTOR_SUNRISE_LABEL " (USB pendrive)\n");
+    printf("  -m2, --mapper-usb  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (USB pendrive)\n");
+    printf("  -c2, --carnivore2-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + Carnivore2 RAM (USB pendrive)\n");
+    printf("  -r2, --megaram-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + 1MB MegaRAM (USB pendrive)\n");
     printf("  Options -s1, -m1, -c1, -r1, -s2, -m2, -c2, -r2 can be combined to add multiple Nextor entries\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
@@ -387,14 +392,14 @@ int main(int argc, char *argv[])
         uint8_t mapper;
         const char *name;
     } nextor_entries[] = {
-        { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        "Nextor Sunrise IDE (SD)" },
-        { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, "Nextor Sunrise IDE + 1MB Mapper (SD)" },
-        { use_c2_sd,       ROM_TYPE_C2_SD,             "Nextor Sunrise IDE + 1MB Mapper + C2 RAM (SD)" },
-        { use_megaram_sd,  ROM_TYPE_MEGARAM_SD,        "Nextor Sunrise IDE + 1MB Mapper + 1MB MegaRAM (SD)" },
-        { use_sunrise_usb, ROM_TYPE_SUNRISE,           "Nextor Sunrise IDE (USB)" },
-        { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    "Nextor Sunrise + 1MB Mapper (USB)" },
-        { use_c2_usb,      ROM_TYPE_C2_USB,            "Nextor Sunrise + 1MB Mapper + C2 RAM (USB)" },
-        { use_megaram_usb, ROM_TYPE_MEGARAM_USB,       "Nextor Sunrise + 1MB Mapper + 1MB MegaRAM (USB)" },
+        { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        NEXTOR_SUNRISE_LABEL " (SD)" },
+        { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, NEXTOR_SUNRISE_LABEL " + 1MB Mapper (SD)" },
+        { use_c2_sd,       ROM_TYPE_C2_SD,             NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (SD)" },
+        { use_megaram_sd,  ROM_TYPE_MEGARAM_SD,        NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (SD)" },
+        { use_sunrise_usb, ROM_TYPE_SUNRISE,           NEXTOR_SUNRISE_LABEL " (USB)" },
+        { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    NEXTOR_SUNRISE_LABEL " + 1MB Mapper (USB)" },
+        { use_c2_usb,      ROM_TYPE_C2_USB,            NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (USB)" },
+        { use_megaram_usb, ROM_TYPE_MEGARAM_USB,       NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (USB)" },
     };
 
     // Standard Explorer build mode
@@ -404,7 +409,7 @@ int main(int argc, char *argv[])
     FileInfo files[MAX_ROM_FILES]; // Array to track discovered ROM files
     int file_count = 0;
     int file_index = 1;
-    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE; // Visible ROMs start after hidden payloads
+    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE; // Visible ROMs start after hidden payloads
     size_t total_rom_size = 0;
     size_t config_offset = 0;
     uint8_t *config_buffer = (uint8_t *)malloc(CONFIG_AREA_SIZE); // Configuration area buffer
@@ -653,10 +658,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Sanity check embedded Nextor ROM size
+    // Sanity check embedded Nextor ROM size. It is always embedded once as the
+    // hidden .DSK boot kernel, so the size must match the firmware's layout.
     const size_t nextor_rom_size = sizeof(___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM);
-    if (include_nextor && nextor_rom_size == 0) {
-        printf("Embedded Nextor ROM payload is empty\n");
+    if (nextor_rom_size != NEXTOR_DSK_ROM_SIZE) {
+        printf("Embedded Nextor ROM must be %u bytes (found %zu)\n",
+               (unsigned)NEXTOR_DSK_ROM_SIZE, nextor_rom_size);
         free(config_buffer);
         return 1;
     }
@@ -693,8 +700,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Final flash image layout: [firmware][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][Nextor ROM + scanned ROM payloads]
-    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + total_rom_size;
+    // Final flash image layout: [firmware][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][Nextor ROM + scanned ROM payloads]
+    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + total_rom_size;
     uint8_t *combined_buffer = (uint8_t *)malloc(total_size);
     if (!combined_buffer) {
         printf("Failed to allocate combined buffer\n");
@@ -731,6 +738,10 @@ int main(int argc, char *argv[])
     // Hidden Yamaha SFG BIOS exposed when an Explorer ROM is launched with YM2151/SFG.
     memcpy(combined_buffer + offset, ___resources_SFG_64K_ROM, sfg_bios_rom_size);
     offset += SFG_BIOS_ROM_SIZE;
+
+    // Hidden Nextor Sunrise IDE kernel served when a .DSK image is booted from SD.
+    memcpy(combined_buffer + offset, ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM, nextor_rom_size);
+    offset += NEXTOR_DSK_ROM_SIZE;
 
 #ifdef DEBUG
     {

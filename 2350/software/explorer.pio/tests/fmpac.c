@@ -388,7 +388,7 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
     assert(blocks == total_blocks && bios_bytes == sizeof(bios) && record_bytes == sizeof(records));
 
     const uint8_t variants[] = {15, 16, 17, 19, 10, 11, 18, 20};
-    uint32_t nextor_offset = SFG_BIOS_FLASH_OFFSET + SFG_BIOS_ROM_SIZE;
+    uint32_t nextor_offset = NEXTOR_DSK_FLASH_OFFSET + NEXTOR_DSK_ROM_SIZE;
     for (unsigned i = 0; i < sizeof(variants); i++) {
         const uint8_t *record = records + i * ROM_RECORD_SIZE;
         assert(record[ROM_NAME_MAX] == variants[i]);
