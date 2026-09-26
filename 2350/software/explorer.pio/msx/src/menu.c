@@ -905,9 +905,9 @@ void helpMenu()
     Locate(0, 18);
     menu_ui_print_str_inverted_width("File Hunter", 11);
     Locate(0, 19);
-    printf("ENTER/SPACE Open detail/Download ROM");
+    printf("ENTER/SPACE Open detail/Download");
     Locate(0, 20);
-    printf("ESC         Return to Explorer menu");
+    printf("T - ROM/DSK list  ESC - Explorer menu");
     Locate(0, 21);
     menu_ui_print_delimiter_line();
     Locate(0, 22);
@@ -1166,6 +1166,7 @@ void main() {
     frame_rendered = 0;
     menu_message_row = 0;
     menu_shortcut_selection = MENU_SHORTCUT_FLASH;
+    fh_catalog_type = CTRL_FH_TYPE_ROM;
     
     readROMData(records, &totalFiles, &totalSize);
     totalPages = (int)((totalFiles + FILES_PER_PAGE - 1) / FILES_PER_PAGE);

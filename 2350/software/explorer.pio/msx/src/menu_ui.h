@@ -27,6 +27,7 @@ void menu_ui_update_footer_page(void);
 void menu_ui_print_title_line(void);
 void menu_ui_print_delimiter_line(void);
 void menu_ui_print_footer_line(void);
+const char *menu_ui_fh_type_label(void);
 void menu_ui_clear_last_line(void);
 void menu_ui_print_last_line_text(const char *text);
 void menu_ui_blink_last_line(const char *text, unsigned char *visible, unsigned char *tick, unsigned char period);

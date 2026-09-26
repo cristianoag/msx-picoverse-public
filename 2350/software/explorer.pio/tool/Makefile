@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.52
+VERSION ?= v2.53
 
 # Project files
 SOURCES := explorer.c
@@ -46,6 +46,8 @@ MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
 NEXTOR := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_H := $(SRCDIR)/nextor.h
+NEXTOR3 := ../resources/Nextor-3.0.0-beta1.SunriseIDE.MasterOnly.ROM
+NEXTOR3_H := $(SRCDIR)/nextor3.h
 WIFICONFIG := ../../wifi/config/ESP8266_config.rom
 WIFICONFIG_H := $(SRCDIR)/wifibios.h
 WIFIBIOS := ../../wifi/bios/ESP8266P.rom
@@ -66,7 +68,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/explorer.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(NEXTOR3_H) $(NEXTOR3) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -80,6 +82,10 @@ $(MSXMENU_H): $(MSXMENU)
 
 $(NEXTOR_H): $(NEXTOR)
 	@echo "Embedding Nextor ROM into header"
+	$(UTLDIR)/$(XXD) -i "$<" $@
+
+$(NEXTOR3_H): $(NEXTOR3)
+	@echo "Embedding Nextor 3 beta ROM into header"
 	$(UTLDIR)/$(XXD) -i "$<" $@
 
 $(WIFICONFIG_H): $(WIFICONFIG)
@@ -110,5 +116,5 @@ $(DISDIR)/explorer.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/sfg_bios.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/nextor3.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/sfg_bios.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
 	$(RM) $(DISDIR)/*

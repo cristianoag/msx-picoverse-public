@@ -24,6 +24,7 @@
 #include "explorer.h"
 #include "menu.h"
 #include "nextor.h"
+#include "nextor3.h"
 #include "wifibios.h"
 #include "esp8266p_rom.h"
 #include "fmpac_bios.h"
@@ -67,6 +68,10 @@
 // Menu label for every embedded Nextor entry. The version is always shown so
 // entries stay unambiguous once other Nextor releases (e.g. 3.x) are added.
 #define NEXTOR_SUNRISE_LABEL       "Nextor Sunrise 2.1.4"
+#define NEXTOR3_SUNRISE_LABEL      "Nextor Sunrise 3.0.0 Beta 1"
+
+#define NEXTOR_ROM                 ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM                ___resources_Nextor_3_0_0_beta1_SunriseIDE_MasterOnly_ROM
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
@@ -196,11 +201,11 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 // Print usage information
 static void print_usage(const char *prog_name) {
 
-    printf("Usage: %s [-h] [-a] [-r] [-s1] [-m1] [-c1] [-r1] [-s2] [-m2] [-c2] [-r2] [-o <filename>]\n", prog_name);
+    printf("Usage: %s [-h] [-a] [-r] [-s1] [-m1] [-c1] [-r1] [-s2] [-m2] [-c2] [-r2] [-s3] [-o <filename>]\n", prog_name);
     printf("  without options, the tool scans the current directory for .ROM files to include in the Explorer image\n");
     printf("Options:\n");
     printf("  -h   Show this help message\n");
-    printf("  -a, --allnextor  Include all embedded Nextor system ROM options\n");
+    printf("  -a, --allnextor  Include all embedded " NEXTOR_SUNRISE_LABEL " system ROM options (-s1 to -r2)\n");
     printf("  -r, --megaram    Include standalone 1MB MegaRAM without Nextor or memory mapper\n");
     printf("  -s1, --sunrise-sd  Include " NEXTOR_SUNRISE_LABEL " (microSD card)\n");
     printf("  -m1, --mapper-sd   Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (microSD card)\n");
@@ -210,7 +215,8 @@ static void print_usage(const char *prog_name) {
     printf("  -m2, --mapper-usb  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (USB pendrive)\n");
     printf("  -c2, --carnivore2-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + Carnivore2 RAM (USB pendrive)\n");
     printf("  -r2, --megaram-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + 1MB MegaRAM (USB pendrive)\n");
-    printf("  Options -s1, -m1, -c1, -r1, -s2, -m2, -c2, -r2 can be combined to add multiple Nextor entries\n");
+    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card) for testing\n");
+    printf("  Options -s1, -m1, -c1, -r1, -s2, -m2, -c2, -r2, -s3 can be combined to add multiple Nextor entries\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("  append a mapper tag before the extension to force detection (case-insensitive)\n");
@@ -314,6 +320,7 @@ int main(int argc, char *argv[])
     bool use_mapper_usb = false;
     bool use_c2_usb = false;
     bool use_megaram_usb = false;
+    bool use_sunrise3_sd = false;
     const char *bad_option = NULL;
     const char *missing_output_option = NULL;
     char uf2_output_filename[MAX_UF2_FILENAME_LENGTH];
@@ -352,6 +359,8 @@ int main(int argc, char *argv[])
             use_c2_usb = true;
         } else if ((strcmp(argv[i], "-r2") == 0) || (strcmp(argv[i], "--megaram-usb") == 0)) {
             use_megaram_usb = true;
+        } else if ((strcmp(argv[i], "-s3") == 0) || (strcmp(argv[i], "--sunrise3-sd") == 0)) {
+            use_sunrise3_sd = true;
         } else if ((strcmp(argv[i], "-o") == 0) || (strcmp(argv[i], "--output") == 0)) {
             if (i + 1 >= argc) {
                 missing_output_option = argv[i];
@@ -386,20 +395,24 @@ int main(int argc, char *argv[])
     }
 
     bool include_nextor = use_sunrise_sd || use_mapper_sd || use_c2_sd || use_megaram_sd ||
-                          use_sunrise_usb || use_mapper_usb || use_c2_usb || use_megaram_usb;
+                          use_sunrise_usb || use_mapper_usb || use_c2_usb || use_megaram_usb ||
+                          use_sunrise3_sd;
     struct {
         bool enabled;
         uint8_t mapper;
         const char *name;
+        const uint8_t *rom;
+        uint32_t rom_size;
     } nextor_entries[] = {
-        { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        NEXTOR_SUNRISE_LABEL " (SD)" },
-        { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, NEXTOR_SUNRISE_LABEL " + 1MB Mapper (SD)" },
-        { use_c2_sd,       ROM_TYPE_C2_SD,             NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (SD)" },
-        { use_megaram_sd,  ROM_TYPE_MEGARAM_SD,        NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (SD)" },
-        { use_sunrise_usb, ROM_TYPE_SUNRISE,           NEXTOR_SUNRISE_LABEL " (USB)" },
-        { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    NEXTOR_SUNRISE_LABEL " + 1MB Mapper (USB)" },
-        { use_c2_usb,      ROM_TYPE_C2_USB,            NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (USB)" },
-        { use_megaram_usb, ROM_TYPE_MEGARAM_USB,       NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (USB)" },
+        { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        NEXTOR_SUNRISE_LABEL " (SD)",                          NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, NEXTOR_SUNRISE_LABEL " + 1MB Mapper (SD)",             NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_c2_sd,       ROM_TYPE_C2_SD,             NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (SD)",    NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_megaram_sd,  ROM_TYPE_MEGARAM_SD,        NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (SD)", NEXTOR_ROM, sizeof(NEXTOR_ROM) },
+        { use_sunrise_usb, ROM_TYPE_SUNRISE,           NEXTOR_SUNRISE_LABEL " (USB)",                         NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    NEXTOR_SUNRISE_LABEL " + 1MB Mapper (USB)",            NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_c2_usb,      ROM_TYPE_C2_USB,            NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (USB)",   NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
+        { use_megaram_usb, ROM_TYPE_MEGARAM_USB,       NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (USB)", NEXTOR_ROM, sizeof(NEXTOR_ROM) },
+        { use_sunrise3_sd, ROM_TYPE_SUNRISE_SD,        NEXTOR3_SUNRISE_LABEL " (SD)",                         NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
     };
 
     // Standard Explorer build mode
@@ -421,10 +434,10 @@ int main(int argc, char *argv[])
 
     // Include embedded Nextor ROM entries, one per selected option.
     if (include_nextor) {
-        uint32_t nextor_size = sizeof(___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM);
         for (int ne = 0; ne < (int)(sizeof(nextor_entries) / sizeof(nextor_entries[0])); ++ne) {
             char nextor_rom_name[MAX_FILE_NAME_LENGTH] = {0};
             uint32_t nextor_offset;
+            uint32_t nextor_size = nextor_entries[ne].rom_size;
 
             if (!nextor_entries[ne].enabled) {
                 continue;
@@ -660,10 +673,18 @@ int main(int argc, char *argv[])
 
     // Sanity check embedded Nextor ROM size. It is always embedded once as the
     // hidden .DSK boot kernel, so the size must match the firmware's layout.
-    const size_t nextor_rom_size = sizeof(___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM);
+    const size_t nextor_rom_size = sizeof(NEXTOR_ROM);
     if (nextor_rom_size != NEXTOR_DSK_ROM_SIZE) {
         printf("Embedded Nextor ROM must be %u bytes (found %zu)\n",
                (unsigned)NEXTOR_DSK_ROM_SIZE, nextor_rom_size);
+        free(config_buffer);
+        return 1;
+    }
+
+    // The Sunrise loaders map at most 128KB (8 x 16KB segments) of kernel.
+    if (sizeof(NEXTOR3_ROM) != NEXTOR_DSK_ROM_SIZE) {
+        printf("Embedded Nextor 3 ROM must be %u bytes (found %zu)\n",
+               (unsigned)NEXTOR_DSK_ROM_SIZE, sizeof(NEXTOR3_ROM));
         free(config_buffer);
         return 1;
     }
@@ -740,7 +761,7 @@ int main(int argc, char *argv[])
     offset += SFG_BIOS_ROM_SIZE;
 
     // Hidden Nextor Sunrise IDE kernel served when a .DSK image is booted from SD.
-    memcpy(combined_buffer + offset, ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM, nextor_rom_size);
+    memcpy(combined_buffer + offset, NEXTOR_ROM, nextor_rom_size);
     offset += NEXTOR_DSK_ROM_SIZE;
 
 #ifdef DEBUG
@@ -769,8 +790,8 @@ int main(int argc, char *argv[])
             if (!nextor_entries[ne].enabled) {
                 continue;
             }
-            memcpy(combined_buffer + offset, ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM, nextor_rom_size);
-            offset += nextor_rom_size;
+            memcpy(combined_buffer + offset, nextor_entries[ne].rom, nextor_entries[ne].rom_size);
+            offset += nextor_entries[ne].rom_size;
         }
     }
 

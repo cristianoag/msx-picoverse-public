@@ -25,7 +25,7 @@ Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, 
 - Supported ROM size range on the flash: 8 KB to ~14 MB.
 - ROM names in the menu are limited to 60 characters (longer names are truncated).
 - File Hunter search text is limited to 24 characters.
-- File Hunter downloads are saved as `.ROM` files directly in the root of the microSD card.
+- File Hunter downloads are saved as `.ROM` or `.DSK` files directly in the root of the microSD card.
 
 ## Basic workflow
 
@@ -40,11 +40,11 @@ Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, 
 
 - **Folder navigation**: Organize your ROMs into folders on the microSD card. Enter folders by pressing Enter or Space on a folder name, and navigate back to parent folders using the ".." entry or by pressing Esc.
 - **Search** by ROM name directly on the MSX by pressing `/`, typing part of the name, and pressing Enter to jump to the first match. Note that this feature only searches ROMs inside the current folder. When in the root, it searches all flash and SD ROMs located in the root.
-- **File Hunter browser**: Press `F3` to browse online ROM results from File Hunter through the ESP-01 WiFi module. Results show the ROM name, size, and source, and selected ROMs can be downloaded and saved to the microSD root.
+- **File Hunter browser**: Press `F3` to browse online ROM results from File Hunter through the ESP-01 WiFi module, and press `T` to switch to `.DSK` disk images. Results show the name, size, source and type, and selected files can be downloaded and saved to the microSD root.
 - **WiFi configuration**: Press `F4` to enter the WiFi setup flow used by the ESP8266P-compatible WiFi firmware.
 - **Automatic detection** of MSX models that support 80-column text mode. Compatible machines boot the menu in 80 columns; others fall back to 40 columns, and you can press `C` at any time to toggle between layouts.
 - MP3 entries from the microSD card are listed in the menu with a "MP3" type label and open an **MP3 player** screen when selected.
-- `.DSK` disk images from the microSD card are listed with a "DSK" type label and **boot the MSX from the image** through the embedded Nextor kernel.
+- `.DSK` disk images from the microSD card are listed with a "DSK" type label and **boot the MSX from the image** through the embedded Nextor kernel. A `.DSK` holding several disks joined together boots disk 1 and **swaps disks with the number keys**.
 - ROM entries open a ROM screen that lets you inspect mapper detection, choose **audio profiles** including SCC/SCC+, Dual PSG, or MSX-MUSIC where supported, enable optional primary **PSG** mirroring to the DAC, and enable optional WiFi support for Sunrise Nextor entries before running.
 
 ## Command-line usage
@@ -57,7 +57,7 @@ explorer.exe [options]
 
 - `-h`, `--help` : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `explorer.uf2`).
-- `-a`, `--allnextor` : Include every embedded Sunrise Nextor SYSTEM entry listed below while still scanning and appending `.ROM` files from the current folder.
+- `-a`, `--allnextor` : Include every embedded Nextor Sunrise 2.1.4 SYSTEM entry listed below (`-s1` to `-r2`) while still scanning and appending `.ROM` files from the current folder. The Nextor 3 beta entry (`-s3`) is not included.
 - `-s1`, `--sunrise-sd` : Include Nextor Sunrise 2.1.4 using the on-board microSD card slot.
 - `-m1`, `--mapper-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c1`, `--carnivore2-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
@@ -66,8 +66,9 @@ explorer.exe [options]
 - `-m2`, `--mapper-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c2`, `--carnivore2-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
 - `-r2`, `--megaram-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and a separate 1MB MegaRAM subslot.
+- `-s3`, `--sunrise3-sd` : Include Nextor Sunrise 3.0.0 Beta 1 using the on-board microSD card slot, for testing the upcoming Nextor 3. It uses the Sunrise IDE MasterOnly kernel from Konamiman's [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.7-blueMSX-v0.1.5-Nextor-3.0-beta.1) release and behaves like `-s1` otherwise. This is a beta kernel, so keep backups of the microSD card.
 
-The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all eight Nextor entries in one UF2.
+The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all eight Nextor 2.1.4 entries in one UF2; add `-s3` too if you also want the Nextor 3 beta entry.
 
 Nextor entries always show the Nextor version in the Explorer menu:
 
@@ -81,6 +82,7 @@ Nextor entries always show the Nextor version in the Explorer menu:
 | `-m2` | `Nextor Sunrise 2.1.4 + 1MB Mapper (USB)` |
 | `-c2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + C2 RAM (USB)` |
 | `-r2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + 1MB MegaRAM (USB)` |
+| `-s3` | `Nextor Sunrise 3.0.0 Beta 1 (SD)` |
 
 Per-entry options (audio profile, PSG Mirror, WiFi, SD partition) are saved in a `.PVC` file named after the menu entry, so options saved by a UF2 that used the older names (`Nextor Sunrise IDE ...`) are not picked up and the entries start with default options.
 
@@ -103,6 +105,12 @@ explorer.exe -s1 -r1 -r2 -o explorer_nextor.uf2
 ```
 
 This includes the selected Nextor entries and the supported folder ROMs in one Explorer UF2.
+
+```
+explorer.exe -s1 -s3 -o explorer_nextor3.uf2
+```
+
+This includes Nextor 2.1.4 and the Nextor 3.0.0 Beta 1 microSD entries side by side, so both kernels can be tested on the same card.
 
 ## ROM mapper detection and tags
 
@@ -165,7 +173,7 @@ Explorer can load ROMs from a microSD card in addition to flash. ROMs on SD are 
 - `.DSK` disk images appear in the menu with the "DSK" type label and boot through the embedded Nextor kernel (see [Running .DSK disk images](#running-dsk-disk-images)).
 - MP3 files appear in the menu with the "MP3" type label and open the MP3 player screen.
 - Flash ROMs appear with the source label "FL".
-- File Hunter downloads are saved directly to the root of the microSD card and then appear as normal SD ROM files in the Explorer root list.
+- File Hunter downloads are saved directly to the root of the microSD card and then appear as normal SD ROM or `.DSK` files in the Explorer root list.
 - Folders are displayed in the menu and can be entered to browse their contents.
 - The special ".." entry appears when inside a folder, allowing you to navigate back to the parent directory.
 
@@ -183,14 +191,32 @@ Explorer lists `.DSK` floppy disk images found on the microSD card next to the R
 - Nextor mounts the image as a single unpartitioned FAT12 drive. Disks with an MSX-DOS 1 boot sector (the usual game disks with `MSXDOS.SYS`, `AUTOEXEC.BAS` or a boot-sector loader) make Nextor start in MSX-DOS 1 mode automatically; hold `1` during boot to force it for other disks.
 - Writes (game saves, `SAVE`, `COPY`) are written straight through to the `.DSK` file on the card, sector by sector, so nothing is lost on power-off. The file's timestamp is not updated.
 - The image boots read-only (writes report a disk error) when the file has the read-only attribute or is split into more than 16 fragments on the card. Copy a fragmented image to a freshly formatted card, or defragment it, to make it writable.
-- Only standard floppy images are listed: exactly 360 KB (368,640 bytes) or 720 KB (737,280 bytes). Files of any other size are not shown.
-- Only the PSG Mirror option is available for `.DSK` entries; cartridge audio profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered.
+- Only standard floppy sizes are listed: the file size must be a multiple of 360 KB (368,640 bytes), made of 360 KB and 720 KB disks, up to 4 MB minus 1 KB. Files of any other size are not shown.
+- Only the PSG Mirror and **1MB Mapper** options are available for `.DSK` entries; cartridge audio profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered. `1MB Mapper: Yes` boots the image with Nextor plus the 1 MB PSRAM memory mapper, like the `Nextor Sunrise 2.1.4 + 1MB Mapper` entries. Turn it on when a game keeps loading or crashes on a machine with little RAM, such as a 64 KB MSX2+. The choice is saved per image.
+
+#### Multi-disk games
+
+Since Explorer v2.53, a game that came on several disks can be played from **one** `.DSK` file holding all of its disks joined in order:
+
+```
+copy /b "GAME (Disk 1).DSK" + "GAME (Disk 2).DSK" GAME.DSK
+```
+
+(On Linux or macOS: `cat "GAME (Disk 1).DSK" "GAME (Disk 2).DSK" > GAME.DSK`.)
+
+- Explorer finds the disks inside the file and boots disk 1 in Nextor's disk emulation mode (always MSX-DOS 1).
+- When the game asks for another disk, press that disk's number key, together with the key the game asks for, for example `2` + `SPACE` for "insert disk 2 and press space". Keys `1`–`9` select disks 1–9 and `A`–`W` select disks 10–32.
+- Alternatively, press `GRAPH` while the disk is being read: the CAPS LED lights and the MSX waits for a disk key.
+- The new disk is read on the next disk access. Press the key when the game asks for the disk; holding it while the game is loading continuously can hang Nextor.
+- A reset boots disk 1 again. Holding `0` while booting skips emulation mode and boots disk 1 as a plain disk until the game is launched again from the menu.
+- Saves go straight into the right disk inside the joined file.
+- Up to 11 disks of 360 KB or 5 disks of 720 KB (plus one 360 KB disk) fit in one file.
 
 Current limitations:
 
-- One image per boot. Multi-disk games cannot swap disks yet; return to the menu to change the image.
+- Multi-disk files always boot MSX-DOS 1, so multi-disk software that needs MSX-DOS 2 will not run from a joined file.
 - Copy-protected disks and software that programs a floppy controller directly do not work, because there is no floppy controller to emulate.
-- Software that needs every byte of RAM may still fail under Nextor, which reserves more work area than a plain floppy disk ROM.
+- Software that needs every byte of RAM may still fail under Nextor, which reserves more work area than a plain floppy disk ROM. Holding `SHIFT` while booting disables an internal floppy drive and frees some memory.
 - On machines with an internal floppy drive, the cartridge's drive is `A:` only when the cartridge slot is scanned before the internal disk ROM.
 
 ### microSD limitations
@@ -237,7 +263,7 @@ For the best experience with very large ROM collections, consider organizing ROM
 
 ## File Hunter browser
 
-Explorer includes an integrated File Hunter browser for PicoVerse 2350 cartridges fitted with an ESP-01 / ESP8266 module. The browser talks directly from the Pico firmware to the ESP module, queries the public File Hunter service, downloads the selected ROM into PSRAM, and then saves it as a `.ROM` file in the root of the microSD card.
+Explorer includes an integrated File Hunter browser for PicoVerse 2350 cartridges fitted with an ESP-01 / ESP8266 module. The browser talks directly from the Pico firmware to the ESP module, queries the public File Hunter service, downloads the selected ROM or `.DSK` disk image into PSRAM, and then saves it as a `.ROM` or `.DSK` file in the root of the microSD card.
 
 The File Hunter integration is inspired by NataliaPC's MSX File Hunter Browser project and uses the public File Hunter catalog endpoint. See the external reference section near the end of this document for the upstream project link.
 
@@ -255,16 +281,20 @@ Press `F3` from the Explorer menu. The menu frame is drawn immediately, then the
 
 Opening File Hunter always lists the latest releases, newest first, so the first page shows what was most recently added to File Hunter. The list is refreshed from the server every time you press `F3`, so returning to File Hunter never leaves you on the results of an earlier search. After the first page is loaded, the browser shows the File Hunter result list with the same Explorer frame, footer, page counter, and 40/80-column support used by the normal menu.
 
+The first visit after power-on shows the ROM catalog. Press `T` to switch between the ROM catalog and the `.DSK` disk image catalog. Explorer remembers the last catalog until the MSX is reset, so `F3` reopens it.
+
 ### File Hunter list screen
 
 Each result row shows:
 
-- ROM name on the left.
+- Name on the left.
 - Size aligned to the right side of the row.
 - Source label `FH`.
-- Type label `ROM` aligned at the far right.
+- Type label `ROM` or `DSK` aligned at the far right, matching the catalog being browsed.
 
 In 40-column mode, long selected names slide horizontally while the cursor remains on the row. In 80-column mode, longer names fit directly in the wider row.
+
+The footer shows which catalog is listed after the page counter: "Page: 01/05  Listing: ROM" / "Listing: DSK" in 80-column mode, or "Page:01/05 ROM" / "Page:01/05 DSK" in 40-column mode.
 
 The network state appears in the lower-left status area as "Network: Online" / "Network: Offline" in 80-column mode or "Net: Online" / "Net: Offline" in 40-column mode. The standard command hints stay on the right side of the last line.
 
@@ -275,6 +305,7 @@ The network state appears in the lower-left status area as "Network: Online" / "
 - **Enter**: Open the selected ROM detail screen.
 - **Space**: Quick-run the selected ROM with saved `.PVC` options or default settings. If the ROM is on microSD and its mapper has not been detected yet, Explorer detects it before launching.
 - **/**: Search File Hunter. Type a query and press Enter to load matching results. Press Esc at the search prompt to cancel.
+- **T**: Switch between the ROM and `.DSK` catalogs. The current search is run again in the other catalog; with no search, the latest releases are listed.
 - **F1**: Leave File Hunter and return to the flash ROM list.
 - **F2**: Leave File Hunter and return to the microSD list.
 - **F3**: File Hunter is already selected; pressing it again has no effect.
@@ -284,35 +315,40 @@ The network state appears in the lower-left status area as "Network: Online" / "
 
 ### Searching File Hunter
 
-Press `/` while inside File Hunter, type part of a title, and press Enter. Explorer sends that text as the File Hunter query and reloads the result list from page 1. Search text is limited to 24 characters.
+Press `/` while inside File Hunter, type part of a title, and press Enter. Explorer sends that text as the File Hunter query and reloads the result list from page 1. The search covers the catalog being browsed (ROM or DSK). Search text is limited to 24 characters.
 
 If the ESP module is not connected to WiFi, the browser reports an offline state and the request fails instead of hanging indefinitely. When WiFi is still associating, the Pico waits briefly and shows a waiting status before reporting failure.
 
-### ROM detail and download workflow
+### ROM/DSK detail and download workflow
 
 Selecting a File Hunter result opens a detail screen showing:
 
-- ROM name.
+- ROM or DSK name.
 - Size.
 - Source: `FH`.
 - Action: Download.
 
-Press Enter or Space on the detail screen to download the selected ROM. Explorer first downloads the ROM from File Hunter into PSRAM. The status line shows a percentage counter from 0% to 100% while the download is active. After the download completes, the Pico saves the ROM from PSRAM to the root of the microSD card using the same filename shown by File Hunter.
+The footer shows only the detail actions (`[ESC - BACK] [ENTER - DOWNLOAD]`); the page counter and `F1`/`F2`/`F3` source shortcuts are hidden on this screen.
 
-When the save succeeds, the detail screen shows "Saved to microSD. Press key." Press any key to return to the File Hunter list. The Explorer root microSD list is refreshed after a successful save, so returning to the microSD root with `F2` lets you search for and launch the newly downloaded ROM as a normal SD ROM.
+Press Enter or Space on the detail screen to download the selected file. Explorer first downloads it from File Hunter into PSRAM. The status line shows a percentage counter from 0% to 100% while the download is active. After the download completes, the Pico saves the file from PSRAM to the root of the microSD card using the same filename shown by File Hunter, with a `.ROM` or `.DSK` extension.
+
+When the save succeeds, the detail screen shows "Saved to microSD. Press key." Press any key to return to the File Hunter list. The Explorer root microSD list is refreshed after a successful save, so returning to the microSD root with `F2` lets you search for and launch the newly downloaded file as a normal SD ROM or `.DSK` entry.
+
+A `.DSK` download is saved only if Explorer can boot it: its size must be a multiple of 360 KB and at most 4 MB minus 1 KB (see [Running .DSK disk images](#running-dsk-disk-images)). Other disk images, such as 180 KB single-sided disks, are rejected after the download with "Unsupported DSK size" and are not written to the card.
 
 ### File Hunter limitations and notes
 
 - File Hunter requires a working ESP-01 / ESP8266 module and WiFi connection.
 - A microSD card must be present because downloads are saved directly to the card root.
-- Downloaded ROMs use File Hunter's filename. If a file with the same name already exists in the microSD root, it is replaced.
+- Downloaded files use File Hunter's filename. If a file with the same name already exists in the microSD root, it is replaced.
 - Download and save speed depends on WiFi quality, the ESP module firmware, File Hunter response time, and microSD card performance.
-- File Hunter entries are online catalog results, not flash entries. After saving, they become SD ROM entries.
+- File Hunter entries are online catalog results, not flash entries. After saving, they become SD ROM or `.DSK` entries.
+- File Hunter lists each disk of a multi-disk game as a separate entry, so each disk is downloaded as its own `.DSK`. To swap disks with the number keys, join them into one `.DSK` on a PC (see [Running .DSK disk images](#running-dsk-disk-images)).
 
 ## Known limitations
 
 - Flash ROMs packaged by the tool must be in the root of the source folder (no subfolders in the flashing process, though SD folders are fully supported in the menu).
-- Embedded Sunrise Nextor entries require the matching storage device at runtime: FAT16 microSD partitions up to 4 GB for `-s1`/`-m1`/`-c1`/`-r1`, or USB mass storage for `-s2`/`-m2`/`-c2`/`-r2`.
+- Embedded Sunrise Nextor entries require the matching storage device at runtime: FAT16 microSD partitions up to 4 GB for `-s1`/`-m1`/`-c1`/`-r1`/`-s3`, or USB mass storage for `-s2`/`-m2`/`-c2`/`-r2`.
 - ROMs with unknown or unsupported mappers are skipped unless you force a mapper tag.
 - Very deep folder nesting (more than 10+ levels) is supported but may have perception of slowness due to repeated folder scans.
 - File Hunter browsing is unavailable without an ESP-01 / ESP8266 module, compatible ESP firmware, and a configured WiFi network.

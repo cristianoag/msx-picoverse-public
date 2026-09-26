@@ -2,7 +2,7 @@
 // (c) 2026 Cristiano Goncalves
 // The Retro Hacker
 //
-// explorer_fh.c - MSX Explorer File Hunter (online ROM catalog) client
+// explorer_fh.c - MSX Explorer File Hunter (online ROM/DSK catalog) client
 //
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -55,12 +55,13 @@ static void fh_write_query(const char *query)
 {
     unsigned int i;
     unsigned int len = query ? strlen(query) : 0;
-    if (len >= CTRL_QUERY_SIZE) {
-        len = CTRL_QUERY_SIZE - 1;
+    if (len >= CTRL_FH_TYPE_OFFSET) {
+        len = CTRL_FH_TYPE_OFFSET - 1;
     }
-    for (i = 0; i < CTRL_QUERY_SIZE; i++) {
+    for (i = 0; i < CTRL_FH_TYPE_OFFSET; i++) {
         Poke(CTRL_QUERY_BASE + i, i < len ? query[i] : 0);
     }
+    Poke(CTRL_QUERY_BASE + CTRL_FH_TYPE_OFFSET, fh_catalog_type);
 }
 
 static void fh_write_selected_index(unsigned int index)
@@ -268,9 +269,9 @@ static void fh_build_row_text_with_name(const ExplorerFHRecord *record, const ch
     unsigned char len;
     fh_size_text(record->size_kb, size_text);
     if (use_80_columns) {
-        sprintf(out, MENU_ROW_FORMAT_80, name, size_text, "FH", " ROM");
+        sprintf(out, MENU_ROW_FORMAT_80, name, size_text, "FH", menu_ui_fh_type_label());
     } else {
-        sprintf(out, MENU_ROW_FORMAT_40, name, size_text, "FH", " ROM");
+        sprintf(out, MENU_ROW_FORMAT_40, name, size_text, "FH", menu_ui_fh_type_label());
     }
 
     len = (unsigned char)strlen(out);
@@ -490,6 +491,9 @@ static int fh_read_search_query(char *buffer, unsigned int max_len)
 
 static void fh_render_detail_footer(void)
 {
+    /* Row 22 still holds the list footer (page counter and F1/F2/F3 source
+       shortcuts); clear it so only the detail actions remain. */
+    menu_ui_clear_rows(22, 23);
     Locate(0, 22);
     printf("[ESC - BACK] [ENTER - DOWNLOAD]");
 
@@ -508,9 +512,9 @@ static void fh_render_detail_screen(const ExplorerFHRecord *record)
 
     Locate(0, 3);
     if (use_80_columns) {
-        printf("    ROM: %-71.71s", name);
+        printf("   %s: %-71.71s", menu_ui_fh_type_label(), name);
     } else {
-        printf("    ROM: %-29.29s", name);
+        printf("   %s: %-29.29s", menu_ui_fh_type_label(), name);
     }
 
     Locate(0, 4);
@@ -591,6 +595,7 @@ unsigned char explorer_fh_run(void)
 {
     char key;
     char search_query[EXPLORER_FH_MAX_QUERY + 1];
+    char active_query[EXPLORER_FH_MAX_QUERY + 1];
     const char *retrieving_status = menu_ui_status_text("Retrieving...", "Retrieving File Hunter list...");
     const char *page_status = menu_ui_status_text("Loading...", "Loading File Hunter page...");
     const char *search_status = menu_ui_status_text("Searching...", "Searching File Hunter list...");
@@ -600,6 +605,7 @@ unsigned char explorer_fh_run(void)
     fh_current_index = 0;
     fh_total_files = 0;
     fh_message_row = 0;
+    active_query[0] = '\0';
     memset(fh_records, 0, sizeof(fh_records));
     memset(fh_status_right, 0, sizeof(fh_status_right));
 
@@ -607,7 +613,7 @@ unsigned char explorer_fh_run(void)
     // Empty query = File Hunter latest releases. Issued as a search so the Pico
     // always refetches, instead of reusing a catalog left over from a previous
     // visit (which would otherwise still hold the last search results).
-    fh_search("", retrieving_status);
+    fh_search(active_query, retrieving_status);
     fh_redraw();
 
     while (1) {
@@ -657,11 +663,18 @@ unsigned char explorer_fh_run(void)
                 break;
             case '/':
                 if (fh_read_search_query(search_query, sizeof(search_query))) {
-                    fh_search(search_query, search_status);
-                    fh_redraw();
-                } else {
-                    fh_redraw();
+                    strcpy(active_query, search_query);
+                    fh_search(active_query, search_status);
                 }
+                fh_redraw();
+                break;
+            case 't':
+            case 'T':
+                // Switch between the ROM and DSK catalogs, keeping the current search.
+                fh_catalog_type ^= CTRL_FH_TYPE_DSK;
+                fh_render_frame();
+                fh_search(active_query, retrieving_status);
+                fh_redraw();
                 break;
             case 13:
             case ' ':

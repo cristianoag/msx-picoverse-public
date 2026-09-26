@@ -71,6 +71,7 @@ Offset  Field                 Notes
 8       audio_volume          volume percent (v3+)
 9       vdp_frequency         0=Default / 1=60Hz / 2=50Hz  (v4+, new)
 10      cpu_mode              0=Default / 1=Turbo / 2=R800 (v5+, see the CPU option below)
+11      dsk_mapper            .DSK entries only: 0=plain Nextor / 1=Nextor + 1MB mapper (v6+)
 ```
 
 Size milestones in `explorer.c`:
@@ -81,7 +82,8 @@ Size milestones in `explorer.c`:
 #define PVC_OPTIONS_PARTITION_SIZE 8u   // v2: + sd_partition
 #define PVC_OPTIONS_VOLUME_SIZE    9u   // v3: + audio_volume
 #define PVC_OPTIONS_FREQ_SIZE      10u  // v4: + vdp_frequency
-#define PVC_OPTIONS_SIZE           11u  // v5: + cpu_mode
+#define PVC_OPTIONS_CPU_SIZE       11u  // v5: + cpu_mode
+#define PVC_OPTIONS_SIZE           12u  // v6: + dsk_mapper
 ```
 
 **Backward compatibility:** older 9-byte files still load; the load handler only reads byte 9 when

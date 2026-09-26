@@ -242,19 +242,33 @@ void menu_ui_print_delimiter_line(void) {
     }
 }
 
+// File Hunter catalog label (" ROM"/" DSK"): list type column, detail screen
+// name label and the list footer.
+const char *menu_ui_fh_type_label(void) {
+    return fh_catalog_type == CTRL_FH_TYPE_DSK ? " DSK" : " ROM";
+}
+
 void menu_ui_print_footer_line(void) {
     unsigned char width = menu_ui_row_width();
     unsigned char content_width = (unsigned char)(width - 2);
     unsigned char footer_len = menu_ui_shortcuts_length();
-    unsigned char col;
+    unsigned char col = 11;
+    const char *fmt = "Page: %02d/%02d%s";
+    const char *label = "";
 
-    if (use_80_columns) {
-        printf("Page: %02d/%02d", currentPage, totalPages);
-    } else {
-        printf("Page: %02d/%02d", currentPage, totalPages);
+    if (menu_shortcut_selection == MENU_SHORTCUT_FILEHUNTER) {
+        /* File Hunter: name the catalog being listed after the page counter. */
+        if (use_80_columns) {
+            fmt = "Page: %02d/%02d  Listing:%s";
+            col = 25;
+        } else {
+            fmt = "Page:%02d/%02d%s";
+            col = 14;
+        }
+        label = menu_ui_fh_type_label();
     }
+    printf(fmt, currentPage, totalPages, label);
 
-    col = 11;
     while (col < content_width && (unsigned char)(content_width - col) > footer_len) {
         PrintChar(' ');
         col++;

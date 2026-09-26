@@ -59,6 +59,9 @@
 #define CTRL_STATUS_SD_MISSING 0x5D
 #define CTRL_QUERY_BASE 0xBFC0
 #define CTRL_QUERY_SIZE 32
+#define CTRL_FH_TYPE_OFFSET (CTRL_QUERY_SIZE - 1) // Last query byte: File Hunter catalog type
+#define CTRL_FH_TYPE_ROM 0
+#define CTRL_FH_TYPE_DSK 1
 #define AUDIO_PROFILE_NONE 0
 #define AUDIO_PROFILE_SCC 1
 #define AUDIO_PROFILE_SCC_PLUS 2

@@ -15,3 +15,4 @@ int use_80_columns;
 unsigned char name_col_width;
 int frame_rendered;
 unsigned char menu_shortcut_selection;
+unsigned char fh_catalog_type;

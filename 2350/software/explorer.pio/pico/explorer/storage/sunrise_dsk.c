@@ -9,6 +9,12 @@
 // partition table, which Nextor mounts as a single unpartitioned device and,
 // when the boot sector is an MSX-DOS 1 one, boots in MSX-DOS 1 mode.
 //
+// A .DSK made of several disks joined together gets two generated sectors in
+// front of it (see sunrise_dsk_build_emulation_header): a partition table
+// holding Nextor 2.1's persistent disk-emulation pointer and the emulation
+// data listing each disk. Nextor then boots disk 1 in disk emulation mode and
+// swaps disks when the user presses 1-9 / A-W during a disk access.
+//
 // Architecture:
 //   Core 0: PIO bus engine + Sunrise mapper/IDE register handling (unchanged)
 //   Core 1: this task - serves sector reads from PSRAM and writes each
@@ -33,6 +39,7 @@
 static sunrise_ide_t *dsk_ide_ctx = NULL;
 static uint8_t *dsk_image = NULL;
 static uint32_t dsk_sector_count = 0;
+static uint32_t dsk_file_base = 0;
 static const sunrise_dsk_extent_t *dsk_extents = NULL;
 static uint8_t dsk_extent_count = 0;
 static bool dsk_writable = false;
@@ -50,16 +57,113 @@ void sunrise_dsk_set_ide_ctx(sunrise_ide_t *ide)
     dsk_ide_ctx = ide;
 }
 
-void sunrise_dsk_attach_image(uint8_t *image, uint32_t sector_count,
+void sunrise_dsk_attach_image(uint8_t *device, uint32_t device_sectors, uint32_t file_sector_base,
                               const sunrise_dsk_extent_t *extents, uint8_t extent_count)
 {
-    dsk_image = image;
-    dsk_sector_count = sector_count;
+    dsk_image = device;
+    dsk_sector_count = device_sectors;
+    dsk_file_base = (file_sector_base < device_sectors) ? file_sector_base : 0u;
     if (extents == NULL || extent_count > SUNRISE_DSK_MAX_EXTENTS)
         extent_count = 0;
     dsk_extents = extents;
     dsk_extent_count = extent_count;
     dsk_writable = dsk_extent_count != 0u;
+}
+
+static uint16_t dsk_read_le16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+}
+
+static void dsk_write_le16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static void dsk_write_le32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+// Size in sectors of the disk starting at `disk`, given `remaining` sectors.
+static uint16_t dsk_disk_size_at(const uint8_t *disk, uint32_t remaining)
+{
+    uint16_t bytes_per_sector = dsk_read_le16(disk + 0x0B);
+    uint16_t total = dsk_read_le16(disk + 0x13);
+    if (bytes_per_sector == SUNRISE_DSK_SECTOR_SIZE &&
+        (total == SUNRISE_DSK_SECTORS_360K || total == SUNRISE_DSK_SECTORS_720K) && total <= remaining)
+        return total;
+
+    // MSX-DOS 1 identifies the format by the FAT media byte, not the BPB, so
+    // many game disks carry a boot sector without a usable BPB.
+    uint8_t media = disk[SUNRISE_DSK_SECTOR_SIZE];
+    if (media == 0xF9u && remaining >= SUNRISE_DSK_SECTORS_720K)
+        return SUNRISE_DSK_SECTORS_720K;
+    if (media == 0xF8u)
+        return SUNRISE_DSK_SECTORS_360K;
+
+    return (remaining % SUNRISE_DSK_SECTORS_720K == 0u) ? SUNRISE_DSK_SECTORS_720K : SUNRISE_DSK_SECTORS_360K;
+}
+
+uint8_t sunrise_dsk_split_disks(const uint8_t *image, uint32_t image_sectors,
+                                uint16_t *disk_sectors, uint8_t max_disks)
+{
+    if (image == NULL || disk_sectors == NULL || image_sectors == 0u ||
+        image_sectors % SUNRISE_DSK_SECTORS_360K != 0u)
+        return 0;
+
+    uint8_t count = 0;
+    uint32_t offset = 0;
+    while (offset < image_sectors) {
+        if (count >= max_disks)
+            return 0;
+        uint16_t size = dsk_disk_size_at(image + offset * SUNRISE_DSK_SECTOR_SIZE, image_sectors - offset);
+        disk_sectors[count++] = size;
+        offset += size;
+    }
+    return count;
+}
+
+void sunrise_dsk_build_emulation_header(uint8_t *header, const uint16_t *disk_sectors, uint8_t disk_count)
+{
+    memset(header, 0, SUNRISE_DSK_HEADER_SECTORS * SUNRISE_DSK_SECTOR_SIZE);
+
+    // Sector 0: first partition table entry. Nextor 2.1 enters persistent disk
+    // emulation mode when status bit 0 is set and the type is non-zero; the
+    // CHS fields then hold the emulation data pointer (device 1, LUN 1 - the
+    // Sunrise master - and sector 1). The LBA fields map disk 1 as a FAT12
+    // partition, so a normal boot (0 key held) still mounts disk 1.
+    uint8_t *entry = header + 0x1BE;
+    entry[0] = 0x81u;  // active + "enter disk emulation mode"
+    entry[1] = 1u;     // device holding the emulation data
+    entry[2] = 1u;     // logical unit
+    entry[3] = 0u;     // emulation data sector, bits 31-24
+    entry[4] = 0x01u;  // partition type: FAT12
+    entry[5] = 0u;     // emulation data sector, bits 23-16
+    entry[6] = 0u;     // emulation data sector, bits 15-8
+    entry[7] = 1u;     // emulation data sector, bits 7-0
+    dsk_write_le32(entry + 8, SUNRISE_DSK_HEADER_SECTORS);
+    dsk_write_le32(entry + 12, disk_count ? disk_sectors[0] : 0u);
+    header[510] = 0x55u;
+    header[511] = 0xAAu;
+
+    // Sector 1: Nextor disk emulation data. Device 0 in every entry means "the
+    // same device as the emulation data"; work area 0 lets Nextor allocate it.
+    uint8_t *emu = header + SUNRISE_DSK_SECTOR_SIZE;
+    memcpy(emu, "NEXTOR_EMU_DATA", 16);
+    emu[16] = disk_count;
+    emu[17] = 1u;
+    uint32_t start = SUNRISE_DSK_HEADER_SECTORS;
+    for (uint8_t i = 0; i < disk_count; i++) {
+        uint8_t *slot = emu + 24 + (uint32_t)i * 8u;
+        dsk_write_le32(slot + 2, start);
+        dsk_write_le16(slot + 6, disk_sectors[i]);
+        start += disk_sectors[i];
+    }
 }
 
 static bool __not_in_flash_func(dsk_map_sector)(uint32_t sector, uint32_t *lba_out)
@@ -139,8 +243,11 @@ void __not_in_flash_func(sunrise_dsk_task)(void)
 
     if (dsk_image != NULL && dsk_sector_count != 0u)
     {
+        // The IDENTIFY model name is built as "vendor product", but the vendor
+        // field holds only 8 characters (SCSI INQUIRY), so the full name goes
+        // in the 16-character product field instead.
         sunrise_ide_set_device_info(dsk_sector_count, SUNRISE_DSK_SECTOR_SIZE,
-                                    "PICOVRSE", "DSK IMAGE", "1.00");
+                                    "", "PICOVERSE DSK", "1.00");
         usb_device_mounted = true;
     }
 
@@ -178,7 +285,19 @@ void __not_in_flash_func(sunrise_dsk_task)(void)
             usb_write_requested = false;
             uint32_t lba = usb_write_lba;
             uint32_t card_lba;
-            if (!dsk_writable || lba >= dsk_sector_count || !dsk_map_sector(lba, &card_lba))
+            if (lba >= dsk_sector_count)
+            {
+                ide->usb_write_failed = true;
+            }
+            else if (lba < dsk_file_base)
+            {
+                // Generated header (partition table / emulation data): kept in
+                // PSRAM only. Holding 0 at boot clears the emulation pointer
+                // this way, which lasts until the next launch from the menu.
+                memcpy(dsk_image + lba * SUNRISE_DSK_SECTOR_SIZE, usb_write_buffer, SUNRISE_DSK_SECTOR_SIZE);
+                ide->usb_write_ready = true;
+            }
+            else if (!dsk_writable || !dsk_map_sector(lba - dsk_file_base, &card_lba))
             {
                 ide->usb_write_failed = true;
             }

@@ -220,7 +220,7 @@ Explorer uses the same mapper IDs and MegaRAM bus behavior under `2350/software/
 | `tool/src/explorer.c` | Adds `-r1`/`--megaram-sd`, `-r2`/`--megaram-usb`, `-a`/`--allnextor`, mapper types 19/20, help text, and embedded Nextor entries while still appending scanned folder ROMs. |
 | `pico/explorer/explorer.h` | Defines `MEGARAM_SIZE`, `MEGARAM_BANKS`, and `MEGARAM_BANK_SIZE` for Explorer. |
 | `pico/explorer/explorer.c` | Allocates MegaRAM PSRAM, handles bank registers, ports `0x8E`/`0x8F`, expanded-slot dispatch, memory reads, memory writes, and Explorer launch dispatch for mapper IDs 19/20. |
-| `msx/src/screen_rom.c` | Applies the same Explorer restrictions used by other Sunrise + 1MB mapper entries: no PSG Mirror, no MSX-MUSIC, no WiFi, and no unsupported external-audio launch selections. |
+| `msx/src/screen_rom.c` | Offers PSG Mirror, MSX-MUSIC and the MegaRAM SCC/SCC+ profiles for the Nextor MegaRAM entries; WiFi and the other external-audio launch selections are not offered. |
 | `msx/src/menu.c` | Displays MegaRAM mapper IDs 19/20 as `SYSTEM`. |
 
 ## Current Limitations

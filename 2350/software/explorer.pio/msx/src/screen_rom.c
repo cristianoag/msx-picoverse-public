@@ -91,6 +91,9 @@ static unsigned char cur_audio_profile;
 static unsigned char cur_psg_enabled;
 static unsigned char cur_wifi_enabled;
 static unsigned char rom_allow_wifi;
+/* .DSK entries reuse the WiFi on/off row for their "1MB Mapper" memory choice
+   (no DSK entry offers WiFi); cur_wifi_enabled then means "use the mapper". */
+static unsigned char cur_is_dsk;
 static int cur_selection;
 
 static void write_index_query(unsigned int index) {
@@ -124,9 +127,9 @@ static unsigned char record_is_sunrise_sd_system_rom(const ROMRecord *record) {
     return mapper_code >= 15 && mapper_code <= 19 && mapper_code != 18;
 }
 
-static unsigned char record_is_sunrise_mapper_system_rom(const ROMRecord *record) {
-    unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 11 || (mapper_code >= 16 && mapper_code <= 21);
+/* Standalone MegaRAM (no Nextor) has no PSG Mirror path in the firmware. */
+static unsigned char record_is_standalone_megaram(const ROMRecord *record) {
+    return record_mapper_code(record->Mapper) == 21;
 }
 
 static unsigned char record_supports_scc_audio(const ROMRecord *record) {
@@ -176,6 +179,7 @@ static unsigned char send_load_options(unsigned int index, unsigned char *audio_
     if (*vdp_freq > VDP_FREQ_50HZ) {
         *vdp_freq = VDP_FREQ_DEFAULT;
     }
+    cur_wifi_enabled = Peek(CTRL_WIFI_SUPPORT) ? 1 : 0;
     rom_cpu_mode = Peek(CTRL_CPU_MODE);
     select_cpu_mode(rom_cpu_mode);
     sd_partition_count = Peek(CTRL_SD_PARTITION_INFO_BASE);
@@ -192,7 +196,8 @@ static void send_save_options(unsigned int index, unsigned char audio_profile, u
     Poke(CTRL_QUERY_BASE + 6, audio_volume);
     Poke(CTRL_QUERY_BASE + 7, vdp_freq);
     Poke(CTRL_QUERY_BASE + 8, rom_allow_cpu ? rom_cpu_mode : CPU_MODE_DEFAULT);
-    clear_query_tail(9);
+    Poke(CTRL_QUERY_BASE + 9, cur_wifi_enabled);
+    clear_query_tail(10);
     Poke(CTRL_CMD, CMD_SAVE_OPTIONS);
     wait_ctrl_cmd();
 }
@@ -297,22 +302,23 @@ void quick_run_rom(unsigned int index) {
     loadGame((int)index);
 }
 
-static void render_rom_screen(const ROMRecord *record) {
+/* First detail line, shared by the ROM/DSK and MP3/WAV screens. The frame is
+   drawn first; the name is trimmed to the row width. */
+static void render_detail_name_line(const ROMRecord *record) {
+    char name[MAX_FILE_NAME_LENGTH + 1];
+
     menu_ui_render_detail_frame();
+    trim_name_to_buffer(record->Name, name, use_80_columns ? 71 : 29);
+    Locate(0, 3);
+    printf(use_80_columns ? "   Name: %-71.71s" : "   Name: %-29.29s", name);
+}
+
+static void render_rom_screen(const ROMRecord *record) {
+    render_detail_name_line(record);
 
     {
-        char name[MAX_FILE_NAME_LENGTH + 1];
         const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
         unsigned long size_kb = record->Size / 1024u;
-
-        trim_name_to_buffer(record->Name, name, use_80_columns ? 71 : 29);
-
-        Locate(0, 3);
-        if (use_80_columns) {
-            printf("    ROM: %-71.71s", name);
-        } else {
-            printf("    ROM: %-29.29s", name);
-        }
 
         Locate(0, 4);
         printf("   Size: %lu KB", size_kb);
@@ -330,7 +336,7 @@ void show_rom_screen(unsigned int index) {
     unsigned char options_loaded = 0;
     unsigned char allow_mapper_override = !record_is_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
-    unsigned char allow_psg = !record_is_sunrise_mapper_system_rom(record);
+    unsigned char allow_psg = !record_is_standalone_megaram(record);
     /* VDP R9 (50/60Hz) exists only on the V9938/V9958 (MSX2+). The MSX version
        byte at main-ROM 0x002D is 0 on MSX1, so the frequency option is offered
        only when it is non-zero. */
@@ -344,7 +350,8 @@ void show_rom_screen(unsigned int index) {
     cur_audio_profile = AUDIO_PROFILE_NONE;
     cur_psg_enabled = 1;
     cur_wifi_enabled = 0;
-    rom_allow_wifi = record_is_wifi_capable_system_rom(record);
+    cur_is_dsk = record_mapper_code(record->Mapper) == 23;
+    rom_allow_wifi = record_is_wifi_capable_system_rom(record) || cur_is_dsk;
 
     build_cpu_mode_list();
     rom_allow_sd_partition = allow_sd_partition;
@@ -398,7 +405,7 @@ void show_rom_screen(unsigned int index) {
     }
     cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
     if (!allow_psg) {
-        cur_psg_enabled = 0; // PSG Mirror is disabled on Nextor + 1MB mapper (unstable)
+        cur_psg_enabled = 0;
     }
 
     rom_sd_partition = sd_partition;
@@ -491,7 +498,7 @@ void show_rom_screen(unsigned int index) {
                 }
                 render_rom_options_block();
             }
-            if ((key == 28 || key == 29) && cur_selection == psg_selection && allow_psg && !cur_wifi_enabled) {
+            if ((key == 28 || key == 29) && cur_selection == psg_selection && allow_psg && !(cur_wifi_enabled && !cur_is_dsk)) {
                 cur_psg_enabled = cur_psg_enabled ? 0 : 1;
                 render_rom_options_block();
             }
@@ -528,7 +535,7 @@ void show_rom_screen(unsigned int index) {
             }
             if ((key == 28 || key == 29) && rom_allow_wifi && cur_selection == sel_wifi) {
                 cur_wifi_enabled = cur_wifi_enabled ? 0 : 1;
-                if (cur_wifi_enabled) {
+                if (cur_wifi_enabled && !cur_is_dsk) {
                     /* WiFi takes the cartridge exclusively (see
                        audio_profile_is_supported): drop the audio options so
                        the screen shows what will actually be launched. */
@@ -654,7 +661,7 @@ static void render_rom_partition_line(unsigned char row, unsigned char sd_partit
 }
 
 static void render_rom_wifi_line(unsigned char row, unsigned char wifi_enabled, int selected) {
-    render_rom_prefixed_line(row, "      Wifi: ", wifi_enabled ? "Yes" : "No", selected);
+    render_rom_prefixed_line(row, cur_is_dsk ? "1MB Mapper: " : "      Wifi: ", wifi_enabled ? "Yes" : "No", selected);
 }
 
 static void render_rom_action_line(unsigned char row, int selected) {
@@ -721,20 +728,10 @@ static ROMRecord *load_mp3_detail_record(unsigned int index) {
 }
 
 static void render_mp3_screen(const ROMRecord *record) {
-    char name[MAX_FILE_NAME_LENGTH + 1];
     unsigned long size_kb = record->Size / 1024u;
     const char *type = ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV) ? "WAV" : "MP3";
 
-    menu_ui_render_detail_frame();
-
-    trim_name_to_buffer(record->Name, name, use_80_columns ? 71 : 29);
-
-    Locate(0, 3);
-    if (use_80_columns) {
-        printf("    %s: %-71.71s", type, name);
-    } else {
-        printf("    %s: %-29.29s", type, name);
-    }
+    render_detail_name_line(record);
 
     Locate(0, 4);
     printf("   Type: %s", type);

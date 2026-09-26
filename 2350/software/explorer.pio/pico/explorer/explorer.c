@@ -127,6 +127,9 @@
 #define FH_RESULT       (FH_CTRL_BASE + 9)
 #define FH_QUERY_BASE   0xBFC0
 #define FH_QUERY_SIZE   32
+#define FH_QUERY_TYPE_OFFSET (FH_QUERY_SIZE - 1u) // Last query byte: catalog type for the next search
+#define FH_TYPE_ROM     0u
+#define FH_TYPE_DSK     1u
 #define FH_STATUS_TEXT_BASE 0xBF80
 #define FH_STATUS_TEXT_SIZE 64
 #define CTRL_CHIP_ID_BASE (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE - 17u) // Control: Pico unique board ID string
@@ -323,7 +326,9 @@
 #define PVC_OPTIONS_PARTITION_SIZE 8u
 #define PVC_OPTIONS_VOLUME_SIZE 9u
 #define PVC_OPTIONS_FREQ_SIZE 10u
-#define PVC_OPTIONS_SIZE 11u
+#define PVC_OPTIONS_CPU_SIZE 11u
+// v6: + DSK memory (0 = plain Nextor, 1 = Nextor + 1MB PSRAM mapper).
+#define PVC_OPTIONS_SIZE 12u
 
 #define PV_CONFIG_MAGIC_0 'P'
 #define PV_CONFIG_MAGIC_1 'V'
@@ -804,10 +809,12 @@ ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 // SD-only .DSK disk image, booted through the hidden Nextor kernel. It sits
 // past MAPPER_DESCRIPTIONS on purpose: it is never a filename tag or override.
 #define MAPPER_DSK                23
-// Only standard single-disk floppy images are listed (360KB: 1DD, 720KB: 2DD)
-// until multi-disk/disk-change support exists.
+// A .DSK is one or more standard floppies joined together (360KB: 1DD, 720KB:
+// 2DD), so its size is always a multiple of 360KB. Several disks boot in Nextor
+// disk emulation mode with number-key swapping. The generated header sectors
+// sit in front of the file in the PSRAM staging region.
 #define DSK_SIZE_360K             (360u * 1024u)
-#define DSK_SIZE_720K             (720u * 1024u)
+#define DSK_HEADER_BYTES          (SUNRISE_DSK_HEADER_SECTORS * SUNRISE_DSK_SECTOR_SIZE)
 
 // Indexed by mapper number - 1. Entries 15-21 are reserved for the system
 // (Nextor/Sunrise/C2/MegaRAM) ROMs, which are never user selectable, so they
@@ -919,6 +926,8 @@ static char fh_wifi_status_text[FH_STATUS_TEXT_SIZE];
 static uint8_t fh_tcp_last_error = 0;
 static uint32_t fh_download_size = 0;
 static char fh_download_name[ROM_NAME_MAX + 1];
+static uint8_t fh_active_type = FH_TYPE_ROM;   // Catalog type of the loaded listing (ROM or DSK)
+static uint8_t fh_download_type = FH_TYPE_ROM; // Catalog type of the file being saved
 
 #define FH_SAVE_IDLE 0u
 #define FH_SAVE_RUNNING 1u
@@ -1762,7 +1771,7 @@ static bool dsk_support_available(void) {
 }
 
 static bool dsk_size_supported(uint32_t size) {
-    return size == DSK_SIZE_360K || size == DSK_SIZE_720K;
+    return size != 0u && (size % DSK_SIZE_360K) == 0u && size <= SD_ROM_MAX_SIZE - DSK_HEADER_BYTES;
 }
 
 static bool has_wav_extension(const char *filename) {
@@ -2116,6 +2125,7 @@ static void process_load_options_request(void) {
     ctrl_wavegame_rom = 0;
     ctrl_audio_selection = AUDIO_PROFILE_NONE;
     ctrl_psg_emulation = 1;
+    ctrl_wifi_support = 0;
     ctrl_sd_partition = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
     ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
@@ -2186,8 +2196,13 @@ static void process_load_options_request(void) {
     if (br >= PVC_OPTIONS_FREQ_SIZE) {
         ctrl_vdp_frequency = data[9] <= VDP_FREQ_50HZ ? data[9] : VDP_FREQ_DEFAULT;
     }
-    if (br >= PVC_OPTIONS_SIZE) {
+    if (br >= PVC_OPTIONS_CPU_SIZE) {
         ctrl_cpu_mode = data[10] <= CPU_MODE_R800 ? data[10] : CPU_MODE_DEFAULT;
+    }
+    // .DSK entries reuse the menu's on/off option row (CTRL_WIFI_SUPPORT) for
+    // their "1MB Mapper" memory choice; no DSK entry offers WiFi.
+    if (br >= PVC_OPTIONS_SIZE && is_dsk_record(rec)) {
+        ctrl_wifi_support = data[11] ? 1u : 0u;
     }
     ctrl_ack_value = 1;
 }
@@ -2233,7 +2248,7 @@ static void process_save_options_request(void) {
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
         audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4], sd_partition,
-        audio_volume, vdp_frequency, cpu_mode
+        audio_volume, vdp_frequency, cpu_mode, (uint8_t)(filter_query[9] ? 1u : 0u)
     };
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
@@ -2481,7 +2496,10 @@ static void process_prepare_quick_run_request(void) {
         ctrl_audio_selection = mapper_supports_scc_audio(mapper) ? AUDIO_PROFILE_SCC : AUDIO_PROFILE_NONE;
         ctrl_psg_emulation = 1;
     }
-    ctrl_wifi_support = 0;
+    // Quick run never enables WiFi, but keeps a DSK entry's saved memory choice.
+    if (!is_dsk_record(rec)) {
+        ctrl_wifi_support = 0;
+    }
     ctrl_ack_value = 1;
 }
 
@@ -3626,7 +3644,9 @@ static void core1_bg_work(void) {
     }
 }
 
-static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
+// dest_offset leaves room at the start of the PSRAM region (the .DSK path puts
+// its generated disk-emulation header sectors there).
+static bool load_rom_from_sd(uint16_t record_index, uint32_t size, uint32_t dest_offset) {
     if (!sd_mount_card()) {
         printf("SDLOAD: mount failed\n");
         return false;
@@ -3646,8 +3666,9 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
         printf("SDLOAD: psram bring-up failed\n");
         return false;
     }
-    if (size > sd_rom_region.size) {
-        printf("SDLOAD: too large size=%lu region=%lu\n", (unsigned long)size, (unsigned long)sd_rom_region.size);
+    if (dest_offset > sd_rom_region.size || size > sd_rom_region.size - dest_offset) {
+        printf("SDLOAD: too large size=%lu offset=%lu region=%lu\n", (unsigned long)size,
+               (unsigned long)dest_offset, (unsigned long)sd_rom_region.size);
         return false;
     }
 
@@ -3665,7 +3686,7 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
     gpio_set_dir(PIN_WAIT, GPIO_OUT);
     gpio_put(PIN_WAIT, 0);
 
-    uint8_t *dst = sd_rom_region.ptr;
+    uint8_t *dst = sd_rom_region.ptr + dest_offset;
     memset(dst, 0, size);
 
     UINT total = 0;
@@ -5255,6 +5276,8 @@ static inline bool __not_in_flash_func(system_audio_handle_io_write)(uint8_t por
         return main_psg_handle_io_write(port, data);
     case SYSTEM_AUDIO_PROFILE_YM2151_SFG05:
     case SYSTEM_AUDIO_PROFILE_YM2151_SFG01:
+    case SYSTEM_AUDIO_PROFILE_SCC_EXTERNAL:
+    case SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL:
         return main_psg_handle_io_write(port, data);
     default:
         return false;
@@ -6199,6 +6222,38 @@ static inline uint8_t __not_in_flash_func(megaram_read_byte)(uint16_t addr, cons
     return megaram_region.ptr[offset];
 }
 
+// MegaRAM slot access with the optional MegaRAM SCC. In write mode (after an
+// IN from 8Eh) the slot is plain RAM: no bank switching and no SCC overlay.
+static inline void __not_in_flash_func(megaram_handle_write)(uint16_t addr, uint8_t data, uint8_t bank_reg[4],
+                                                            bool write_enabled, bool scc_audio)
+{
+    if (write_enabled)
+        megaram_write_byte(addr, data, bank_reg);
+    else if (!scc_audio || !megaram_scc_write(addr, data))
+        megaram_bank_switch_write(addr, data, bank_reg);
+}
+
+static inline uint8_t __not_in_flash_func(megaram_handle_read)(uint16_t addr, const uint8_t bank_reg[4],
+                                                              bool write_enabled, bool scc_audio)
+{
+    uint8_t data;
+    if (scc_audio && !write_enabled && megaram_scc_read(addr, &data))
+        return data;
+    return megaram_read_byte(addr, bank_reg);
+}
+
+// Standalone MegaRAM: every captured write targets the MegaRAM slot.
+static void __no_inline_not_in_flash_func(megaram_drain_writes)(uint8_t bank_reg[4], bool write_enabled, bool scc_audio)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        if (addr >= 0x4000u && addr <= 0xBFFFu)
+            megaram_handle_write(addr, data, bank_reg, write_enabled, scc_audio);
+    }
+}
+
 typedef struct {
     sunrise_ide_t *ide;
 } sunrise_ctx_t;
@@ -6433,6 +6488,7 @@ typedef struct {
 static void fh_copy_query_from_buffer(char *out, size_t out_size);
 static bool fh_fetch_catalog(const char *query);
 static void fh_set_catalog_message(const char *message);
+static void fh_set_empty_catalog_message(void);
 static void fh_build_page_buffer(void);
 static bool fh_download_selected(void);
 static void fh_update_wifi_status_text(void);
@@ -6466,7 +6522,7 @@ static void __not_in_flash_func(handle_menu_fh_command)(uint8_t data, explorer_m
                 printf("[nexus] menu File Hunter catalog fetched, count=0\n");
                 fflush(stdout);
                 nexus_tracker_checkin_once();
-                fh_set_catalog_message("No File Hunter ROMs found");
+                fh_set_empty_catalog_message();
             }
             else
             {
@@ -6862,6 +6918,11 @@ static void fh_set_catalog_message(const char *message)
     {
         fh_catalog_count = 0;
     }
+}
+
+static void __noinline fh_set_empty_catalog_message(void)
+{
+    fh_set_catalog_message(fh_active_type == FH_TYPE_DSK ? "No File Hunter DSKs found" : "No File Hunter ROMs found");
 }
 
 static bool fh_wifi_wait_response(uint8_t command, uint8_t *response, uint16_t response_cap,
@@ -7551,18 +7612,20 @@ static bool fh_deliver_http_body(const uint8_t *data, uint16_t len, fh_http_deco
 // releases endpoint (newest first, no name filter); any other query goes to the
 // name-filtered catalog endpoint. Both return the same packed listing struct and
 // take the same &download=<index> selector against the listing they produced.
-static void fh_build_http_path(char *out, size_t out_size, const char *query, int download_index)
+// `type` picks the ROM or DSK catalog; the server answers both in one format.
+static void fh_build_http_path(char *out, size_t out_size, const char *query, uint8_t type, int download_index)
 {
     size_t pos = 0;
     const char *suffix = "&download=";
+    const char *type_name = (type == FH_TYPE_DSK) ? "dsk" : "rom";
 
     if (!query || !*query)
     {
-        pos += snprintf(out + pos, out_size - pos, "%s", FH_LATEST_ENDPOINT "?base=1BA0&type=rom");
+        pos += snprintf(out + pos, out_size - pos, FH_LATEST_ENDPOINT "?base=1BA0&type=%s", type_name);
     }
     else
     {
-        pos += snprintf(out + pos, out_size - pos, "%s", FH_ENDPOINT "?base=1BA0&type=rom&msx=&char=");
+        pos += snprintf(out + pos, out_size - pos, FH_ENDPOINT "?base=1BA0&type=%s&msx=&char=", type_name);
         for (; *query && pos + 4u < out_size; ++query)
         {
             unsigned char ch = (unsigned char)*query;
@@ -7907,14 +7970,18 @@ static bool fh_parse_catalog(const uint8_t *data, uint32_t len)
     return true;
 }
 
-// Copies the MSX-supplied query out of the shared buffer. An empty buffer is a
-// meaningful value here: it selects the latest-releases endpoint, so it must not
-// be replaced with a name filter.
-static void fh_copy_query_from_buffer(char *out, size_t out_size)
+// Copies the MSX-supplied query and catalog type out of the shared buffer. An
+// empty query is a meaningful value here: it selects the latest-releases
+// endpoint, so it must not be replaced with a name filter. The type byte sits
+// after the query text and is captured with it, so a later download always uses
+// the catalog its index came from. Kept out of line so it stays in flash rather
+// than growing the RAM-resident command handlers that call it.
+static void __noinline fh_copy_query_from_buffer(char *out, size_t out_size)
 {
     size_t i;
+    fh_active_type = (fh_query[FH_QUERY_TYPE_OFFSET] == FH_TYPE_DSK) ? FH_TYPE_DSK : FH_TYPE_ROM;
     if (out_size == 0) return;
-    for (i = 0; i + 1u < out_size && i < FH_QUERY_SIZE; ++i)
+    for (i = 0; i + 1u < out_size && i < FH_QUERY_TYPE_OFFSET; ++i)
     {
         char ch = (char)fh_query[i];
         if (ch == '\0') break;
@@ -7931,7 +7998,7 @@ static bool fh_fetch_catalog(const char *query)
 
     fh_list_download_t download = { fh_list_region.ptr, 0, fh_list_region.size, false };
 
-    fh_build_http_path(path, sizeof(path), query, -1);
+    fh_build_http_path(path, sizeof(path), query, fh_active_type, -1);
     if (!fh_http_get(path, fh_list_body_callback, &download, 3000000u))
     {
         if (download.overflowed)
@@ -8053,22 +8120,25 @@ static bool fh_psram_download_body_callback(const uint8_t *data, uint16_t len, v
     return true;
 }
 
-static bool fh_filename_has_rom_extension(const char *filename)
+static bool fh_filename_has_extension(const char *filename, const char *ext3)
 {
     size_t len = strlen(filename);
     const char *ext;
     if (len < 4u) return false;
     ext = filename + len - 4u;
     return ext[0] == '.' &&
-           tolower((unsigned char)ext[1]) == 'r' &&
-           tolower((unsigned char)ext[2]) == 'o' &&
-           tolower((unsigned char)ext[3]) == 'm';
+           tolower((unsigned char)ext[1]) == ext3[0] &&
+           tolower((unsigned char)ext[2]) == ext3[1] &&
+           tolower((unsigned char)ext[3]) == ext3[2];
 }
 
-static bool fh_build_download_path(const char *name, char *path, size_t path_size)
+// Runs once per save, just before FatFS (flash code) opens the file; kept out of
+// line so it is not inlined into the RAM-resident menu loop.
+static bool __noinline fh_build_download_path(const char *name, uint8_t type, char *path, size_t path_size)
 {
     char filename[ROM_NAME_MAX + 5u];
     size_t out = 0;
+    bool dsk = (type == FH_TYPE_DSK);
 
     if (!path || path_size == 0u) return false;
     if (!name || *name == '\0') name = "FILEHUNT";
@@ -8094,9 +8164,9 @@ static bool fh_build_download_path(const char *name, char *path, size_t path_siz
     }
 
     filename[out] = '\0';
-    if (!fh_filename_has_rom_extension(filename) && out + 4u < sizeof(filename))
+    if (!fh_filename_has_extension(filename, dsk ? "dsk" : "rom") && out + 4u < sizeof(filename))
     {
-        memcpy(filename + out, ".ROM", 5u);
+        memcpy(filename + out, dsk ? ".DSK" : ".ROM", 5u);
     }
 
     return snprintf(path, path_size, "%s", filename) < (int)path_size;
@@ -8137,7 +8207,7 @@ static void fh_save_background_work(void)
             fh_save_fail("Use F2 microSD first");
             return;
         }
-        if (!fh_build_download_path(fh_download_name, path, sizeof(path)))
+        if (!fh_build_download_path(fh_download_name, fh_download_type, path, sizeof(path)))
         {
             fh_save_fail("Save failed: path");
             return;
@@ -8241,7 +8311,7 @@ static bool fh_download_selected(void)
         return false;
     }
 
-    fh_build_http_path(path, sizeof(path), fh_active_query, (int)fh_selected_index);
+    fh_build_http_path(path, sizeof(path), fh_active_query, fh_active_type, (int)fh_selected_index);
 
     memset(&download, 0, sizeof(download));
     memset(&fh_download_timestamp, 0, sizeof(fh_download_timestamp));
@@ -8253,10 +8323,19 @@ static bool fh_download_selected(void)
          download.metadata_done && !download.failed &&
             download.written != 0u &&
             (download.expected_size == 0u || download.written >= download.expected_size);
+    // Explorer lists a .DSK only when it can boot it, so do not save an image
+    // that would never show up in the microSD list.
+    if (ok && fh_active_type == FH_TYPE_DSK && !dsk_size_supported(download.written))
+    {
+        snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "Unsupported DSK size: %luKB",
+                 (unsigned long)(download.written / 1024u));
+        return false;
+    }
     if (ok)
     {
         fh_progress_percent = 100u;
         fh_download_size = download.written;
+        fh_download_type = fh_active_type;
         strncpy(fh_download_name, fh_catalog[fh_selected_index].name, sizeof(fh_download_name) - 1u);
         fh_download_name[sizeof(fh_download_name) - 1u] = '\0';
         fh_result = FH_RESULT_SAVING;
@@ -8591,7 +8670,7 @@ static inline void __not_in_flash_func(handle_fh_write)(uint16_t addr, uint8_t d
                     printf("[nexus] tracker call returned\n");
                     fflush(stdout);
                     if (fh_catalog_count == 0u)
-                        fh_set_catalog_message("No File Hunter ROMs found");
+                        fh_set_empty_catalog_message();
                 }
             }
             fh_build_page_buffer();
@@ -8629,6 +8708,7 @@ static int __no_inline_not_in_flash_func(loadrom_filehunter)(void)
     fh_status = FH_STATUS_READY;
     memset(fh_query, 0, sizeof(fh_query));
     memset(fh_active_query, 0, sizeof(fh_active_query));
+    fh_active_type = FH_TYPE_ROM;
     fh_catalog_count = 0;
     fh_catalog_loaded = false;
     fh_set_catalog_message("Retrieving File Hunter ROMs...");
@@ -9971,7 +10051,11 @@ void loadrom_sunrise_dsk(uint32_t offset, bool cache_enable)
     loadrom_sunrise_storage(offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx);
 }
 
-void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, bool cache_enable)
+// Nextor Sunrise + 1MB PSRAM mapper loader shared by the microSD partition and
+// .DSK image backends; only the Core 1 storage task differs.
+static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32_t offset, bool cache_enable,
+                                                                         void (*core1_task)(void),
+                                                                         void (*attach_ctx)(sunrise_ide_t *ide))
 {
     static const uint8_t bootstrap_rom[] = {
         0x41, 0x42, 0x0A, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -10044,8 +10128,8 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, b
     static sunrise_ide_t ide;
     sunrise_ide_init(&ide);
 
-    sunrise_sd_set_ide_ctx(&ide);
-    multicore_launch_core1(sunrise_sd_task);
+    attach_ctx(&ide);
+    multicore_launch_core1(core1_task);
 
     uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
     uint8_t subslot_reg = 0x10;
@@ -10154,6 +10238,18 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, b
     }
 }
 
+void loadrom_sunrise_mapper_sd(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_mapper_storage(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx);
+}
+
+// Boots a .DSK image with Nextor plus the 1MB PSRAM mapper, for machines
+// (such as 64KB MSX2+) where plain Nextor leaves the game too little RAM.
+void loadrom_sunrise_mapper_dsk(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_mapper_storage(offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx);
+}
+
 typedef void (*sunrise_backend_task_fn_t)(void);
 typedef void (*sunrise_backend_attach_fn_t)(sunrise_ide_t *ide);
 
@@ -10162,7 +10258,6 @@ static inline void __not_in_flash_func(c2_handle_memory_write)(
     sunrise_ide_t *ide,
     uint8_t mapper_reg[4],
     uint8_t *subslot_reg,
-    bool c2_scc_enabled,
     bool external_scc_audio,
     bool sfg_audio,
     uint16_t waddr,
@@ -10190,9 +10285,8 @@ static inline void __not_in_flash_func(c2_handle_memory_write)(
         }
         else
         {
-            if (c2_scc_enabled)
-                SCC_write(&scc_instance, waddr, wdata);
-
+            // The external SCC/SCC+ lives only in subslot 3; C2 RAM/flash must
+            // never alias it, or C2 RAM would look (and read back) like an SCC.
             c2_bank_switch_write(c2, waddr, wdata);
 
             uint8_t bank_idx;
@@ -10324,7 +10418,6 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
                               system_audio_profile == SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL;
     bool sfg_audio = system_audio_profile == SYSTEM_AUDIO_PROFILE_YM2151_SFG05 ||
                      system_audio_profile == SYSTEM_AUDIO_PROFILE_YM2151_SFG01;
-    bool c2_scc_enabled = external_scc_audio;
     ym2151_sfg_variant_t sfg_variant = system_audio_profile == SYSTEM_AUDIO_PROFILE_YM2151_SFG01 ? YM2151_SFG01 : YM2151_SFG05;
     const uint32_t sfg_variant_offset = (sfg_variant == YM2151_SFG01) ? SFG_BIOS_VARIANT_SIZE : 0u;
     const uint8_t *sfg_bios_base = flash_rom + SFG_BIOS_FLASH_OFFSET + sfg_variant_offset;
@@ -10336,7 +10429,7 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
         uint16_t waddr;
         uint8_t wdata;
         while (pio_try_get_write(&waddr, &wdata))
-            c2_handle_memory_write(&c2, &ide, mapper_reg, &subslot_reg, c2_scc_enabled, external_scc_audio, sfg_audio, waddr, wdata);
+            c2_handle_memory_write(&c2, &ide, mapper_reg, &subslot_reg, external_scc_audio, sfg_audio, waddr, wdata);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -10387,7 +10480,7 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
 
             while (pio_try_get_write(&waddr, &wdata))
-                c2_handle_memory_write(&c2, &ide, mapper_reg, &subslot_reg, c2_scc_enabled, external_scc_audio, sfg_audio, waddr, wdata);
+                c2_handle_memory_write(&c2, &ide, mapper_reg, &subslot_reg, external_scc_audio, sfg_audio, waddr, wdata);
 
             uint8_t data = 0xFFu;
             bool in_window = false;
@@ -10453,36 +10546,15 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
                     }
                     else
                     {
-                        bool is_scc_read = false;
-                        if (c2_scc_enabled)
-                        {
-                            if (scc_instance.active)
-                            {
-                                uint32_t scc_reg_start = scc_instance.base_adr + 0x800u;
-                                if (addr >= scc_reg_start && addr <= (scc_reg_start + 0xFFu))
-                                    is_scc_read = true;
-                            }
-                            if (system_audio_profile == SYSTEM_AUDIO_PROFILE_SCC_PLUS_EXTERNAL && (addr & 0xFFFEu) == 0xBFFEu)
-                                is_scc_read = true;
-                        }
-
-                        if (is_scc_read)
+                        uint8_t bank_idx;
+                        uint32_t linear;
+                        if (c2_decode_addr(&c2, addr, &bank_idx, &linear))
                         {
                             in_window = true;
-                            data = (uint8_t)SCC_read(&scc_instance, addr);
-                        }
-                        else
-                        {
-                            uint8_t bank_idx;
-                            uint32_t linear;
-                            if (c2_decode_addr(&c2, addr, &bank_idx, &linear))
-                            {
-                                in_window = true;
-                                if (!c2_bank_is_ram(&c2, bank_idx))
-                                    data = c2_flash_read(&c2, addr, linear);
-                                else
-                                    data = (linear < c2.ram_size) ? c2.ram_ptr[linear] : 0xFFu;
-                            }
+                            if (!c2_bank_is_ram(&c2, bank_idx))
+                                data = c2_flash_read(&c2, addr, linear);
+                            else
+                                data = (linear < c2.ram_size) ? c2.ram_ptr[linear] : 0xFFu;
                         }
                     }
                 }
@@ -10521,6 +10593,48 @@ void __no_inline_not_in_flash_func(loadrom_c2_sd)(uint32_t offset, bool cache_en
 void __no_inline_not_in_flash_func(loadrom_c2_usb)(uint32_t offset, bool cache_enable)
 {
     loadrom_c2_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx);
+}
+
+typedef struct {
+    sunrise_ide_t *ide;
+    uint8_t mapper_reg[4];
+    uint8_t megaram_bank_reg[4];
+    uint8_t subslot_reg;
+    bool megaram_write_enabled;
+    bool megaram_scc_audio;
+} sunrise_megaram_bus_t;
+
+// Out of line: called twice per loop iteration, and SRAM has little headroom.
+static void __no_inline_not_in_flash_func(sunrise_megaram_drain_writes)(sunrise_megaram_bus_t *bus)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        if (addr == 0xFFFFu)
+        {
+            bus->subslot_reg = data;
+            continue;
+        }
+        uint8_t page = addr >> 14;
+        uint8_t subslot = (bus->subslot_reg >> (page * 2)) & 0x03u;
+        if (subslot == 0u)
+        {
+            if (addr >= 0x4000u && addr <= 0x7FFFu)
+                sunrise_ide_handle_write(bus->ide, addr, data);
+        }
+        else if (subslot == 1u)
+        {
+            uint32_t offset = ((uint32_t)mapper_page_from_reg(bus->mapper_reg[page]) << 14) |
+                              (addr & 0x3FFFu);
+            mapper_write_byte(offset, data);
+        }
+        else if (subslot == 3u && addr >= 0x4000u && addr <= 0xBFFFu)
+        {
+            megaram_handle_write(addr, data, bus->megaram_bank_reg,
+                                 bus->megaram_write_enabled, bus->megaram_scc_audio);
+        }
+    }
 }
 
 static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
@@ -10588,62 +10702,34 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
     sunrise_ide_init(&ide);
 
     attach_ctx(&ide);
-    multicore_launch_core1(core1_task);
 
+    // PSRAM fills and SCC/I2S setup finish before the shared storage/audio
+    // Core 1 task starts, matching the FM-PAC MegaRAM loader.
     if (!psram_prepare_mapper_region() || !psram_prepare_megaram_region())
     {
         while (true) { tight_loop_contents(); }
     }
 
-    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
-    uint8_t megaram_bank_reg[4] = { 0, 1, 2, 3 };
-    bool megaram_write_enabled = false;
-    uint8_t subslot_reg = 0x10u;
-
     mapper_fill_ff();
     megaram_fill_ff();
 
+    sunrise_megaram_bus_t bus = {
+        .ide = &ide,
+        .mapper_reg = { 3, 2, 1, 0 },
+        .megaram_bank_reg = { 0, 1, 2, 3 },
+        .subslot_reg = 0x10u,
+        .megaram_write_enabled = false,
+        .megaram_scc_audio = megaram_scc_audio_selected(),
+    };
+
     msx_pio_io_bus_init();
     system_audio_init_for_sunrise(false);
-    bool megaram_scc_audio = megaram_scc_audio_selected();
+    multicore_launch_core1(core1_task);
     msx_pio_bus_init();
 
     while (true)
     {
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr == 0xFFFFu)
-            {
-                subslot_reg = wdata;
-                continue;
-            }
-
-            uint8_t page = (waddr >> 14) & 0x03u;
-            uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-
-            if (active_subslot == 0)
-            {
-                if (waddr >= 0x4000u && waddr <= 0x7FFFu)
-                    sunrise_ide_handle_write(&ide, waddr, wdata);
-            }
-            else if (active_subslot == 1)
-            {
-                uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
-                mapper_write_byte(mapper_offset, wdata);
-            }
-            else if (active_subslot == 3 && waddr >= 0x4000u && waddr <= 0xBFFFu)
-            {
-                if (megaram_scc_audio && !megaram_write_enabled && megaram_scc_write(waddr, wdata))
-                    continue;
-                if (megaram_write_enabled)
-                    megaram_write_byte(waddr, wdata, megaram_bank_reg);
-                else
-                    megaram_bank_switch_write(waddr, wdata, megaram_bank_reg);
-            }
-        }
+        sunrise_megaram_drain_writes(&bus);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -10653,9 +10739,9 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
             if (system_audio_handle_io_write(port, io_data))
                 continue;
             if (port >= 0xFCu && port <= 0xFFu)
-                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+                bus.mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
             else if (port == 0x8Eu || port == 0x8Fu)
-                megaram_write_enabled = false;
+                bus.megaram_write_enabled = false;
         }
 
         while (pio_try_get_io_read(&io_addr))
@@ -10670,11 +10756,11 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
             else if (port >= 0xFCu && port <= 0xFFu)
             {
                 in_window = true;
-                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
+                data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
             }
             else if (port == 0x8Eu || port == 0x8Fu)
             {
-                megaram_write_enabled = true;
+                bus.megaram_write_enabled = true;
             }
             pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
         }
@@ -10682,18 +10768,20 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
         {
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            // /WAIT holds this read; commit late subslot/bank/SCC writes first.
+            sunrise_megaram_drain_writes(&bus);
             uint8_t data = 0xFFu;
             bool in_window = false;
 
             if (addr == 0xFFFFu)
             {
                 in_window = true;
-                data = (uint8_t)~subslot_reg;
+                data = (uint8_t)~bus.subslot_reg;
             }
             else
             {
                 uint8_t page = (addr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+                uint8_t active_subslot = (bus.subslot_reg >> (page * 2)) & 0x03u;
 
                 if (active_subslot == 0)
                 {
@@ -10715,15 +10803,15 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
                 else if (active_subslot == 1)
                 {
                     in_window = true;
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint8_t mapper_page = mapper_page_from_reg(bus.mapper_reg[page]);
                     uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
                     data = mapper_read_byte(mapper_offset);
                 }
                 else if (active_subslot == 3 && addr >= 0x4000u && addr <= 0xBFFFu)
                 {
                     in_window = true;
-                    if (!megaram_scc_audio || !megaram_scc_read(addr, &data))
-                        data = megaram_read_byte(addr, megaram_bank_reg);
+                    data = megaram_handle_read(addr, bus.megaram_bank_reg,
+                                               bus.megaram_write_enabled, bus.megaram_scc_audio);
                 }
             }
 
@@ -10769,20 +10857,7 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
 
     while (true)
     {
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr >= 0x4000u && waddr <= 0xBFFFu)
-            {
-                if (megaram_scc_audio && !megaram_write_enabled && megaram_scc_write(waddr, wdata))
-                    continue;
-                if (megaram_write_enabled)
-                    megaram_write_byte(waddr, wdata, megaram_bank_reg);
-                else
-                    megaram_bank_switch_write(waddr, wdata, megaram_bank_reg);
-            }
-        }
+        megaram_drain_writes(megaram_bank_reg, megaram_write_enabled, megaram_scc_audio);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -10804,10 +10879,12 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
         {
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            // /WAIT holds this read; commit late bank/SCC writes first.
+            megaram_drain_writes(megaram_bank_reg, megaram_write_enabled, megaram_scc_audio);
             bool in_window = addr >= 0x4000u && addr <= 0xBFFFu;
             uint8_t data = 0xFFu;
-            if (in_window && (!megaram_scc_audio || !megaram_scc_read(addr, &data)))
-                data = megaram_read_byte(addr, megaram_bank_reg);
+            if (in_window)
+                data = megaram_handle_read(addr, megaram_bank_reg, megaram_write_enabled, megaram_scc_audio);
             pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
         }
     }
@@ -12820,16 +12897,27 @@ static inline uint32_t __not_in_flash_func(megaram_scc_type_selected)(void)
     return ctrl_audio_selection == AUDIO_PROFILE_MEGARAM_SCC_PLUS ? SCC_ENHANCED : SCC_STANDARD;
 }
 
+// MegaRAM SCC lives in the MegaRAM slot, as on a Konami SCC cartridge: it
+// overlays base+800h..base+8FFh only while the page holding `base` has the SCC
+// bank selected. MegaRAM decodes a bank write anywhere in its 8KB page, so
+// every bank write to that page re-evaluates the enable; otherwise switching
+// page 2 away through 8000h (not 9000h) left RAM hidden behind the SCC.
 static inline bool __not_in_flash_func(megaram_scc_write)(uint16_t addr, uint8_t data)
 {
-    uint32_t base = scc_instance.base_adr;
-    bool consume = scc_instance.active && addr >= base + 0x800u && addr <= base + 0x8FFu;
-    if (!consume && addr >= base && addr <= base + 0x7FFu)
-        SCC_write(&scc_instance, base, data);
-    else
+    if (scc_instance.type == SCC_ENHANCED && (addr & 0xFFFEu) == 0xBFFEu)
+    {
         SCC_write(&scc_instance, addr, data);
-    if (consume)
+        return false;
+    }
+
+    uint32_t base = scc_instance.base_adr;
+    if (scc_instance.active && addr >= base + 0x800u && addr <= base + 0x8FFu)
+    {
+        SCC_write(&scc_instance, addr, data);
         return true;
+    }
+    if ((addr & 0xE000u) == (base & 0xE000u))
+        SCC_write(&scc_instance, base, data);
     return false;
 }
 
@@ -13652,6 +13740,48 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_wifi_sd)(uint32_
     loadrom_sunrise_fmpac_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, true, mapper_enable, false);
 }
 
+typedef struct {
+    sunrise_ide_t *ide;
+    uint8_t mapper_reg[4];
+    uint8_t subslot_reg;
+    uint8_t nextor_subslot;
+    uint8_t mapper_subslot;
+    uint8_t scc_subslot;
+    bool wifi_enable;
+    bool mapper_enable;
+} sunrise_scc_bus_t;
+
+static inline void __not_in_flash_func(sunrise_scc_drain_writes)(sunrise_scc_bus_t *bus)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        if (addr == 0xFFFFu)
+        {
+            bus->subslot_reg = data;
+            continue;
+        }
+        uint8_t page = addr >> 14;
+        uint8_t subslot = (bus->subslot_reg >> (page * 2)) & 0x03u;
+        if (bus->wifi_enable && subslot == 0u)
+            (void)wifi_handle_mem_write(addr, data);
+        else if (subslot == bus->nextor_subslot)
+        {
+            if (addr >= 0x4000u && addr <= 0x7FFFu)
+                sunrise_ide_handle_write(bus->ide, addr, data);
+        }
+        else if (bus->mapper_enable && subslot == bus->mapper_subslot)
+        {
+            uint32_t offset = ((uint32_t)mapper_page_from_reg(bus->mapper_reg[page]) << 14) |
+                              (addr & 0x3FFFu);
+            mapper_write_byte(offset, data);
+        }
+        else if (subslot == bus->scc_subslot)
+            SCC_write(&scc_instance, addr, data);
+    }
+}
+
 static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
     uint32_t offset,
     bool cache_enable,
@@ -13680,18 +13810,28 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
     sunrise_ide_init(&ide);
 
     attach_ctx(&ide);
-    multicore_launch_core1(core1_task);
     if (wifi_enable)
         wifi_uart_init_once();
 
-    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
-    uint8_t subslot_reg = wifi_enable ? 0x20u : 0x10u;
-    const uint8_t nextor_subslot = wifi_enable ? 1u : 0u;
-    const uint8_t mapper_subslot = wifi_enable ? 2u : 1u;
-    const uint8_t scc_subslot = wifi_enable ? 3u : 2u;
+    sunrise_scc_bus_t bus = {
+        .ide = &ide,
+        .mapper_reg = { 3, 2, 1, 0 },
+        .subslot_reg = wifi_enable ? 0x20u : 0x10u,
+        .nextor_subslot = wifi_enable ? 1u : 0u,
+        .mapper_subslot = wifi_enable ? 2u : 1u,
+        .scc_subslot = wifi_enable ? 3u : 2u,
+        .wifi_enable = wifi_enable,
+        .mapper_enable = mapper_enable,
+    };
+    const uint8_t nextor_subslot = bus.nextor_subslot;
+    const uint8_t mapper_subslot = bus.mapper_subslot;
+    const uint8_t scc_subslot = bus.scc_subslot;
 
+    // SCC state and the I2S DMA channel must be set up before the shared
+    // storage/audio Core 1 task starts, as in the FM-PAC loader.
     msx_pio_io_bus_init();
     system_audio_init_for_sunrise(false);
+    multicore_launch_core1(core1_task);
     msx_pio_bus_init();
 
     while (true)
@@ -13699,39 +13839,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
         if (wifi_enable)
             wifi_service();
 
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr == 0xFFFFu)
-            {
-                subslot_reg = wdata;
-                continue;
-            }
-
-            uint8_t page = (waddr >> 14) & 0x03u;
-            uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-
-            if (wifi_enable && active_subslot == 0u)
-            {
-                (void)wifi_handle_mem_write(waddr, wdata);
-            }
-            else if (active_subslot == nextor_subslot)
-            {
-                if (waddr >= 0x4000u && waddr <= 0x7FFFu)
-                    sunrise_ide_handle_write(&ide, waddr, wdata);
-            }
-            else if (mapper_enable && active_subslot == mapper_subslot)
-            {
-                uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
-                mapper_write_byte(mapper_offset, wdata);
-            }
-            else if (active_subslot == scc_subslot)
-            {
-                SCC_write(&scc_instance, waddr, wdata);
-            }
-        }
+        sunrise_scc_drain_writes(&bus);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -13741,7 +13849,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
             if (system_audio_handle_io_write(port, io_data))
                 continue;
             if (mapper_enable && port >= 0xFCu && port <= 0xFFu)
-                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+                bus.mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
         }
 
         while (pio_try_get_io_read(&io_addr))
@@ -13756,7 +13864,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
             else if (mapper_enable && port >= 0xFCu && port <= 0xFFu)
             {
                 in_window = true;
-                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
+                data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
             }
             pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
         }
@@ -13764,18 +13872,21 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
         {
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            // /WAIT holds this read; commit writes captured since the top-of-loop
+            // drain (ENASLT, RAM, SCC) so it is not decoded with stale state.
+            sunrise_scc_drain_writes(&bus);
             uint8_t data = 0xFFu;
             bool in_window = false;
 
             if (addr == 0xFFFFu)
             {
                 in_window = true;
-                data = (uint8_t)~subslot_reg;
+                data = (uint8_t)~bus.subslot_reg;
             }
             else
             {
                 uint8_t page = (addr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+                uint8_t active_subslot = (bus.subslot_reg >> (page * 2)) & 0x03u;
 
                 if (wifi_enable && active_subslot == 0u)
                 {
@@ -13807,7 +13918,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
                 else if (mapper_enable && active_subslot == mapper_subslot)
                 {
                     in_window = true;
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint8_t mapper_page = mapper_page_from_reg(bus.mapper_reg[page]);
                     uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
                     data = mapper_read_byte(mapper_offset);
                 }
@@ -14149,11 +14260,10 @@ int __no_inline_not_in_flash_func(main)()
 
     uint8_t mapper = mapper_code_from_record_byte(selected->Mapper);
     audio_mode_t audio_mode = resolve_audio_mode(mapper, ctrl_audio_selection);
-    // PSG Mirror is unstable on Sunrise Nextor + 1MB mapper: heavy disk I/O can
-    // drop mapper segment-register writes, so force it off for those variants.
-    if (mapper == MAPPER_SUNRISE_MAPPER_USB || mapper == MAPPER_SUNRISE_MAPPER_SD ||
-        mapper == MAPPER_C2_SD || mapper == MAPPER_C2_USB ||
-        mapper == MAPPER_MEGARAM_SD || mapper == MAPPER_MEGARAM_USB || mapper == MAPPER_MEGARAM) {
+    // Standalone MegaRAM (no Nextor) has no PSG Mirror path. Every Nextor
+    // variant, mapper ones included, forwards mirrored PSG writes to Core 1
+    // through the lock-free ring, so mapper writes are never stalled.
+    if (mapper == MAPPER_MEGARAM) {
         ctrl_psg_emulation = 0;
     }
     // Audio emulation and WiFi cannot share this cartridge reliably, so WiFi
@@ -14181,9 +14291,11 @@ int __no_inline_not_in_flash_func(main)()
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
         ctrl_psg_emulation = 0;
     }
-    // A .DSK boots through the plain Nextor Sunrise loader, whose storage core
-    // services only the PSG Mirror; no cartridge audio profile or WiFi BIOS.
+    // A .DSK boots through a Nextor Sunrise loader whose storage core services
+    // only the PSG Mirror; no cartridge audio profile or WiFi BIOS. For DSK
+    // entries CTRL_WIFI_SUPPORT carries the "1MB Mapper" memory choice instead.
     bool is_dsk = is_dsk_record(selected);
+    bool dsk_mapper = is_dsk && ctrl_wifi_support != 0u;
     if (is_dsk) {
         audio_mode = AUDIO_MODE_NONE;
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
@@ -14205,7 +14317,7 @@ int __no_inline_not_in_flash_func(main)()
     bool is_sd_rom = (selected->Mapper & SOURCE_SD_FLAG) != 0;
     if (is_sd_rom) {
         debug_trace("DBG launch load sd");
-        if (!load_rom_from_sd((uint16_t)rom_index, (uint32_t)selected->Size)) {
+        if (!load_rom_from_sd((uint16_t)rom_index, (uint32_t)selected->Size, is_dsk ? DSK_HEADER_BYTES : 0u)) {
             printf("Debug: Failed to load ROM from SD card\n");
             while (true) { tight_loop_contents(); }
         }
@@ -14218,13 +14330,25 @@ int __no_inline_not_in_flash_func(main)()
 
     if (is_dsk) {
         // The image stays staged in PSRAM as the IDE disk; the ROM actually
-        // served to the MSX is the hidden Nextor kernel in flash.
+        // served to the MSX is the hidden Nextor kernel in flash. A file made
+        // of several joined disks gets the generated emulation header in the
+        // two sectors reserved in front of it, so the PSRAM region is laid out
+        // exactly as the device Nextor sees.
         static sunrise_dsk_extent_t dsk_extents[SUNRISE_DSK_MAX_EXTENTS];
+        uint16_t disk_sectors[SUNRISE_DSK_MAX_DISKS];
+        uint32_t file_sectors = (uint32_t)selected->Size / SUNRISE_DSK_SECTOR_SIZE;
+        uint8_t *file = sd_rom_region.ptr + DSK_HEADER_BYTES;
+        uint8_t disk_count = sunrise_dsk_split_disks(file, file_sectors, disk_sectors, SUNRISE_DSK_MAX_DISKS);
         uint8_t extent_count = dsk_build_write_map((uint16_t)rom_index, (uint32_t)selected->Size, dsk_extents);
-        sunrise_dsk_attach_image(sd_rom_region.ptr, (uint32_t)selected->Size / SUNRISE_DSK_SECTOR_SIZE,
-                                 dsk_extents, extent_count);
-        printf("DSK: %lu sectors, %s (%u extents)\n",
-               (unsigned long)(selected->Size / SUNRISE_DSK_SECTOR_SIZE),
+        if (disk_count >= 2u) {
+            sunrise_dsk_build_emulation_header(sd_rom_region.ptr, disk_sectors, disk_count);
+            sunrise_dsk_attach_image(sd_rom_region.ptr, SUNRISE_DSK_HEADER_SECTORS + file_sectors,
+                                     SUNRISE_DSK_HEADER_SECTORS, dsk_extents, extent_count);
+        } else {
+            sunrise_dsk_attach_image(file, file_sectors, 0u, dsk_extents, extent_count);
+        }
+        printf("DSK: %lu sectors, %u disk(s), %s (%u extents)\n",
+               (unsigned long)file_sectors, (unsigned)disk_count,
                extent_count ? "write-through" : "read-only", (unsigned)extent_count);
         rom_data = flash_rom;
         rom_data_in_ram = false;
@@ -14461,7 +14585,10 @@ int __no_inline_not_in_flash_func(main)()
             loadrom_megaram(rom_offset, cache_enable);
             break;
         case MAPPER_DSK:
-            loadrom_sunrise_dsk(rom_offset, cache_enable);
+            if (dsk_mapper)
+                loadrom_sunrise_mapper_dsk(rom_offset, cache_enable);
+            else
+                loadrom_sunrise_dsk(rom_offset, cache_enable);
             break;
         case 12:
             loadrom_ascii16x(rom_offset, cache_enable);

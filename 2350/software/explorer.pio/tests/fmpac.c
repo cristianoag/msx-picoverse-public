@@ -309,27 +309,71 @@ static void test_c2_bus(void) {
     c2_state_t c2 = {0};
     sunrise_ide_t ide = {0};
     uint8_t mapper[4] = {3, 2, 1, 0}, subslot = 0;
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x4F80, 1);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x4F80, 1);
     assert(c2_count == 1);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0xFFFF, 1 << 2);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x7FFF, 5);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0xFFFF, 1 << 2);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x7FFF, 5);
     assert(ide.segment == 5);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0xFFFF, 2 << 2);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x4567, 0x42);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0xFFFF, 2 << 2);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x4567, 0x42);
     assert(mapper_offset == 2 * 16384 + 0x567 && mapper_data == 0x42);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0xFFFF, 3 << 2);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x7FF7, 1);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0xFFFF, 3 << 2);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x7FF7, 1);
     assert(system_fmpac.page == 1);
     unsigned before = fm_count;
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x7FF4, 0x30);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x7FF5, 0x25);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x7FF4, 0x30);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x7FF5, 0x25);
     assert(fm_count == before + 2 && fm_writes[before] == 0x7C30 && fm_writes[before + 1] == 0x7D25);
     system_audio_profile = 0;
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, false, 0x7FF5, 0x26);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, 0x7FF5, 0x26);
     assert(fm_count == before + 2);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, true, false, 0x7FF5, 0x26);
-    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, false, true, 0x7FF5, 0x26);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, true, false, 0x7FF5, 0x26);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, false, true, 0x7FF5, 0x26);
     assert(scc_count == 1 && sfg_count == 1 && fm_count == before + 2);
+    // External SCC lives only in subslot 3: C2 RAM/flash (subslot 0) must not alias it.
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, true, false, 0xFFFF, 0);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, true, false, 0x9000, 0x3F);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, true, false, 0x9800, 0x11);
+    c2_handle_memory_write(&c2, &ide, mapper, &subslot, true, false, 0xBFFE, 0x20);
+    assert(scc_count == 1);
+}
+
+static void test_sunrise_scc_bus(void) {
+    sunrise_ide_t ide = {0};
+    for (int wifi = 0; wifi <= 1; wifi++) {
+        uint8_t base = wifi ? 1u : 0u;
+        sunrise_scc_bus_t bus = {
+            .ide = &ide, .mapper_reg = {3, 2, 1, 0},
+            .subslot_reg = (uint8_t)((base + 1u) << 4),
+            .nextor_subslot = base, .mapper_subslot = (uint8_t)(base + 1u),
+            .scc_subslot = (uint8_t)(base + 2u),
+            .wifi_enable = wifi != 0, .mapper_enable = true,
+        };
+        unsigned scc0 = scc_count, map0 = mapper_count, ide0 = ide_count;
+        write_head = write_tail = 0;
+        // RAM subslot: SCC-looking writes are plain mapper RAM writes.
+        enqueue(0x9000, 0x3F);
+        enqueue(0x9800, 0x12);
+        sunrise_scc_drain_writes(&bus);
+        assert(scc_count == scc0 && mapper_count == map0 + 2);
+        assert(mapper_offset == 1 * 16384 + 0x1800 && mapper_data == 0x12);
+        // ENASLT to the SCC subslot, then SCC writes reach only the SCC.
+        enqueue(0xFFFF, (uint8_t)(bus.scc_subslot << 4));
+        enqueue(0x9000, 0x3F);
+        enqueue(0x9800, 0x34);
+        sunrise_scc_drain_writes(&bus);
+        assert(scc_count == scc0 + 2 && mapper_count == map0 + 2);
+        // Nextor in page 1 still receives its segment writes.
+        enqueue(0xFFFF, (uint8_t)(bus.nextor_subslot << 2));
+        enqueue(0x7FFF, 6);
+        sunrise_scc_drain_writes(&bus);
+        assert(ide_count == ide0 + 1 && ide.segment == 6 && scc_count == scc0 + 2);
+        bus.mapper_enable = false;
+        enqueue(0xFFFF, (uint8_t)(bus.mapper_subslot << 4));
+        enqueue(0x8000, 1);
+        sunrise_scc_drain_writes(&bus);
+        assert(mapper_count == map0 + 2 && scc_count == scc0 + 2);
+    }
 }
 
 static uint32_t read_le32(const uint8_t *bytes) {
@@ -408,6 +452,7 @@ int main(int argc, char **argv) {
     test_fmpac();
     test_bus();
     test_c2_bus();
+    test_sunrise_scc_bus();
     test_game_read_ordering();
     test_game_services_io_bus();
     test_bios_image(argv[1], argv[2], (uint32_t)firmware_size);
