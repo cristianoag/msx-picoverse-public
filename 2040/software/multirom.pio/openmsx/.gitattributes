@@ -1,0 +1,3 @@
+*.sh  text eol=lf
+*.tcl text eol=lf
+*.rom binary

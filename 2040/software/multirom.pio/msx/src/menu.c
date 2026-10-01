@@ -36,6 +36,24 @@ static int render_menu_row_scrolled(unsigned int recordIndex, unsigned char row,
 static void clear_menu_row(unsigned char row);
 static void render_menu_page(void);
 
+// Physical column where the BIOS places logical column 0. The BIOS centers the
+// text window when LINLEN < 40 (e.g. WIDTH 37 on the Philips VG-8020), so the
+// direct VRAM row writes must apply the same offset to line up with CHPUT text.
+unsigned char menu_col_offset;
+
+static void detect_menu_col_offset(void)
+{
+    unsigned int base = *(unsigned int *)BIOS_TXTNAM;
+
+    menu_col_offset = 0;
+    for (unsigned char i = 0; i < 8; i++) {
+        if (Vpeek(base + i) != ' ') {
+            menu_col_offset = i;
+            break;
+        }
+    }
+}
+
 static void blit_row_vram(unsigned char row, const char *src) __naked
 {
     (void)row;
@@ -65,9 +83,16 @@ blit_addr_loop:
 blit_addr_done:
     ld      de, (#BIOS_TXTNAM)
     add     hl, de
+    ld      a, (_menu_col_offset)
+    ld      e, a
+    ld      d, #0
+    add     hl, de         ; skip the BIOS left margin
     ex      de, hl         ; DE = destination VRAM address
     pop     hl             ; HL = source RAM address
-    ld      bc, #MENU_ROW_WIDTH
+    neg
+    add     a, #MENU_ROW_WIDTH
+    ld      c, a
+    ld      b, #0          ; BC = MENU_ROW_WIDTH - offset (stay on this line)
 
     ld      iy,(#BIOS_EXPTBL-1)
     push    ix
@@ -602,6 +627,7 @@ void displayMenu() {
 
     Locate(0, 0);
     printf("MSX PICOVERSE 2040   [MultiROM %s]", MULTIROM_VERSION);
+    detect_menu_col_offset();
     Locate(0, 1);
     print_separator_line();
     render_menu_page();

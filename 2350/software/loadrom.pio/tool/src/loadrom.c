@@ -455,8 +455,6 @@ static void print_usage(const char *prog_name) {
     printf("  -c1, --carnivore2-sd  Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (microSD card)\n");
     printf("  -c2, --carnivore2-usb Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (USB pendrive)\n");
     printf("  -4, --opl4         Build UF2 with the standalone OPL4 / YMF278B / MoonSound cartridge firmware (2MB YRW801-M ROM + 2MB PCM sample RAM)\n");
-    printf("      --opl4-limit   (with -4) Enable the adaptive PCM voice limiter: sheds PCM voices on extreme-polyphony songs to avoid audio underrun\n");
-    printf("      --lowclock     (with -4) Build an OPL4 image that runs the RP2350 at 282 MHz instead of the default 300 MHz\n");
     printf("      --22khz        (with -4) Build an OPL4 image that renders at 22050 Hz instead of 44100 Hz: halves the CPU cost so\n");
     printf("                     very dense songs play without dropouts, at the cost of a duller high end\n");
     printf("  -a, --msx-audio    Build UF2 with the standalone MSX-AUDIO / Y8950 cartridge firmware (MSX-Audio BIOS + 256KB ADPCM sample RAM)\n");
@@ -650,8 +648,6 @@ int main(int argc, char *argv[])
     bool use_megaram_sd = false;
     bool use_megaram_usb = false;
     bool use_opl4 = false;
-    bool opl4_limit = false;
-    bool opl4_lowclock = false;
     bool opl4_22khz = false;
     bool use_msx_audio = false;
     bool msx_audio_4mhz = false;
@@ -683,10 +679,6 @@ int main(int argc, char *argv[])
             use_c2_usb = true;
         } else if ((strcmp(argv[i], "-4") == 0) || (strcmp(argv[i], "--opl4") == 0)) {
             use_opl4 = true;
-        } else if (strcmp(argv[i], "--opl4-limit") == 0) {
-            opl4_limit = true;
-        } else if (strcmp(argv[i], "--lowclock") == 0) {
-            opl4_lowclock = true;
         } else if (strcmp(argv[i], "--22khz") == 0) {
             opl4_22khz = true;
         } else if ((strcmp(argv[i], "-a") == 0) || (strcmp(argv[i], "--msx-audio") == 0)) {
@@ -734,14 +726,6 @@ int main(int argc, char *argv[])
     bool use_nextor = use_sunrise_sd || use_mapper_sd || use_sunrise_usb || use_mapper_usb
                    || use_c2_sd || use_c2_usb || use_megaram_sd || use_megaram_usb;
 
-    if (opl4_limit && !use_opl4) {
-        printf("Option --opl4-limit requires -4/--opl4.\n");
-        return 1;
-    }
-    if (opl4_lowclock && !use_opl4) {
-        printf("Option --lowclock requires -4/--opl4.\n");
-        return 1;
-    }
     if (opl4_22khz && !use_opl4) {
         printf("Option --22khz requires -4/--opl4.\n");
         return 1;
@@ -876,20 +860,17 @@ int main(int argc, char *argv[])
         const size_t yrw_size = (size_t)___resources_YRW801_M___Yamaha___1993_rom_len;
 
         // 16-byte config header written between the firmware and the ROM. The
-        // firmware reads it at __flash_binary_end: magic "PVO4" + flags byte.
+        // firmware reads it at __flash_binary_end: magic "PVO4" followed by a
+        // reserved flags byte, currently always 0.
         uint8_t cfg_header[16];
         memset(cfg_header, 0, sizeof(cfg_header));
         cfg_header[0] = 'P'; cfg_header[1] = 'V'; cfg_header[2] = 'O'; cfg_header[3] = '4';
-        cfg_header[4] = (uint8_t)((opl4_limit ? 0x01u : 0x00u) |
-                      (opl4_lowclock ? 0x02u : 0x00u));
         const size_t cfg_size = sizeof(cfg_header);
 
         printf("Mode: OPL4 / YMF278B / MoonSound (dedicated cartridge)\n");
         printf("Firmware Size: %zu bytes\n", fw_size);
         printf("YRW801-M ROM Size: %zu bytes\n", yrw_size);
         printf("OPL4 sample rate: %s\n", opl4_22khz ? "22050 Hz" : "44100 Hz");
-        printf("OPL4 RP2350 clock: %s\n", opl4_lowclock ? "282 MHz" : "300 MHz");
-        printf("Adaptive voice limiter: %s\n", opl4_limit ? "ON (reduced peak polyphony)" : "OFF (full fidelity)");
         printf("UF2 Output: %s\n", output_filename);
 
         FILE *uf2_file = fopen(output_filename, "wb");

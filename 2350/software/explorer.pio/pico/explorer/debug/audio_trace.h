@@ -423,7 +423,7 @@ void atrace_init(void);
 void atrace_set_state_cb(void (*cb)(void));
 void atrace_set_opll_state_cb(void (*cb)(void));
 void atrace_fm_buffer_done(void);
-void atrace_check_stalls(PIO mem_pio, uint sm_mem_wr, PIO io_pio, uint sm_io_wr, uint sm_io_rd);
+void atrace_check_stalls(PIO mem_pio, uint sm_mem_wr, PIO io_pio, uint sm_io_wr, PIO io_rd_pio, uint sm_io_rd);
 void atrace_poll(void);
 void atrace_dump(const char *reason);
 
@@ -446,7 +446,7 @@ void atrace_dump(const char *reason);
 #define atrace_init()                      ((void)0)
 #define atrace_set_state_cb(cb)            ((void)0)
 #define atrace_set_opll_state_cb(cb)       ((void)0)
-#define atrace_check_stalls(a, b, c, d, e) ((void)0)
+#define atrace_check_stalls(a, b, c, d, e, f) ((void)0)
 #define atrace_poll()                      ((void)0)
 #define atrace_dump(reason)                ((void)0)
 

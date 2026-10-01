@@ -60,8 +60,7 @@ loadrom.exe [options] [romfile]
 - `-d`, `--dual-psg` : Enable secondary AY-3-8910 (PSG) emulation on I/O ports `0x10` (register select) and `0x11` (data). The Pico captures `OUT (0x10/0x11),A` writes via PIO1 and streams a mixed signal to the I2S DAC alongside the host MSX's PSG. Only valid with external ROM files whose mapper is not Konami SCC or Manbow2 (those mappers carry an on-cartridge SCC chip and reserve the second audio slot for SCC emulation).
 - `-f`, `-fmpac` : Enable MSX-MUSIC / YM2413 emulation on I/O ports `0x7C` (register select) and `0x7D` (data). The Pico captures OPLL writes via PIO1 and streams the generated FM audio to the I2S DAC. The UF2 also embeds the FM-PAC BIOS and exposes it in an expanded FM-PAC subslot so ROMs that use MSX-MUSIC BIOS calls can find it. Only valid with non-SYSTEM external ROM files.
 - `-4`, `--opl4` : Build a dedicated, standalone OPL4 / YMF278B / MoonSound cartridge. This is **not** a ROM loader: the UF2 contains only the OPL4 firmware and the 2 MB YRW801-M wave ROM, turning the cartridge into a MoonSound-compatible sound device (2 MB wave ROM + 2 MB PCM sample RAM) on the standard MoonSound I/O ports. It does not take a ROM file and is mutually exclusive with every other option.
-- `--opl4-limit` : With `-4` / `--opl4`, enable the adaptive PCM voice limiter. Core 1 measures its own per-buffer fill time and temporarily caps how many of the 24 PCM voices are rendered, preventing audio underrun on extreme-polyphony songs. Off by default (full fidelity).
-- `--lowclock` : With `-4` / `--opl4`, build an OPL4 image that runs the RP2350 at 282 MHz instead of the default 300 MHz.
+- `--22khz` : With `-4` / `--opl4`, build an OPL4 image that renders at 22050 Hz instead of 44100 Hz. This roughly halves the synthesis cost so very dense songs play without dropouts, at the cost of a duller high end.
 - `-a`, `--msx-audio` : Build a dedicated, standalone MSX-AUDIO / Yamaha Y8950 cartridge. This is **not** a ROM loader: the UF2 contains only the MSX-AUDIO firmware and the 48 KB MSX-Audio BIOS, turning the cartridge into an MSX-AUDIO card (OPL1 FM + ADPCM, 256 KB ADPCM sample RAM) on ports `0xC0`/`0xC1`. It does not take a ROM file and is mutually exclusive with every other option.
 - `--4mhz` : With `-a` / `--msx-audio`, clock the emulated Y8950 at 4 MHz instead of the standard 3.579545 MHz, raising the output rate from 49716 Hz to 55555 Hz.
 - `-o <filename>`, `--output <filename>` : Override the UF2 output name (default `loadrom.uf2`).
@@ -69,7 +68,7 @@ loadrom.exe [options] [romfile]
 
 `-s1`, `-m1`, `-s2`, `-m2`, `-c1`, `-c2`, `-r1`, and `-r2` are mutually exclusive. `-w` is valid only with `-s1`, `-m1`, `-s2`, or `-m2`. The audio options `-scc`, `-sccplus`, `-d`, and `-f`/`-fmpac` are mutually exclusive — only one on-cartridge audio engine can be active per UF2 image. `-d` is additionally rejected for Konami SCC and Manbow2 ROMs, while `-d` and `-f`/`-fmpac` are rejected for the embedded Sunrise/Carnivore2/MegaRAM system modes. `-f`/`-fmpac` is also rejected for Konami SCC and Manbow2 mapper ROMs. If conflicting options are provided, the tool exits with an error.
 
-`-4`/`--opl4` is fully standalone: it cannot be combined with any other option (no Sunrise/Carnivore2 mode, no audio flag, no `-w`, and no ROM file). If `-4` is mixed with any of those, the tool exits with an error. `--opl4-limit` and `--lowclock` are only accepted together with `-4`.
+`-4`/`--opl4` is fully standalone: it cannot be combined with any other option (no Sunrise/Carnivore2 mode, no audio flag, no `-w`, and no ROM file). If `-4` is mixed with any of those, the tool exits with an error. `--22khz` is only accepted together with `-4`.
 
 `-a`/`--msx-audio` is fully standalone in the same way, and is also mutually exclusive with `-4`/`--opl4`. `--4mhz` is only accepted together with `-a`.
 
@@ -96,19 +95,18 @@ What the cartridge provides:
 Implementation notes:
 
 - Synthesis uses the BSD-3 licensed [`ymfm`](https://github.com/aaronsgiles/ymfm) YMF278B core. Core 1 runs the synthesis loop into the I2S producer pool while Core 0 owns the MSX bus (PIO port decode, `/WAIT`-gated reads, `/BUSDIR` drive, and register write capture).
-- The firmware is linked `copy_to_ram` and the RP2350 is overclocked to **300 MHz**, with the QMI flash/PSRAM dividers raised in step so the memory devices keep their tuned timing. `--lowclock` builds the same firmware at 282 MHz.
+- The firmware is linked `copy_to_ram` and the RP2350 is overclocked to **300 MHz**, with the QMI flash/PSRAM dividers raised in step so the memory devices keep their tuned timing.
 - Sample RAM is written through the wavetable memory-access registers (`0x02`-`0x06`), so sample uploaders such as SETOPL4 work unchanged.
-- `--opl4-limit` enables the adaptive PCM voice limiter for extreme-polyphony homebrew songs; light passages remain bit-identical, and FM channels are never capped because they carry the tempo interrupt.
+- `--22khz` selects a second build of the same firmware that renders at 22050 Hz for extreme-polyphony songs; every FM channel and wave voice is still emulated at full polyphony, with pitch, tempo and envelope timing unchanged.
 
-Because `-4` is standalone, it cannot be combined with any Sunrise/Carnivore2 mode, any other audio flag (`-scc`, `-sccplus`, `-d`, `-f`/`-fmpac`), `-a`/`--msx-audio`, `-w`, or a ROM file. The only other accepted options are `-o` to rename the output, `--opl4-limit`, and `--lowclock`.
+Because `-4` is standalone, it cannot be combined with any Sunrise/Carnivore2 mode, any other audio flag (`-scc`, `-sccplus`, `-d`, `-f`/`-fmpac`), `-a`/`--msx-audio`, `-w`, or a ROM file. The only other accepted options are `-o` to rename the output and `--22khz`.
 
 Usage:
 
 ```
 loadrom.exe -4                          # writes loadrom.uf2
 loadrom.exe -4 -o moonsound.uf2         # custom output name
-loadrom.exe -4 --opl4-limit -o moonsound-limit.uf2
-loadrom.exe -4 --lowclock -o moonsound-282.uf2
+loadrom.exe -4 --22khz -o moonsound-22k.uf2
 ```
 
 Flash the resulting UF2 in BOOTSEL mode, then use any MoonSound software on the MSX — for example MoonTest (detection and RAM test), SETOPL4 (sample upload/playback), and MoonBlaster / MBWAVE (music playback). No microSD, USB drive, or ESP-01 is required for this mode.
@@ -303,7 +301,7 @@ Notes:
    ```
    loadrom.exe -4
    loadrom.exe -4 -o moonsound.uf2
-   loadrom.exe -4 --opl4-limit -o moonsound-limit.uf2
+   loadrom.exe -4 --22khz -o moonsound-22k.uf2
    ```
    MSX-AUDIO / Y8950 standalone cartridge (no ROM file):
    ```
@@ -360,9 +358,9 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 | "Warning: -scc flag ignored" | ROM is not Konami SCC or Manbow2 mapper, or the selected Nextor mode is not `-c1`/`-c2` | Use a Konami SCC or Manbow2 ROM, or pair `-scc` with `-c1`/`-c2` for SROM-loaded Konami SCC titles. |
 | "Warning: -sccplus flag ignored" | ROM is not Konami SCC or Manbow2 mapper, or the selected Nextor mode is not `-c1`/`-c2` | Use a compatible ROM, or pair `-sccplus` with `-c1`/`-c2` for SROM-loaded SCC+ titles. |
 | "Error: -scc and -sccplus are mutually exclusive" | Both options were passed together | Use only one of the two options. |
-| `-4`/`--opl4` rejected or errors out | `-4` was combined with another mode, an audio flag, `-a`, `-w`, or a ROM file | Use `-4` (optionally with `-o`, `--opl4-limit`, or `--lowclock`) on its own; it is a standalone MoonSound build and accepts no other options or ROM file. |
+| `-4`/`--opl4` rejected or errors out | `-4` was combined with another mode, an audio flag, `-a`, `-w`, or a ROM file | Use `-4` (optionally with `-o` or `--22khz`) on its own; it is a standalone MoonSound build and accepts no other options or ROM file. |
 | MoonSound software does not detect the cartridge with `-4` | Wrong UF2 or board without the OPL4 audio/`/INT` wiring | Reflash a `-4` build and use a PicoVerse 2350 with the I2S DAC and `/INT` (GPIO40) connected. |
-| Broken/harsh audio on extreme-polyphony MoonSound songs with `-4` | Synthesis throughput shortfall (most FM channels plus most PCM voices at once) | Rebuild with `loadrom.exe -4 --opl4-limit` to enable the adaptive PCM voice limiter. |
+| Broken/harsh audio on extreme-polyphony MoonSound songs with `-4` | Synthesis throughput shortfall (most FM channels plus most PCM voices at once) | Rebuild with `loadrom.exe -4 --22khz` to render at 22050 Hz, which roughly halves the synthesis cost. |
 | `-a`/`--msx-audio` rejected or errors out | `-a` was combined with another mode, an audio flag, `-4`, `-w`, or a ROM file | Use `-a` (optionally with `-o` or `--4mhz`) on its own; it is a standalone MSX-AUDIO build and accepts no other options or ROM file. |
 | "Option --4mhz requires -a/--msx-audio" | `--4mhz` used without `-a` | Add `-a` / `--msx-audio`, or drop `--4mhz`. |
 | MSX-AUDIO software does not detect the cartridge with `-a` | Wrong UF2 or board without the audio/`/INT` wiring | Reflash an `-a` build and use a PicoVerse 2350 with the I2S DAC and `/INT` (GPIO40) connected. |
@@ -389,8 +387,8 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 - The tool does not verify ROM integrity beyond size and mapper heuristics.
 - SCC/SCC+ flags are applied for Konami SCC mapper (type 3) and Manbow2 mapper (type 14) ROMs; otherwise they are ignored with a warning.
 - SCC/SCC+ emulation is available in the current RP2350 LoadROM package.
-- The `-4` / `--opl4` OPL4 / MoonSound build is a standalone sound cartridge: it embeds no game ROM, ignores all other options, and overclocks the RP2350 to 300 MHz (282 MHz with `--lowclock`). It requires the I2S DAC and the `/INT` line (GPIO40) on the PicoVerse 2350 board.
-- A few extreme-polyphony MoonSound songs exceed the real-time synthesis budget of the `ymfm` core at 44.1 kHz and can underrun; `--opl4-limit` trades some peak PCM polyphony for continuous playback on that material.
+- The `-4` / `--opl4` OPL4 / MoonSound build is a standalone sound cartridge: it embeds no game ROM, ignores all other options, and overclocks the RP2350 to 300 MHz. It requires the I2S DAC and the `/INT` line (GPIO40) on the PicoVerse 2350 board.
+- A few extreme-polyphony MoonSound songs exceed the real-time synthesis budget of the `ymfm` core at 44.1 kHz and can underrun; `--22khz` trades some high-frequency detail for continuous playback on that material.
 - The `-a` / `--msx-audio` MSX-AUDIO build is likewise a standalone sound cartridge: it embeds no game ROM, cannot be combined with `-4` or any other option except `-o` and `--4mhz`, occupies a whole slot, and requires the I2S DAC and the `/INT` line (GPIO40).
 - In MSX-AUDIO mode the Philips NMS-1205 MIDI interface and the Music Module 8-bit DAC on port `0x0A` are not emulated, the Y8950 sound-enable pin is always on, the MSX-AUDIO keyboard reads back as "no keys pressed", and a second card on ports `0xC2`/`0xC3` is not decoded.
 - Excessive flashing can wear out flash memory.

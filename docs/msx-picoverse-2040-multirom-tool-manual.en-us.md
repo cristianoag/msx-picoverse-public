@@ -127,6 +127,10 @@ To prepare a USB thumb drive for use with Nextor on the PicoVerse 2040 cartridge
 >
 > **Note:** Nextor needs a minimum of 128 KB of RAM to operate; PicoVerse 2040 mapper mode provides 192KB mapper RAM (12 x 16KB pages).
 
+## Testing a MultiROM UF2 in openMSX
+
+You can try a MultiROM UF2 in the openMSX emulator before flashing it. Install the openMSX add-on from [2040/software/multirom.pio/openmsx](../2040/software/multirom.pio/openmsx) as described in [MSX PicoVerse 2040 — MultiROM in openMSX](./msx-picoverse-2040-openmsx.md). Then, in openMSX, choose your `.uf2` file as the ROM image of a cartridge slot (Media > Cartridge Slot, with the **All files** filter). The emulated MSX boots the same PicoVerse menu with every entry in the UF2, including the Nextor Sunrise IDE entries. A disk image takes the place of the USB drive. After that, the **PicoVerse 2040 MultiROM** extension reloads the same UF2.
+
 ## Known issues
 
 - Some ROMs with uncommon mappers may not be detected correctly and will be skipped unless a valid mapper tag is used to force detection.

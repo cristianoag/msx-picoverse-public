@@ -40,12 +40,13 @@ $code += (Get-CType "audio_mode_t") + "`n"
 $code += (Get-CType "fmpac_state_t") + "`nstatic fmpac_state_t system_fmpac;`n"
 $code += (Get-CType "sunrise_fmpac_bus_t") + "`n"
 $code += (Get-CType "sunrise_scc_bus_t") + "`n"
+$code += (Get-CType "sunrise_mapper_bus_t") + "`n"
 $code += (Get-CType "bank8_ctx_t") + "`n"
 $code += (Get-CType "bank16_ctx_t") + "`n"
 foreach ($name in @("is_system_mapper", "is_megaram_mapper", "is_audio_system_mapper",
     "mapper_supports_scc_audio", "resolve_audio_mode", "mapper_page_from_reg",
     "fmpac_sram_enabled", "fmpac_handle_write", "fmpac_handle_read",
-    "sunrise_fmpac_drain_writes", "sunrise_scc_drain_writes", "c2_handle_memory_write")) {
+    "sunrise_fmpac_drain_writes", "sunrise_scc_drain_writes", "sunrise_mapper_drain_writes", "c2_handle_memory_write")) {
     $code += (Get-CFunction $firmware $name) + "`n"
 }
 foreach ($name in @("handle_konamiscc_write", "handle_konami_write", "handle_ascii8_write",
@@ -60,7 +61,8 @@ foreach ($name in @("record_is_system_rom", "record_is_sunrise_system_rom",
 }
 
 # These are structural guards, not a simulation of PIO or physical MSX timing.
-foreach ($name in @("loadrom_sunrise_fmpac_common", "loadrom_c2_common", "loadrom_sunrise_scc_common")) {
+foreach ($name in @("loadrom_sunrise_fmpac_common", "loadrom_c2_common", "loadrom_sunrise_scc_common",
+    "loadrom_sunrise_mapper_storage")) {
     $body = Get-CFunction $firmware $name
     if ($body.IndexOf("system_audio_init_for_sunrise(false)") -gt $body.IndexOf("multicore_launch_core1")) {
         throw "$name launches the consumer before audio initialization"
@@ -68,6 +70,7 @@ foreach ($name in @("loadrom_sunrise_fmpac_common", "loadrom_c2_common", "loadro
     $drain = switch ($name) {
         "loadrom_c2_common" { "c2_handle_memory_write" }
         "loadrom_sunrise_scc_common" { "sunrise_scc_drain_writes" }
+        "loadrom_sunrise_mapper_storage" { "sunrise_mapper_drain_writes" }
         default { "sunrise_fmpac_drain_writes" }
     }
     if ([regex]::Matches($body, "$drain\(").Count -ne 2) { throw "$name must drain writes twice" }

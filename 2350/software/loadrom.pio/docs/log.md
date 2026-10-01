@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.78
+
+- Simplified the standalone OPL4 (`-4`) generation options by removing `--opl4-limit` (adaptive PCM voice limiter) and `--lowclock` (282 MHz system clock). The tool now rejects both as unknown options, and `--22khz` is the remaining OPL4 option for extreme-polyphony songs.
+- The OPL4 firmware always runs the RP2350 at 300 MHz (`OPL4_SYS_CLOCK_KHZ`) and always renders all 24 PCM voices: the voice-cap controller and its Core 1 hook were removed from `opl4_main.c`, and `ymf278b::generate` in `ymfm_opl.cpp` is back to the upstream `pcm_engine::ALL_CHANNELS` output mask. The per-buffer fill-time measurement is now only compiled in USB debug builds, and the debug report drops its `cap=` and `limit=` fields.
+- The 16-byte `PVO4` config header between the firmware and the YRW801-M ROM is kept so the flash layout is unchanged; its flags byte is now reserved and always written as 0, and the firmware only uses the header to locate the ROM.
+- Archived the removed code, grouped by the source file it came from, in `2350/software/old/loadrom_opl4_voice_limiter.c` and `2350/software/old/loadrom_opl4_lowclock.c`.
+- Updated the LoadROM tool manual, the OPL4 implementation guide and the public readme to drop both options and point dense-song playback to `--22khz`.
+- Bumped the loadrom build version to v2.78 (top-level and tool Makefiles), and regenerated the embedded 44.1 kHz and 22.05 kHz OPL4 firmware payloads.
+
 ## PicoVerse 2350 Loadrom v2.77
 
 - Fixed the `.FLA` image being written to the microSD card empty, which left ASCII16-X FlashROM saves working only when a valid image happened to be there already. Creating the image was deferred until the MSX actually programmed the flash, and the file has to be opened with `FA_CREATE_ALWAYS`, which truncates it to zero straight away; the rest was then written only after the MSX had been quiet for a while. A game that saves and is then switched off left a zero-byte or partial file on the card, and because the restore path requires the file to match the emulated device size exactly, the next boot rejected it and started over. The image is now created in full during cartridge start-up, before the bus goes live, so the file on the card is always a complete, valid image.

@@ -24,6 +24,8 @@
 ;
 ;   SM0 = msx_read_responder   (handles memory reads)
 ;   SM1 = msx_write_captor     (handles memory writes / bank switching)
+;   SM2 = msx_io_read_responder (I/O reads; pio0 because it drives D0..D7)
+;   msx_io_write_captor runs on pio2 (input only).
 ;
 ; Read flow:
 ;   1. Wait for /SLTSL=0 and /RD=0
@@ -127,30 +129,38 @@ capture:
 ; msx_io_read_responder
 ; ===================================================================
 ; Responds to MSX I/O read cycles (/IORQ + /RD).
-; Used for reading mapper port registers (FC-FF).
+; Used for reading mapper port registers (FC-FF) and the C2 port (F0-F3).
+; Runs on pio0 next to msx_read_responder: D0..D7 are muxed to pio0, and only
+; that block can drive them. Memory and I/O cycles never overlap.
 ;
 ; in_base     = GPIO 0  (A0), 16 pins
 ; out_base    = GPIO 16 (D0), 8 pins
+;
+; /WAIT is not asserted, so the CPU answer can arrive after the I/O cycle has
+; ended. Before driving, /IORQ is re-checked: if the cycle is already over the
+; token is dropped, so a late answer can never drive the bus during the next
+; (memory) cycle. Must stay at 13 instructions: pio0 holds 13 + 6 + 13 = 32.
 
 .program msx_io_read_responder
 
-; jmp_pin must be configured to /RD (GPIO 24) from C code.
-;   /RD=1 (inactive) → jump taken  → re-check /IORQ
-;   /RD=0 (active)   → fall through → handle the read
+; jmp_pin must be configured to /IORQ (GPIO 26) from C code.
+;   /IORQ=1 (inactive) → jump taken  → not an I/O cycle / cycle ended
+;   /IORQ=0 (active)   → fall through
 
 .wrap_target
-wait_iorq:
-    wait 0 gpio 26                ; Wait for /IORQ=0 (I/O request)
-    jmp pin wait_iorq             ; If /RD=1 (no read), re-check /IORQ
+wait_rd:
+    wait 0 gpio 24                ; Wait for /RD=0 (read cycle)
+    jmp pin wait_rd               ; If /IORQ=1 (memory read), re-check
     nop                           ; timing spacer
     in pins, 16                   ; Capture A0..A15 into ISR
     push block                    ; Send address to CPU via RX FIFO
     pull block                    ; Wait for CPU response in TX FIFO (data token)
+    jmp pin cycle_over            ; /IORQ=1: I/O cycle already ended, never drive
     out pins, 8                   ; Drive D0..D7 with data byte
-    out pindirs, 8                ; Set pindirs (0xFF=output, 0x00=tristate)
-    nop                    [1]    ; Data hold before /RD rises
+    out pindirs, 8         [2]    ; Set pindirs (0xFF=output, 0x00=tristate) + data hold
     wait 1 gpio 24                ; Wait for /RD=1 (bus cycle ends)
+cycle_over:
     set x, 0                      ; Prepare zero for tri-state
-    mov osr, x                    ; Load zero into OSR
+    mov osr, x                    ; Load zero into OSR (drops an unused token)
     out pindirs, 8                ; Tri-state D0..D7 (pindirs=0x00)
 .wrap

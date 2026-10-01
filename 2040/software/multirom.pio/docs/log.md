@@ -1,5 +1,23 @@
 # Change Log
 
+## PicoVerse 2040 Multirom v2.64
+
+- Version bumped to v2.64 (top-level and tool Makefiles, and the `picoverse2040.tcl` script version).
+- Fixed the MSX menu ROM list being two columns left of the header and footer on machines that boot with a narrower SCREEN 0 width, such as the Philips VG-8020 (WIDTH 37). The BIOS centers its text window when `LINLEN` < 40, but the list rows are written straight to VRAM at column 0. `displayMenu()` now finds the column where the BIOS printed the header (`detect_menu_col_offset()`), and `blit_row_vram()` adds that offset and writes only up to the end of the line.
+- Added `openmsx/`, an openMSX add-on that runs MultiROM UF2 images without changing openMSX. `openmsx/share/scripts/picoverse2040.tcl` adds the `picoverse2040` console command (`insert`, `menu`, `boot`, `list`, `info`, `eject`) and the `picoverse2040_uf2`, `picoverse2040_slot` and `picoverse2040_hd` settings.
+  - It rebuilds the Pico flash image from the UF2, finds the menu and config area after the firmware, and inserts the 32KB menu as a `Page12` cartridge.
+  - A watchpoint on the menu's `0x9D81` ROM select register catches the selected entry. The script then inserts it with the matching openMSX mapper: `Page12`/`Page012`/`Page0123` for the planar ROMs (padded to their window), `KonamiSCC`, `Konami`, `ASCII8`, `ASCII16`, `NEO-8`, `NEO-16`, `ASCII16-X` and `Manbow2`.
+  - The Nextor entries become generated openMSX extension configurations: `SunriseIDE`, or an expanded slot with `SunriseIDE` in sub-slot 0 and a 192KB `MemoryMapper` in sub-slot 1. They are written to `persistent/picoverse2040/extensions/` and inserted through a relative name (`../../persistent/picoverse2040/extensions/<name>`), so openMSX lists only `PicoVerse 2040 MultiROM` as an extension; copies left in `share/extensions` by earlier script builds are deleted at startup. A hard disk image stands in for the USB drive. The image comes from the `-hd` option of the last `picoverse2040 insert`, else the `picoverse2040_hd` setting (read every time a Nextor entry boots), else `persistent/picoverse2040/hd.dsk`.
+  - Any reset (Machine menu, hotkey, `reset`), a power cycle, or restarting openMSX with an entry left in the slot (for example a setup restored at startup) brings the PicoVerse menu back. Only the reset that the script issues to start the selected entry keeps it. This uses the openMSX `after boot` event. The slot watcher replaces leftover cached ROMs and Nextor configurations with the menu of the last UF2. Extensions restored from setups and savestates are not always reported in their cartridge slot, so the script also checks `list_extensions` for `PicoVerse_2040` and its Nextor configurations. After a machine switch or savestate load, the menu watchpoint is re-armed, and a running ROM or Nextor entry keeps running until the next reset.
+  - Added the `PicoVerse 2040 MultiROM` openMSX extension (`openmsx/share/extensions/PicoVerse_2040`), so the cartridge appears in the openMSX extension lists. Its placeholder ROM (`openmsx/src/placeholder.asm`) explains how to pick a UF2. The script replaces it with the menu of the last UF2 used (`picoverse2040_uf2`).
+  - The script watches the cartridge slots, so a `.uf2` chosen as a ROM image (Media > Cartridge Slot, `-carta`, `carta`) is taken over and remembered.
+  - The console explains how to write Windows paths when backslashes were eaten by Tcl (for example `C:\temp` arriving as `C:<TAB>emp`).
+  - Extracted ROMs are cached per UF2 size and modification time (openMSX's Tcl has no `zlib`), and cached files are compared before reuse.
+  - Includes `install.ps1`/`install.sh` installers for the script and the extension.
+- The aggregate Makefile now builds the openMSX add-on (`make openmsx`, also part of `make` and `make clean`). `openmsx/Makefile` assembles the placeholder ROM with SDCC and, when `VERSION` is passed, fails if the script's `variable version` doesn't match.
+- Documented the openMSX add-on in `docs/msx-picoverse-2040-openmsx.md`: installation, choosing the UF2, menu and reset behaviour, creating and attaching the Nextor USB drive image with `diskmanipulator` (including how long file names are shortened to 8.3), commands, settings and implementation. It replaces `openmsx/README.md`. The MultiROM manual and the docs index link to it.
+- `docs/msx-picoverse-public-readme.md` now lists the openMSX emulated cartridge in the highlights, the documentation section and the MultiROM menu section. It also has a license note saying the add-on was created based on the public openMSX reference (manuals and source) and doesn't include or redistribute openMSX code.
+
 ## PicoVerse 2040 Multirom v2.63
 
 - Version bumped to v2.63 (top-level and tool Makefiles).

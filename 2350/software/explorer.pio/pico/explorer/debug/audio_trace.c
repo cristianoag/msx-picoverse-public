@@ -513,7 +513,7 @@ static void atrace_print_help(void)
     fflush(stdout);
 }
 
-void atrace_check_stalls(PIO mem_pio, uint sm_mem_wr, PIO io_pio, uint sm_io_wr, uint sm_io_rd)
+void atrace_check_stalls(PIO mem_pio, uint sm_mem_wr, PIO io_pio, uint sm_io_wr, PIO io_rd_pio, uint sm_io_rd)
 {
     uint32_t bit;
 
@@ -545,10 +545,13 @@ void atrace_check_stalls(PIO mem_pio, uint sm_mem_wr, PIO io_pio, uint sm_io_wr,
         atrace_trigger = ATRACE_TRIG_IOSTALL;
     }
 
+    if (!io_rd_pio)
+        return;
+
     bit = 1u << (PIO_FDEBUG_TXSTALL_LSB + sm_io_rd);
-    if (io_pio->fdebug & bit)
+    if (io_rd_pio->fdebug & bit)
     {
-        io_pio->fdebug = bit;
+        io_rd_pio->fdebug = bit;
         atrace_cnt.io_rd_stalls++;
     }
 }

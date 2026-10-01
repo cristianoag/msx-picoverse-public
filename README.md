@@ -28,6 +28,7 @@ If you find any issues, have questions, or want to contribute, please open an is
 - MSX-AUDIO / Yamaha Y8950 emulation on the PicoVerse 2350 (`loadrom.exe -a`) — a standalone MSX-AUDIO card with OPL1 FM plus ADPCM, 256 KB of ADPCM sample RAM, and the MSX-Audio BIOS mapped in the cartridge slot.
 - Yamanooto flash-cartridge emulation on the PicoVerse 2350 (`yamanooto.exe`) — a Konami-SCC compatible 8 MB flash cartridge with SCC/SCC+, a secondary (dual) PSG, a primary PSG mirror, and MSX-MUSIC/FM-PAC, all always available with the firmware selecting SCC, FM, or pure PSG on the fly so one image can mix SCC, FM, and PSG games.
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
+- openMSX emulated cartridge for PicoVerse 2040 MultiROM — run the same MultiROM `.uf2` in the openMSX emulator before flashing it, with the real PicoVerse menu, the matching ROM mappers, and the embedded Nextor Sunrise IDE entries using a disk image as the USB drive. See [MSX PicoVerse 2040 — MultiROM in openMSX](/docs/msx-picoverse-2040-openmsx.md).
 - USB keyboard support on PicoVerse 2040 — use a standard USB keyboard as the MSX keyboard via the cartridge slot.
 - MSX-MIDI support on PicoVerse 2040 — use a USB-MIDI cable as a standard MSX-MIDI interface via the cartridge slot. 
 - MIDI-PAC support on PicoVerse 2040 — passively convert live MSX PSG music and effects into high-quality MIDI for external synths or sound modules (SC-55 optimized). Features automatic bass detection, tone+noise coexistence, smooth pitch bending on fast passages, and improved percussion mapping. 
@@ -44,6 +45,9 @@ If you find any issues, have questions, or want to contribute, please open an is
 **MultiROM Guides:** Use the MultiROM tool to create a UF2 image that allows selecting from multiple ROMs at boot. Mapper type is auto-detected with filename tag overrides, and the tool reports the detected configuration before flashing.
 - [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-us.md)
 - [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
+
+**openMSX Emulated Cartridge:** Try a PicoVerse 2040 MultiROM UF2 in the openMSX emulator before flashing it. A Tcl script and an openMSX extension turn the `.uf2` into an emulated PicoVerse 2040 cartridge: the MSX boots the real MultiROM menu, starts each entry with the matching openMSX mapper, and runs the Nextor Sunrise IDE entries with a hard disk image as the USB drive.
+- [MSX PicoVerse 2040 — MultiROM in openMSX (English)](/docs/msx-picoverse-2040-openmsx.md)
 
 **Explorer Guides:** Use the Explorer tool to manage flash, embedded Sunrise Nextor, and microSD ROMs, boot 360 KB/720 KB `.DSK` disk images (and multi-disk games joined into one `.DSK`, swapped with the number keys) from the microSD card, cycle supported microSD partitions, delete selected SD files, play MP3/WAV files from the microSD card, browse File Hunter over ESP-01 WiFi, select ROM audio/PSG options, and search for titles on the device.
 - [MSX PicoVerse 2350 Explorer Tool Manual (English)](/docs/msx-picoverse-2350-explorer-tool-manual.en-us.md)
@@ -125,7 +129,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - Sunrise IDE + 1MB mapper + 1MB MegaRAM mode provides Nextor disk access, standard mapper RAM, and a separate writable MegaRAM cartridge surface (`-r1` for microSD, `-r2` for USB).
 - Carnivore2-compatible RAM-mode loading lets `SROM.COM /D15` upload ROMs into the 1MB PSRAM mapper (`-c1` for microSD, `-c2` for USB).
 - Yamanooto flash-cartridge emulation (`yamanooto.exe`) reproduces the  Yamanooto: a Konami-SCC compatible 8 MB flash cartridge with SCC/SCC+, a secondary (dual) PSG on ports `0x10`/`0x11`, a primary PSG mirror (`0xA0`/`0xA1`), and MSX-MUSIC/FM-PAC via an expanded subslot. All engines are always available and the firmware selects SCC, FM, or pure PSG on the fly, so a single image can hold a mix of SCC, FM, and PSG games.
-- Standalone OPL4 / YMF278B / MoonSound cartridge firmware (`loadrom.exe -4`): full YMF278B emulation (OPL3 FM with 18 channels plus 24 PCM voices), the 2 MB YRW801-M wave ROM embedded in the UF2, 2 MB of PCM sample RAM in PSRAM, MoonSound ports `0xC4`-`0xC7` and `0x7E`/`0x7F`, FM timer interrupts on `/INT`, and 16-bit stereo 44.1 kHz output through the I2S DAC. Optional `--opl4-limit` adaptive PCM voice limiter and `--lowclock` 282 MHz build.
+- Standalone OPL4 / YMF278B / MoonSound cartridge firmware (`loadrom.exe -4`): full YMF278B emulation (OPL3 FM with 18 channels plus 24 PCM voices), the 2 MB YRW801-M wave ROM embedded in the UF2, 2 MB of PCM sample RAM in PSRAM, MoonSound ports `0xC4`-`0xC7` and `0x7E`/`0x7F`, FM timer interrupts on `/INT`, and 16-bit stereo 44.1 kHz output through the I2S DAC. Optional `--22khz` reduced-rate build for extreme-polyphony songs.
 - Standalone MSX-AUDIO / Yamaha Y8950 cartridge firmware (`loadrom.exe -a`): OPL1 FM (9 channels) plus ADPCM-B, 256 KB of ADPCM sample RAM in PSRAM, the 48 KB MSX-Audio BIOS v1.3 mapped in the slot (openMSX `Boosted_audio.xml` layout, with base and expanded work RAM), ports `0xC0`/`0xC1`, FM timer interrupts on `/INT`, and 16-bit 49716 Hz output through the I2S DAC. Optional `--4mhz` Y8950 clock.
 - LoadROM Sunrise builds can also expose ESP-01 WiFi support with `-w` on top of the `-s1`/`-m1`/`-s2`/`-m2` modes.
 - LoadROM, MultiROM, and Explorer support the Sunrise IDE options. MultiROM and Explorer allow combining them so multiple Nextor modes appear as selectable SYSTEM entries in the menu; Explorer also provides `-a` / `--allnextor` to add all embedded Nextor entries while still appending folder ROMs.
@@ -187,6 +191,8 @@ While in the menu, pressing the H key opens a help screen with basic instruction
 
 Check the detailed MultiROM guide in the documentation folder for advanced features, troubleshooting tips, and mapper support details.
 
+You can also try a PicoVerse 2040 MultiROM UF2 in the openMSX emulator before flashing it: the emulated cartridge boots the same menu from the `.uf2` file. See [MSX PicoVerse 2040 — MultiROM in openMSX](/docs/msx-picoverse-2040-openmsx.md).
+
 ## LoadROM Tool
 
 The LoadROM tool targets situations where you want the PicoVerse to behave like a traditional single-game cartridge or as a dedicated standalone firmware image. Instead of showing the MultiROM menu, the Pico boots straight into one ROM embedded in the UF2 image, or into a selected standalone mode such as keyboard, MSX-MIDI, MIDI-PAC, or USB joystick.
@@ -216,7 +222,7 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
       - Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM (PicoVerse 2350): `loadrom.exe -r1` or `loadrom.exe -r2`
       - Sunrise IDE + WiFi (PicoVerse 2350): `loadrom.exe -s1 -w`, `loadrom.exe -s2 -w`, `loadrom.exe -m1 -w`, or `loadrom.exe -m2 -w`
       - Carnivore2-compatible RAM loader (PicoVerse 2350): `loadrom.exe -c1` or `loadrom.exe -c2`
-      - OPL4 / MoonSound standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -4`, optionally with `--opl4-limit` or `--lowclock`
+      - OPL4 / MoonSound standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -4`, optionally with `--22khz`
       - MSX-AUDIO / Y8950 standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -a`, optionally with `--4mhz`
       - `-4` and `-a` are standalone builds: they take no ROM file and cannot be combined with each other or with any other mode or audio flag.
       - `-w` is currently supported only with `-s1`, `-m1`, `-s2`, or `-m2`.
@@ -290,6 +296,8 @@ All hardware and firmware binaries in this repository are released under the Cre
 **The YM2151 / Yamaha SFG audio backend** uses the `ymfm` Yamaha FM sound cores by Aaron Giles, licensed under the BSD 3-Clause License. PicoVerse vendors the OPM/YM2151 subset under `2350/software/explorer.pio/pico/explorer/ymfm/` and wraps it with `emu2151.cpp` / `emu2151.h` so the Explorer SFG register implementation can use the same internal `OPM_*` API. [ymfm](https://github.com/aaronsgiles/ymfm)
 
 **The Yamaha SFG01/SFG05 cartridge** behavior was implemented using public technical references including the RBSC SFG_Cartridge project and openMSX's Yamaha SFG implementation. PicoVerse exposes an SFG-like memory-mapped register window in a secondary expanded subslot, queues complete YM2151 register/value writes for the audio core. `SFG_64K.ROM` is bundled as a hidden Explorer flash payload for the YM2151/SFG profiles; the first 32K image is exposed for SFG05 and the second 32K image is exposed for SFG01. The SFG BIOS ROMs were created by Yamaha Corporation and must be treated as third-party copyrighted BIOS payloads. 
+
+**The openMSX emulated cartridge for PicoVerse 2040 MultiROM** (`2040/software/multirom.pio/openmsx`) was created based on the public openMSX reference: the [openMSX manuals](https://openmsx.org/manual/) (console commands, Tcl scripting, hardware configuration XML, and `diskmanipulator`) and the [openMSX source code](https://github.com/openMSX/openMSX). It is an add-on written in openMSX's Tcl scripting language plus an extension configuration; it does not include, modify, or redistribute openMSX code, and it relies on openMSX's own ROM mapper, Sunrise IDE, IDE hard disk, and memory mapper implementations. openMSX is licensed under the GNU GPL v2 or later and is developed by the openMSX team; this add-on is not affiliated with or endorsed by the openMSX project.
 
 **WAVEGAME support on PicoVerse 2350 Explorer** implements the WAVEGAME idea and protocol authored by Jeroen Taverne and Mauricio Braga. PicoVerse keeps its own RP2350 Explorer implementation for ROM serving, port `0x92` command capture, WAV streaming, and optional PSG Mirror mixing. Implementation details were informed by the openMSX pull request [Add Wave Game audio cartridge support by MBilderbeek · Pull Request #2126 · openMSX/openMSX](https://github.com/openMSX/openMSX/pull/2126).
 

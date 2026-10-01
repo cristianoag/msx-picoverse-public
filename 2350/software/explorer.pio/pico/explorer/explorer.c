@@ -4421,9 +4421,15 @@ static void msx_pio_bus_init(void)
 
 static void msx_pio_io_bus_init(void)
 {
-    msx_io_bus.pio_read = pio2;
+    // The I/O read responder must live on pio0: D0..D7 are muxed to pio0 (the
+    // memory read responder), and only the PIO block a pin is muxed to can
+    // drive it. On pio2 its answers never reached the bus, so mapper-port
+    // (0xFC-0xFF) and C2 (0xF0-0xF3) readback always came back as 0xFF.
+    // Memory and I/O cycles never overlap, so both SMs can share D0..D7.
+    // pio0 instruction memory: 13 (mem read) + 6 (mem write) + 13 (I/O read) = 32.
+    msx_io_bus.pio_read = pio0;
     msx_io_bus.pio_write = pio2;
-    msx_io_bus.sm_io_read  = 0;
+    msx_io_bus.sm_io_read  = 2;
     msx_io_bus.sm_io_write = 1;
 
     if (!msx_io_read_program_loaded)
@@ -4449,7 +4455,7 @@ static void msx_pio_io_bus_init(void)
     sm_config_set_in_shift(&cfg_io_read, false, false, 16);
     sm_config_set_out_pins(&cfg_io_read, PIN_D0, 8);
     sm_config_set_out_shift(&cfg_io_read, true, false, 32);
-    sm_config_set_jmp_pin(&cfg_io_read, PIN_RD);
+    sm_config_set_jmp_pin(&cfg_io_read, PIN_IORQ);
     sm_config_set_clkdiv(&cfg_io_read, 1.0f);
     pio_sm_init(msx_io_bus.pio_read, msx_io_bus.sm_io_read, msx_io_bus.offset_io_read, &cfg_io_read);
 
@@ -4461,7 +4467,17 @@ static void msx_pio_io_bus_init(void)
     sm_config_set_clkdiv(&cfg_io_write, 1.0f);
     pio_sm_init(msx_io_bus.pio_write, msx_io_bus.sm_io_write, msx_io_bus.offset_io_write, &cfg_io_write);
 
+    for (uint pin = PIN_D0; pin <= PIN_D7; ++pin)
+    {
+        pio_gpio_init(msx_io_bus.pio_read, pin);
+    }
     pio_sm_set_consecutive_pindirs(msx_io_bus.pio_read, msx_io_bus.sm_io_read, PIN_D0, 8, false);
+
+    // /BUSDIR is driven push-pull (released = high), like the Carnivore2 CPLD.
+    // Preload the output high before enabling the driver so it never glitches low.
+    gpio_init(PIN_BUSSDIR);
+    gpio_put(PIN_BUSSDIR, 1);
+    gpio_set_dir(PIN_BUSSDIR, GPIO_OUT);
 
     pio_sm_set_enabled(msx_io_bus.pio_read, msx_io_bus.sm_io_read, true);
     pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, true);
@@ -4539,6 +4555,34 @@ static inline bool __not_in_flash_func(pio_try_get_io_read)(uint16_t *addr_out)
     return true;
 }
 
+// Answer an I/O read captured by msx_io_read_responder. When we drive the data
+// bus, /BUSDIR is pulled low for the rest of the cycle, as the Carnivore2 does
+// for its mapper (0xFC-0xFF) and config ports. Machines that buffer the
+// cartridge data bus (such as the Philips NMS 8245) otherwise never pass the
+// answer to the Z80: the sub-ROM sizes "USER RAM" on the boot logo by reading
+// back port 0xFC, so it only saw the internal 128KB mapper.
+#define IO_READ_BUSDIR_SPIN_LIMIT 4096u
+static inline void __not_in_flash_func(io_read_respond)(bool in_window, uint8_t data)
+{
+    if (!in_window)
+    {
+        pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(false, data));
+        return;
+    }
+
+    gpio_put(PIN_BUSSDIR, 0);
+    pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(true, data));
+    // Hold until the I/O cycle ends (/RD or /IORQ high). Nothing else can use
+    // the bus meanwhile; the bound only guards against a stuck bus.
+    const uint32_t cycle_mask = (1u << PIN_RD) | (1u << PIN_IORQ);
+    for (uint32_t spin = 0; spin < IO_READ_BUSDIR_SPIN_LIMIT; ++spin)
+    {
+        if (sio_hw->gpio_in & cycle_mask)
+            break;
+    }
+    gpio_put(PIN_BUSSDIR, 1);
+}
+
 // Called once per audio buffer (never per sample): samples the PIO stall flags
 // that prove whether MSX bus writes were lost, then handles reporting.  Both
 // are far too slow for the per-sample path.
@@ -4547,7 +4591,7 @@ static inline void audio_trace_service(void)
 #if EXPLORER_AUDIO_TRACE
     atrace_check_stalls(msx_bus.pio, msx_bus.sm_write,
                         msx_io_bus.pio_write, msx_io_bus.sm_io_write,
-                        msx_io_bus.sm_io_read);
+                        msx_io_bus.pio_read, msx_io_bus.sm_io_read);
     atrace_poll();
 #elif EXPLORER_USB_STDIO_DEBUG
     // On-demand only: continuous CDC printing can itself cause lost writes.
@@ -9802,183 +9846,6 @@ void __no_inline_not_in_flash_func(loadrom_sunrise)(uint32_t offset, bool cache_
     }
 }
 
-void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool cache_enable)
-{
-    static const uint8_t bootstrap_rom[] = {
-        0x41, 0x42, 0x0A, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0xF3, 0xDB, 0xF4, 0xF6, 0x80, 0xD3, 0xF4, 0xC7
-    };
-
-    msx_pio_bus_init();
-
-    bool restart_detected = false;
-    bool init_called = false;
-
-    while (!restart_detected)
-    {
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-        }
-
-        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
-        {
-            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
-            if (init_called && addr == 0x0000u)
-            {
-                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(false, 0xFFu));
-                restart_detected = true;
-            }
-            else
-            {
-                if (addr >= 0x400Au && addr <= 0x4011u) init_called = true;
-                bool in_window = (addr >= 0x4000u && addr <= 0x7FFFu);
-                uint8_t data = 0xFFu;
-                if (in_window)
-                {
-                    uint32_t rel = addr - 0x4000u;
-                    if (rel < sizeof(bootstrap_rom)) data = bootstrap_rom[rel];
-                }
-                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
-            }
-        }
-        else if (init_called && !gpio_get(PIN_RD) && ((gpio_get_all() & 0xFFFFu) == 0x0000u))
-        {
-            restart_detected = true;
-        }
-    }
-
-    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_read, false);
-    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, false);
-    gpio_init(PIN_WAIT);
-    gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 0);
-
-    const uint8_t *rom_base;
-    uint32_t available_length;
-    prepare_sunrise_mapper_rom_source(offset, cache_enable, &rom_base, &available_length);
-
-    static sunrise_ide_t ide;
-    sunrise_ide_init(&ide);
-
-    sunrise_usb_set_ide_ctx(&ide);
-    multicore_launch_core1(sunrise_usb_task);
-
-    if (!psram_prepare_mapper_region())
-    {
-        while (true) { tight_loop_contents(); }
-    }
-
-    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
-    uint8_t subslot_reg = 0x10;
-
-    mapper_fill_ff();
-
-    msx_pio_io_bus_init();
-    system_audio_init_for_sunrise(false);
-    msx_pio_bus_init();
-
-    while (true)
-    {
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr == 0xFFFFu)
-                subslot_reg = wdata;
-            else
-            {
-                uint8_t page = (waddr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-                if (active_subslot == 0)
-                {
-                    if (waddr >= 0x4000u && waddr <= 0x7FFFu)
-                        sunrise_ide_handle_write(&ide, waddr, wdata);
-                }
-                else if (active_subslot == 1)
-                {
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                    uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
-                    mapper_write_byte(mapper_offset, wdata);
-                }
-            }
-        }
-
-        uint16_t io_addr;
-        uint8_t io_data;
-        while (pio_try_get_io_write(&io_addr, &io_data))
-        {
-            uint8_t port = io_addr & 0xFFu;
-            if (system_audio_handle_io_write(port, io_data))
-                continue;
-            if (port >= 0xFCu && port <= 0xFFu)
-                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
-        }
-
-        while (pio_try_get_io_read(&io_addr))
-        {
-            uint8_t port = io_addr & 0xFFu;
-            bool in_window = false;
-            uint8_t data = 0xFFu;
-            if (system_audio_handle_io_read(port, &data))
-            {
-                in_window = true;
-            }
-            else if (port >= 0xFCu && port <= 0xFFu)
-            {
-                in_window = true;
-                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
-            }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
-        }
-
-        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
-        {
-            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
-            uint8_t data = 0xFFu;
-            bool in_window = false;
-
-            if (addr == 0xFFFFu)
-            {
-                in_window = true;
-                data = (uint8_t)~subslot_reg;
-            }
-            else
-            {
-                uint8_t page = (addr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-                if (active_subslot == 0)
-                {
-                    if (addr >= 0x4000u && addr <= 0x7FFFu)
-                    {
-                        in_window = true;
-                        uint8_t ide_data;
-                        if (sunrise_ide_handle_read(&ide, addr, &ide_data))
-                            data = ide_data;
-                        else
-                        {
-                            uint8_t seg = ide.segment;
-                            uint32_t rel = ((uint32_t)seg << 14) + (addr & 0x3FFFu);
-                            if (available_length == 0u || rel < available_length)
-                                data = read_rom_byte(rom_base, rel);
-                        }
-                    }
-                }
-                else if (active_subslot == 1)
-                {
-                    in_window = true;
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                    uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
-                    data = mapper_read_byte(mapper_offset);
-                }
-            }
-
-            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
-        }
-    }
-}
-
 // Plain Nextor Sunrise IDE loader shared by the microSD partition and .DSK
 // image backends; only the Core 1 storage task differs.
 static void __no_inline_not_in_flash_func(loadrom_sunrise_storage)(uint32_t offset, bool cache_enable,
@@ -10053,6 +9920,43 @@ void loadrom_sunrise_dsk(uint32_t offset, bool cache_enable)
 
 // Nextor Sunrise + 1MB PSRAM mapper loader shared by the microSD partition and
 // .DSK image backends; only the Core 1 storage task differs.
+typedef struct {
+    sunrise_ide_t *ide;
+    uint8_t mapper_reg[4];
+    uint8_t subslot_reg;
+} sunrise_mapper_bus_t;
+
+// Nextor in subslot 0, 1MB mapper in subslot 1. Out of line: it runs twice
+// per loop iteration and SRAM has little headroom.
+static void __no_inline_not_in_flash_func(sunrise_mapper_drain_writes)(sunrise_mapper_bus_t *bus)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        if (addr == 0xFFFFu)
+        {
+            bus->subslot_reg = data;
+            continue;
+        }
+        uint8_t page = addr >> 14;
+        uint8_t subslot = (bus->subslot_reg >> (page * 2)) & 0x03u;
+        if (subslot == 0u)
+        {
+            if (addr >= 0x4000u && addr <= 0x7FFFu)
+                sunrise_ide_handle_write(bus->ide, addr, data);
+        }
+        else if (subslot == 1u)
+        {
+            uint32_t offset = ((uint32_t)mapper_page_from_reg(bus->mapper_reg[page]) << 14) |
+                              (addr & 0x3FFFu);
+            mapper_write_byte(offset, data);
+        }
+    }
+}
+
+// Nextor Sunrise + 1MB mapper loader shared by the USB, microSD partition and
+// .DSK backends; only the Core 1 storage task differs.
 static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32_t offset, bool cache_enable,
                                                                          void (*core1_task)(void),
                                                                          void (*attach_ctx)(sunrise_ide_t *ide))
@@ -10129,40 +10033,23 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32
     sunrise_ide_init(&ide);
 
     attach_ctx(&ide);
-    multicore_launch_core1(core1_task);
 
-    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
-    uint8_t subslot_reg = 0x10;
+    sunrise_mapper_bus_t bus = {
+        .ide = &ide,
+        .mapper_reg = { 3, 2, 1, 0 },
+        .subslot_reg = 0x10u,
+    };
 
+    // Audio (PSG Mirror) is set up before the shared storage/audio Core 1
+    // task starts, as in the C2, MegaRAM, FM-PAC and SCC loaders.
     msx_pio_io_bus_init();
     system_audio_init_for_sunrise(false);
+    multicore_launch_core1(core1_task);
     msx_pio_bus_init();
 
     while (true)
     {
-        uint16_t waddr;
-        uint8_t wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if (waddr == 0xFFFFu)
-                subslot_reg = wdata;
-            else
-            {
-                uint8_t page = (waddr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
-                if (active_subslot == 0)
-                {
-                    if (waddr >= 0x4000u && waddr <= 0x7FFFu)
-                        sunrise_ide_handle_write(&ide, waddr, wdata);
-                }
-                else if (active_subslot == 1)
-                {
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
-                    uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
-                    mapper_write_byte(mapper_offset, wdata);
-                }
-            }
-        }
+        sunrise_mapper_drain_writes(&bus);
 
         uint16_t io_addr;
         uint8_t io_data;
@@ -10172,7 +10059,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32
             if (system_audio_handle_io_write(port, io_data))
                 continue;
             if (port >= 0xFCu && port <= 0xFFu)
-                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+                bus.mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
         }
 
         while (pio_try_get_io_read(&io_addr))
@@ -10187,26 +10074,31 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32
             else if (port >= 0xFCu && port <= 0xFFu)
             {
                 in_window = true;
-                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
+                data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
             }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
         {
             uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            // /WAIT holds this read. Writes captured since the top-of-loop
+            // drain (ENASLT at FFFFh, Nextor segment, mapper RAM) must be
+            // applied first, or the read is answered from a stale subslot or
+            // stale RAM and the MSX eventually runs garbage and freezes.
+            sunrise_mapper_drain_writes(&bus);
             uint8_t data = 0xFFu;
             bool in_window = false;
 
             if (addr == 0xFFFFu)
             {
                 in_window = true;
-                data = (uint8_t)~subslot_reg;
+                data = (uint8_t)~bus.subslot_reg;
             }
             else
             {
                 uint8_t page = (addr >> 14) & 0x03u;
-                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+                uint8_t active_subslot = (bus.subslot_reg >> (page * 2)) & 0x03u;
                 if (active_subslot == 0)
                 {
                     if (addr >= 0x4000u && addr <= 0x7FFFu)
@@ -10227,7 +10119,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32
                 else if (active_subslot == 1)
                 {
                     in_window = true;
-                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint8_t mapper_page = mapper_page_from_reg(bus.mapper_reg[page]);
                     uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
                     data = mapper_read_byte(mapper_offset);
                 }
@@ -10236,6 +10128,11 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_storage)(uint32
             pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
         }
     }
+}
+
+void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_mapper_storage(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx);
 }
 
 void loadrom_sunrise_mapper_sd(uint32_t offset, bool cache_enable)
@@ -10472,7 +10369,7 @@ static void __no_inline_not_in_flash_func(loadrom_c2_common)(
                 in_window = true;
                 data = c2_port_read(&c2);
             }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
@@ -10762,7 +10659,7 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
             {
                 bus.megaram_write_enabled = true;
             }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
@@ -10873,7 +10770,7 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
             uint8_t port = io_addr & 0xFFu;
             if (port == 0x8Eu || port == 0x8Fu)
                 megaram_write_enabled = true;
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(false, 0xFFu));
+            io_read_respond(false, 0xFFu);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
@@ -11041,7 +10938,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_wifi_common)(
                     in_window = true;
                     data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
                 }
-                pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+                io_read_respond(in_window, data);
             }
         }
 
@@ -13343,7 +13240,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_sfg_common)(
                 in_window = true;
                 data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
             }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
@@ -13647,7 +13544,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_fmpac_common)(
             }
             else if (megaram_enable && (port == 0x8Eu || port == 0x8Fu))
                 bus.megaram_write_enabled = true;
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
@@ -13866,7 +13763,7 @@ static void __no_inline_not_in_flash_func(loadrom_sunrise_scc_common)(
                 in_window = true;
                 data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
             }
-            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            io_read_respond(in_window, data);
         }
 
         if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))

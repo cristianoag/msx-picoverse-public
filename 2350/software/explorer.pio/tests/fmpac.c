@@ -338,6 +338,35 @@ static void test_c2_bus(void) {
     assert(scc_count == 1);
 }
 
+static void test_sunrise_mapper_bus(void) {
+    sunrise_ide_t ide = {0};
+    sunrise_mapper_bus_t bus = { .ide = &ide, .mapper_reg = {3, 2, 1, 0}, .subslot_reg = 0x10u };
+    unsigned map0 = mapper_count, ide0 = ide_count;
+    write_head = write_tail = 0;
+    // Page 1 on Nextor (subslot 0), page 2 on the mapper (subslot 1).
+    enqueue(0x7FFF, 3);
+    enqueue(0x8123, 0x44);
+    sunrise_mapper_drain_writes(&bus);
+    assert(ide_count == ide0 + 1 && ide.segment == 3);
+    assert(mapper_count == map0 + 1 && mapper_offset == 1u * 16384u + 0x0123u && mapper_data == 0x44);
+    // A late ENASLT must be applied before the writes that follow it: with page 1
+    // on the mapper, 6000h is mapper RAM, not the Nextor segment register.
+    enqueue(0xFFFF, 0x04);
+    enqueue(0x4010, 0x55);
+    enqueue(0x6000, 7);
+    sunrise_mapper_drain_writes(&bus);
+    assert(bus.subslot_reg == 0x04 && write_tail == write_head);
+    assert(mapper_count == map0 + 3 && mapper_offset == 2u * 16384u + 0x2000u && mapper_data == 7);
+    assert(ide_count == ide0 + 1 && ide.segment == 3);
+    // Page 0 and page 3 writes go to mapper RAM only when subslot 1 is selected there.
+    bus.subslot_reg = 0x40u;
+    bus.mapper_reg[3] = 9;
+    enqueue(0xC100, 0x66);
+    enqueue(0x0100, 0x77);
+    sunrise_mapper_drain_writes(&bus);
+    assert(mapper_count == map0 + 4 && mapper_offset == 9u * 16384u + 0x0100u && mapper_data == 0x66);
+}
+
 static void test_sunrise_scc_bus(void) {
     sunrise_ide_t ide = {0};
     for (int wifi = 0; wifi <= 1; wifi++) {
@@ -453,6 +482,7 @@ int main(int argc, char **argv) {
     test_bus();
     test_c2_bus();
     test_sunrise_scc_bus();
+    test_sunrise_mapper_bus();
     test_game_read_ordering();
     test_game_services_io_bus();
     test_bios_image(argv[1], argv[2], (uint32_t)firmware_size);
