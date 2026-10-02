@@ -187,7 +187,7 @@ To use the MultiROM menu, insert the PicoVerse cartridge into your MSX and power
 
 Navigate the menu using the keyboard arrow keys. Use the Up and Down keys to move through the list of ROMs, and if more than 19 ROMs are present, use the Left and Right keys to switch between pages. To start a game or application, select it and press Enter or Space; the MSX will boot the ROM using the appropriate mapper configuration automatically.
 
-While in the menu, pressing the H key opens a help screen with basic instructions; press any key to return to the main menu. Once a ROM is launched, control is handed over entirely to the selected software, just as if it were a physical cartridge inserted into the MSX.
+While in the menu, pressing a letter key jumps to the first ROM whose name starts with that letter, and pressing F1 opens a help screen with basic instructions; press any key to return to the main menu. Once a ROM is launched, control is handed over entirely to the selected software, just as if it were a physical cartridge inserted into the MSX.
 
 Check the detailed MultiROM guide in the documentation folder for advanced features, troubleshooting tips, and mapper support details.
 
@@ -253,7 +253,7 @@ Multi-disk games are supported since Explorer v2.53 by joining their disks, in o
 - No floppy controller is emulated, so copy-protected disks and software that programs the FDC directly will not work.
 - Nextor uses more RAM than a plain disk ROM. On machines with little RAM (for example a 64 KB MSX2+ such as the Panasonic FS-A1FX), turn on the DSK entry's `1MB Mapper` option to boot it with Nextor plus the 1 MB PSRAM memory mapper.
 - An image boots read-only if the file is marked read-only or is split into more than 16 fragments on the card.
-- Only the PSG Mirror and `1MB Mapper` options are available for DSK entries.
+- DSK entries offer PSG Mirror, `1MB Mapper`, and (since v2.55) the **External SCC** / **External SCC+** and **MSX-MUSIC** audio profiles (a virtual SCC or FM-PAC cartridge in expanded subslot 2, as on the Nextor Sunrise entries).
 
 See [MSX PicoVerse 2350 DSK Disk Image Support](/docs/msx-picoverse-2350-dsk-support.md) for the full design, the multi-disk layout, the write-through details, and the test matrix.
 
@@ -297,7 +297,7 @@ All hardware and firmware binaries in this repository are released under the Cre
 
 **The Yamaha SFG01/SFG05 cartridge** behavior was implemented using public technical references including the RBSC SFG_Cartridge project and openMSX's Yamaha SFG implementation. PicoVerse exposes an SFG-like memory-mapped register window in a secondary expanded subslot, queues complete YM2151 register/value writes for the audio core. `SFG_64K.ROM` is bundled as a hidden Explorer flash payload for the YM2151/SFG profiles; the first 32K image is exposed for SFG05 and the second 32K image is exposed for SFG01. The SFG BIOS ROMs were created by Yamaha Corporation and must be treated as third-party copyrighted BIOS payloads. 
 
-**The openMSX emulated cartridge for PicoVerse 2040 MultiROM** (`2040/software/multirom.pio/openmsx`) was created based on the public openMSX reference: the [openMSX manuals](https://openmsx.org/manual/) (console commands, Tcl scripting, hardware configuration XML, and `diskmanipulator`) and the [openMSX source code](https://github.com/openMSX/openMSX). It is an add-on written in openMSX's Tcl scripting language plus an extension configuration; it does not include, modify, or redistribute openMSX code, and it relies on openMSX's own ROM mapper, Sunrise IDE, IDE hard disk, and memory mapper implementations. openMSX is licensed under the GNU GPL v2 or later and is developed by the openMSX team; this add-on is not affiliated with or endorsed by the openMSX project.
+**The openMSX emulated cartridge for PicoVerse 2040 MultiROM** (`2040/software/multirom.pio/openmsx`) was created based on the public openMSX reference: the [openMSX manuals](https://openmsx.org/manual/) (console commands, Tcl scripting, hardware configuration XML, and `diskmanipulator`) and the [openMSX source code](https://github.com/openMSX/openMSX). It is an add-on written in openMSX's Tcl scripting language plus an extension configuration; it does not include, modify, or redistribute openMSX code, and it relies on openMSX's own ROM mapper, Sunrise IDE, IDE hard disk, and memory mapper implementations. openMSX is licensed under the GNU GPL v2 or later and is developed by the openMSX team; this add-on is not affiliated with or endorsed by the openMSX project. Unlike the rest of PicoVerse, the add-on files (the Tcl script, the extension configuration and the placeholder ROM source) are licensed under the GNU GPL v2 or later, so they can be contributed to openMSX.
 
 **WAVEGAME support on PicoVerse 2350 Explorer** implements the WAVEGAME idea and protocol authored by Jeroen Taverne and Mauricio Braga. PicoVerse keeps its own RP2350 Explorer implementation for ROM serving, port `0x92` command capture, WAV streaming, and optional PSG Mirror mixing. Implementation details were informed by the openMSX pull request [Add Wave Game audio cartridge support by MBilderbeek · Pull Request #2126 · openMSX/openMSX](https://github.com/openMSX/openMSX/pull/2126).
 

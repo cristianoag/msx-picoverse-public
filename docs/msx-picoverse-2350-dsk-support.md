@@ -64,13 +64,55 @@ DSK entries are treated as SYSTEM-style entries on the MSX detail screen:
 |---|---|
 | PSG Mirror | Yes |
 | **1MB Mapper** | Yes (default `No`) |
-| Audio profiles (SCC/SCC+, Dual PSG, MSX-MUSIC, SFG) | No |
+| Audio: **External SCC**, **External SCC+**, **FMPAC/MSX-MUSIC** | Yes (default `None`) |
+| Audio: native SCC/SCC+, MegaRAM SCC, Dual PSG, YM2151/SFG | No (not wired for DSK yet) |
 | WiFi support | No |
 | Mapper override | No |
 | SD partition | No |
 | 50/60 Hz, CPU speed | No |
 
 Options are saved in a per-image file named after the full image name, for example `GAME.DSK.PVC`, so a `GAME.ROM` in the same folder keeps its own `GAME.PVC`.
+
+### External SCC and External SCC+
+
+Since Explorer v2.55, a disk game that looks for a Konami SCC cartridge in another slot (for example a game that plays SCC music when an SCC cartridge is present) can get one from Explorer. Set `Audio: External SCC` (or `External SCC+` for the SCC-I/SCC+ register layout) on the image's detail screen. These are the same profiles the `Nextor Sunrise 2.1.4` SYSTEM entries offer, and they use the same loader.
+
+Because the disk is emulated through the Sunrise IDE, there is no game mapper to share a slot with, so only the **external** variants apply. The native `SCC`/`SCC+` profiles attach the chip to a Konami SCC game ROM mapper. The cartridge slot becomes expanded:
+
+| Subslot | Contents |
+|---|---|
+| 0 | Nextor Sunrise 2.1.4 (Sunrise IDE, serving the `.DSK`) |
+| 1 | 1 MB PSRAM memory mapper when `1MB Mapper: Yes`, otherwise empty |
+| 2 | Virtual SCC / SCC+ (Konami SCC bank and register layout) |
+
+- PSG Mirror can be combined with External SCC/SCC+; the mirrored PSG is mixed with the SCC output.
+- The profile and the `1MB Mapper` choice are independent, so all four combinations are valid. Turning `1MB Mapper` on does not reset the audio profile.
+- The SCC renders on Core 1 between DSK sector requests, through the same `service_system_audio()` slice the Sunrise SD backend uses.
+
+How it is wired:
+
+- **Menu:** `audio_profile_is_supported()` returns true for `AUDIO_PROFILE_SCC_EXTERNAL` and `AUDIO_PROFILE_SCC_PLUS_EXTERNAL` on DSK entries (and for MSX-MUSIC, below). The WiFi rule that blocks audio does not apply to DSK entries, whose row on that line is `1MB Mapper`.
+- **Firmware:** at launch, `dsk_audio_mode_supported()` keeps `AUDIO_MODE_SCC_EXTERNAL`/`AUDIO_MODE_SCC_PLUS_EXTERNAL` (and `AUDIO_MODE_MSX_MUSIC`) and clears every other mode. `case MAPPER_DSK:` then calls `loadrom_sunrise_scc_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper)`.
+
+### MSX-MUSIC (FM-PAC)
+
+Since Explorer v2.55, a disk game with MSX-MUSIC (YM2413/OPLL) music can get an FM-PAC from Explorer. Set `Audio: FMPAC/MSX-MUSIC` on the image's detail screen. It is the same profile, and the same loader, the `Nextor Sunrise 2.1.4` SYSTEM entries use. The cartridge slot becomes expanded:
+
+| Subslot | Contents |
+|---|---|
+| 0 | Nextor Sunrise 2.1.4 (Sunrise IDE, serving the `.DSK`) |
+| 1 | 1 MB PSRAM memory mapper when `1MB Mapper: Yes`, otherwise empty |
+| 2 | FM-PAC: the hidden FM-PAC BIOS (`PAC2OPLL` signature, so MSX-MUSIC software finds it) with its `7FF4h`/`7FF5h` register aperture and SRAM bank control, plus YM2413 I/O ports `7Ch`/`7Dh` |
+
+- PSG Mirror can be combined with MSX-MUSIC; the mirrored PSG renders at the YM2413 rate and is mixed with the FM output.
+- The profile and the `1MB Mapper` choice are independent.
+- Machines with built-in MSX-MUSIC (for example a Panasonic FS-A1WX/WSX) already have an internal MSX-MUSIC BIOS. Software that stops at the first one it finds uses the internal chip, so the cartridge's FM-PAC adds nothing on those machines.
+- The YM2413 renders on Core 1 in small slices between DSK sector requests (`msx_music_shared_audio`), the same shared scheduler the Sunrise SD backend uses. Core 0 drains the MSX I/O captor and forwards FM and PSG register writes through the hand-off rings.
+
+How it is wired:
+
+- **Menu:** `audio_profile_is_supported()` returns true for `AUDIO_PROFILE_MSX_MUSIC` on DSK entries (`cur_is_dsk`).
+- **Firmware:** `dsk_audio_mode_supported()` also keeps `AUDIO_MODE_MSX_MUSIC`. The launch then takes the same MSX-MUSIC preparation as a Sunrise entry (`force_mp3_core1_handoff_before_rom_launch()`, `start_msx_music_audio()`). `case MAPPER_DSK:` calls `loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false)`, with no WiFi and no MegaRAM.
 
 ### The 1MB Mapper option
 
@@ -118,7 +160,7 @@ Core 0 is unchanged from the Sunrise microSD mode: the shared `loadrom_sunrise_s
 The launch path in `main()` of [explorer.c](../2350/software/explorer.pio/pico/explorer/explorer.c) runs these steps for a DSK record:
 
 1. **Record detection.** `is_dsk_record()` is true when the record is not a folder or MP3 and its mapper code is `MAPPER_DSK` (23).
-2. **Profile clamp.** The audio mode and audio profile are forced to none and WiFi is forced off. The launch is treated like a SYSTEM launch, so no 50/60 Hz or CPU INIT patch is armed and no game audio pipeline is started.
+2. **Profile clamp.** `dsk_audio_mode_supported()` keeps External SCC/SCC+ and MSX-MUSIC and forces every other audio mode and profile to none; WiFi is forced off. The launch is treated like a SYSTEM launch, so no 50/60 Hz or CPU INIT patch is armed and no game audio pipeline is started.
 3. **Hold `/WAIT`** and stop the MP3 core (common launch path).
 4. **Stage the image.** `load_rom_from_sd()` streams the whole `.DSK` into the 4 MB PSRAM SD region (`sd_rom_region`), starting 1 KB in, so the two sectors in front of it are free for the multi-disk header.
 5. **Build the write map.** `dsk_build_write_map()` resolves the file's clusters to card sectors (see [section 6](#6-write-through-and-the-write-map)).
@@ -127,7 +169,7 @@ The launch path in `main()` of [explorer.c](../2350/software/explorer.pio/pico/e
    - **Several disks:** `sunrise_dsk_build_emulation_header()` fills the two free sectors, and the whole PSRAM region (`2 + file sectors`) becomes the device, with the file starting at device sector 2.
    - An extent count of 0 means the file is read-only.
 7. **Switch the ROM source** to the hidden Nextor payload: `rom_data = flash_rom`, `rom_offset = NEXTOR_DSK_FLASH_OFFSET`, `active_rom_size = 128 KB`.
-8. **Dispatch** `case MAPPER_DSK:` → `loadrom_sunrise_dsk()` → `loadrom_sunrise_storage(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx)`. This caches the Nextor ROM, launches Core 1, initialises PSG Mirror audio if enabled, and starts serving the bus. With the `1MB Mapper` option on, it calls `loadrom_sunrise_mapper_dsk()` → `loadrom_sunrise_mapper_storage(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx)` instead (see [The 1MB Mapper option](#the-1mb-mapper-option)).
+8. **Dispatch** `case MAPPER_DSK:` → `loadrom_sunrise_dsk()` → `loadrom_sunrise_storage(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx)`. This caches the Nextor ROM, launches Core 1, initialises PSG Mirror audio if enabled, and starts serving the bus. With the `1MB Mapper` option on, it calls `loadrom_sunrise_mapper_dsk()` → `loadrom_sunrise_mapper_storage(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx)` instead (see [The 1MB Mapper option](#the-1mb-mapper-option)). With External SCC/SCC+ selected, it calls `loadrom_sunrise_scc_common(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper)`, and with MSX-MUSIC `loadrom_sunrise_fmpac_common(..., sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false)`. Both cover both memory choices (see [External SCC and External SCC+](#external-scc-and-external-scc) and [MSX-MUSIC (FM-PAC)](#msx-music-fm-pac)).
 
 The MSX then resets. Nextor's Sunrise driver sends IDENTIFY and sees a device of `size / 512` sectors. It reads sector 0, finds a FAT12 boot sector with no partition table, mounts it as one drive, and boots. For a DOS 1 boot sector it enters MSX-DOS 1 mode. For a multi-disk file, sector 0 is the generated partition table instead, and Nextor enters disk emulation mode (section 7).
 
@@ -278,10 +320,10 @@ In addition, the options loader and both `CMD_SET_MAPPER` handlers refuse to re-
 ## 10. MSX menu changes
 
 - [menu.c](../2350/software/explorer.pio/msx/src/menu.c): `mapper_description()` returns `"DSK"` for code 23, and `build_menu_row_text()` shows `DSK` in the type column of the menu list (other SD files show `ROM`, `MP3`, `WAV` or `<DIR>`).
-- [screen_rom.c](../2350/software/explorer.pio/msx/src/screen_rom.c): `record_is_system_rom()` includes code 23. This hides mapper override, 50/60 Hz and CPU speed. DSK is not a Sunrise system ROM, so the external audio profiles, WiFi and the SD partition option are hidden too. PSG Mirror stays available, and DSK entries get the `1MB Mapper` row (the WiFi row, relabelled).
+- [screen_rom.c](../2350/software/explorer.pio/msx/src/screen_rom.c): `record_is_system_rom()` includes code 23. This hides mapper override, 50/60 Hz and CPU speed. DSK is not a Sunrise system ROM, so WiFi and the SD partition option are hidden too. `audio_profile_is_supported()` makes an exception for External SCC/SCC+ and MSX-MUSIC on DSK entries (`cur_is_dsk`), so those profiles appear in the Audio row. PSG Mirror stays available, and DSK entries get the `1MB Mapper` row (the WiFi row, relabelled).
 - The first line of every detail screen (ROM, DSK, MP3 and WAV) is `Name:`, printed by one shared `render_detail_name_line()` instead of per-type `ROM:`, `MP3:` and `WAV:` code. That saved 185 bytes of menu code.
 
-Size budget: the menu's `_CODE` segment ends at `0x4050 + 0x7758 = 0xB7A8`, 344 bytes below the Pico communication window at `0xB900` (`MEMORY_START`).
+Size budget: the menu's `_CODE` segment ends at `0x4050 + 0x783E = 0xB88E`, 114 bytes below the Pico communication window at `0xB900` (`MEMORY_START`). The DSK audio rules cost 33 bytes: 25 for External SCC/SCC+, 8 for MSX-MUSIC.
 
 ## 11. Source files
 
@@ -334,7 +376,7 @@ All host suites live in `2350/software/explorer.pio/tests` and are run with Powe
 |---|---|
 | `dsk_backend.ps1` | Compiles the production `sunrise_dsk.c` against stub Pico/FatFs headers and runs the Core 1 loop one iteration at a time. Covers: device size published at mount; reads served from the PSRAM copy; out-of-range reads abort; writes mapped through two extents (including across the extent boundary); LBA advance and DRQ/idle transitions; PSRAM left untouched when the card write fails; rejection when read-only, when card init fails, or when the extent table is too large; pending IDENTIFY completes with the image size. Multi-disk: joined files split by BPB, then FAT media byte, then evenly, with invalid sizes and too many disks rejected; the generated header's partition entry, pointer, `55AA` signature and per-disk start/size table; a multi-disk device serving the header, mapping disk sectors to file sectors and the card, and keeping header writes in PSRAM even for a read-only file |
 | `dsk_write_map.ps1` | Runs the production `dsk_build_write_map()` against the real FatFs (ff15) on a 48 MB RAM disk, formatted as FAT16, FAT32 and exFAT, with contiguous and fragmented images. Verifies that every image sector maps to the card sector holding its data, that a sector written through the map reads back through FatFs, and that the probe leaves the card byte-identical. Over-fragmented, read-only, missing and path-less images must map no extents |
-| `fmpac.ps1` | Existing suite; now expects the Nextor SYSTEM records after the hidden DSK payload in a generated UF2 |
+| `fmpac.ps1` | Existing suite; expects the Nextor SYSTEM records after the hidden DSK payload in a generated UF2. For DSK entries it checks every cartridge audio profile against the menu's `audio_profile_is_supported()` and the firmware's `resolve_audio_mode()` + `dsk_audio_mode_supported()`, with the `1MB Mapper` row both off and on: only External SCC/SCC+ and MSX-MUSIC pass. A structural guard requires `case MAPPER_DSK:` to send External SCC/SCC+ to `loadrom_sunrise_scc_common()` and MSX-MUSIC to `loadrom_sunrise_fmpac_common()`, each with the DSK backend and the `1MB Mapper` choice |
 | `fm_scheduler.ps1`, `audio_handoff.ps1`, `mp3_memory.ps1` | Existing suites; unchanged and passing (SRAM/heap budget still met) |
 
 A one-off check also unpacked a generated UF2 and confirmed that the bytes at `NEXTOR_DSK_FLASH_OFFSET` are identical to `resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM`.
@@ -352,6 +394,8 @@ A one-off check also unpacked a generated UF2 and confirmed that the bytes at `N
 - A heavily fragmented `.DSK`: must boot read-only
 - A machine with an internal floppy drive: check drive letters
 - PSG Mirror on and off
+- External SCC and External SCC+ on an SCC-aware disk game, with `1MB Mapper` off and on, and with PSG Mirror on (SCC and PSG mixed)
+- MSX-MUSIC on an FM disk game on a machine without built-in MSX-MUSIC, with `1MB Mapper` off and on, and with PSG Mirror on (FM and PSG mixed)
 
 ## 13. Limitations 
 
@@ -362,7 +406,7 @@ A one-off check also unpacked a generated UF2 and confirmed that the bytes at `N
 - **Nextor RAM use.** Nextor reserves more work area than a plain floppy disk ROM, so software that needs every byte of RAM may fail, especially on 64 KB machines. Turn on the `1MB Mapper` option for that image, or hold `SHIFT` while booting to disable the internal floppy drive's disk ROM and free some memory.
 - **Drive order.** On machines with an internal floppy drive, the cartridge drive is `A:` only when the cartridge slot is scanned before the internal disk ROM.
 - **Fragmentation.** Images split into more than 16 fragments on the card boot read-only. Copy the file to a freshly formatted card, or defragment it.
-- **No cartridge audio profiles or WiFi** for DSK entries; only PSG Mirror is available.
+- **Audio profiles.** External SCC, External SCC+ and MSX-MUSIC are available for DSK entries so far (plus PSG Mirror). Native SCC/SCC+, MegaRAM SCC, Dual PSG and YM2151/SFG are not wired for DSK yet. WiFi is not offered.
 - **microSD only.** DSK files boot only from the microSD card and are not embedded in flash by the tool. The File Hunter browser (`F3`, then `T` for the DSK catalog) can download them straight to the card root; images with an unsupported size are rejected before saving.
 - **Timestamps.** The file's modification time does not change after the MSX writes to it.
 

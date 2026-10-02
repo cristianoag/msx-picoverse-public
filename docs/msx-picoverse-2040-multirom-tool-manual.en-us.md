@@ -101,7 +101,9 @@ Use the Up and Down arrow keys to move the selection cursor through the list of 
 
 Press the Enter or Space key to launch the selected ROM. The MSX will attempt to boot the ROM using the appropriate mapper settings.
 
-At any time while in the menu, you can press H key read the help screen with basic instructions. Press any key to return to the main menu.
+Press a letter key (A to Z) to jump straight to the first ROM whose name starts with that letter; the menu switches to the page that contains it.
+
+At any time while in the menu, you can press the F1 key to read the help screen with basic instructions. Press any key to return to the main menu.
 
 ## Using Nextor with the PicoVerse 2040 cartridge
 

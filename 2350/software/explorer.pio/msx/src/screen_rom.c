@@ -976,8 +976,9 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     /* Audio emulation and WiFi cannot share the cartridge reliably: the audio
        core and its I2S DMA interrupt steal Core 0 service time and QMI
        bandwidth from the ESP-01 UART, which drops bytes. The firmware enforces
-       this at launch too; this keeps the menu honest about it. */
-    if (cur_wifi_enabled) {
+       this at launch too; this keeps the menu honest about it. On a .DSK entry
+       the same row is "1MB Mapper", which does not restrict audio. */
+    if (cur_wifi_enabled && !cur_is_dsk) {
         return audio_profile == AUDIO_PROFILE_NONE;
     }
     if (current_wavegame_rom) {
@@ -989,8 +990,10 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     if (audio_profile >= AUDIO_PROFILE_SCC && audio_profile <= AUDIO_PROFILE_SCC_PLUS) {
         return record_supports_scc_audio(record);
     }
+    /* .DSK entries offer External SCC/SCC+ (Nextor Sunrise SCC loader) and,
+       below, MSX-MUSIC (Nextor Sunrise FM-PAC loader). */
     if (audio_profile >= AUDIO_PROFILE_SCC_EXTERNAL && audio_profile <= AUDIO_PROFILE_SCC_PLUS_EXTERNAL) {
-        return record_supports_external_scc_audio(record);
+        return cur_is_dsk || record_supports_external_scc_audio(record);
     }
     if (audio_profile >= AUDIO_PROFILE_MEGARAM_SCC && audio_profile <= AUDIO_PROFILE_MEGARAM_SCC_PLUS) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
@@ -1005,7 +1008,7 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     }
     if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
-        return record_supports_msx_music(record) || mapper_code == 19 || mapper_code == 20;
+        return cur_is_dsk || record_supports_msx_music(record) || mapper_code == 19 || mapper_code == 20;
     }
     return 0;
 }

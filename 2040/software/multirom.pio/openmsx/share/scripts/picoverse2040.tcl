@@ -36,12 +36,14 @@
 # openmsx/share folder into the openMSX user directory (<openMSX user dir>/share).
 # See docs/msx-picoverse-2040-openmsx.md in the repository for details.
 #
-# This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
-# License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+# This program is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation; either version 2 of the License, or (at your option)
+# any later version. See <https://www.gnu.org/licenses/>.
 
 namespace eval picoverse2040 {
 
-variable version "v2.64"
+variable version "v2.65"
 
 # Flash layout, must match pico/multirom/multirom.c and tool/src/multirom.c
 variable flash_base       0x10000000

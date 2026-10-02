@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.64
+VERSION ?= v2.65
 
 # Project files
 SOURCES := multirom.c

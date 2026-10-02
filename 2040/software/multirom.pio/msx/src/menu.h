@@ -10,6 +10,7 @@
 #define MEMORY_START 0x8000 // Start of the memory area to read the ROM records
 #define ROM_SELECT_REGISTER 0x9D81 // Memory-mapped register that selects the ROM to load
 #define JIFFY 0xFC9E
+#define MENU_KEY_F1_HELP 0x01      // Code placed in FNKSTR so F1 returns it through CHGET
 
 // Structure to represent a ROM record
 // The ROM record will contain the name of the ROM, the mapper code, the size of the ROM and the offset in the flash memory

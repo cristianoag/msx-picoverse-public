@@ -44,7 +44,7 @@ $code += (Get-CType "sunrise_mapper_bus_t") + "`n"
 $code += (Get-CType "bank8_ctx_t") + "`n"
 $code += (Get-CType "bank16_ctx_t") + "`n"
 foreach ($name in @("is_system_mapper", "is_megaram_mapper", "is_audio_system_mapper",
-    "mapper_supports_scc_audio", "resolve_audio_mode", "mapper_page_from_reg",
+    "mapper_supports_scc_audio", "dsk_audio_mode_supported", "resolve_audio_mode", "mapper_page_from_reg",
     "fmpac_sram_enabled", "fmpac_handle_write", "fmpac_handle_read",
     "sunrise_fmpac_drain_writes", "sunrise_scc_drain_writes", "sunrise_mapper_drain_writes", "c2_handle_memory_write")) {
     $code += (Get-CFunction $firmware $name) + "`n"
@@ -61,6 +61,16 @@ foreach ($name in @("record_is_system_rom", "record_is_sunrise_system_rom",
 }
 
 # These are structural guards, not a simulation of PIO or physical MSX timing.
+# .DSK External SCC/SCC+ and MSX-MUSIC must reuse the Sunrise SCC/FM-PAC loaders
+# with the DSK storage backend (and the entry's 1MB Mapper choice, no WiFi, no
+# MegaRAM), not the game-ROM external SCC / standalone FM-PAC paths.
+$dskCase = [regex]::Match($firmware, "(?s)case MAPPER_DSK:(.*?)break;")
+if (!$dskCase.Success -or $dskCase.Groups[1].Value -notmatch "if \(external_scc_audio\)\s*loadrom_sunrise_scc_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper\);") {
+    throw "MAPPER_DSK does not route External SCC/SCC+ to loadrom_sunrise_scc_common with the DSK backend"
+}
+if ($dskCase.Groups[1].Value -notmatch "else if \(audio_mode == AUDIO_MODE_MSX_MUSIC\)\s*loadrom_sunrise_fmpac_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false\);") {
+    throw "MAPPER_DSK does not route MSX-MUSIC to loadrom_sunrise_fmpac_common with the DSK backend"
+}
 foreach ($name in @("loadrom_sunrise_fmpac_common", "loadrom_c2_common", "loadrom_sunrise_scc_common",
     "loadrom_sunrise_mapper_storage")) {
     $body = Get-CFunction $firmware $name

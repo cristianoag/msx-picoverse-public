@@ -1270,6 +1270,14 @@ static bool mapper_supports_scc_audio(uint8_t mapper) {
     return mapper == 3u || mapper == 14u;
 }
 
+// .DSK entries boot through the Nextor Sunrise loaders. Of the cartridge
+// audio profiles, External SCC/SCC+ (Sunrise SCC loader) and MSX-MUSIC
+// (Sunrise FM-PAC loader) are wired for them, with the DSK storage backend.
+static bool dsk_audio_mode_supported(audio_mode_t mode) {
+    return mode == AUDIO_MODE_SCC_EXTERNAL || mode == AUDIO_MODE_SCC_PLUS_EXTERNAL ||
+           mode == AUDIO_MODE_MSX_MUSIC;
+}
+
 static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile) {
     if (is_system_mapper(mapper)) {
         if (requested_profile == AUDIO_PROFILE_MSX_MUSIC && mapper != MAPPER_MEGARAM)
@@ -14188,14 +14196,17 @@ int __no_inline_not_in_flash_func(main)()
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
         ctrl_psg_emulation = 0;
     }
-    // A .DSK boots through a Nextor Sunrise loader whose storage core services
-    // only the PSG Mirror; no cartridge audio profile or WiFi BIOS. For DSK
-    // entries CTRL_WIFI_SUPPORT carries the "1MB Mapper" memory choice instead.
+    // A .DSK boots through a Nextor Sunrise loader. External SCC/SCC+ use the
+    // Sunrise SCC loader and MSX-MUSIC the Sunrise FM-PAC loader; every other
+    // cartridge profile and the WiFi BIOS are not offered. For DSK entries
+    // CTRL_WIFI_SUPPORT carries the "1MB Mapper" memory choice instead.
     bool is_dsk = is_dsk_record(selected);
     bool dsk_mapper = is_dsk && ctrl_wifi_support != 0u;
     if (is_dsk) {
-        audio_mode = AUDIO_MODE_NONE;
-        ctrl_audio_selection = AUDIO_PROFILE_NONE;
+        if (!dsk_audio_mode_supported(audio_mode)) {
+            audio_mode = AUDIO_MODE_NONE;
+            ctrl_audio_selection = AUDIO_PROFILE_NONE;
+        }
         ctrl_wifi_support = 0;
     }
     debug_trace("DBG launch rom=%d mapper=%u audio=%u mp3_started=%u", rom_index, mapper, (unsigned)audio_mode, mp3_core1_started ? 1u : 0u);
@@ -14482,7 +14493,11 @@ int __no_inline_not_in_flash_func(main)()
             loadrom_megaram(rom_offset, cache_enable);
             break;
         case MAPPER_DSK:
-            if (dsk_mapper)
+            if (external_scc_audio)
+                loadrom_sunrise_scc_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper);
+            else if (audio_mode == AUDIO_MODE_MSX_MUSIC)
+                loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false);
+            else if (dsk_mapper)
                 loadrom_sunrise_mapper_dsk(rom_offset, cache_enable);
             else
                 loadrom_sunrise_dsk(rom_offset, cache_enable);

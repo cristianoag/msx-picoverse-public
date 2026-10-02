@@ -14,7 +14,7 @@
 
 typedef struct { uint8_t segment; } sunrise_ide_t;
 typedef struct { uint8_t Mapper; } ROMRecord;
-static uint8_t cur_wifi_enabled, current_wavegame_rom;
+static uint8_t cur_wifi_enabled, current_wavegame_rom, cur_is_dsk;
 static uint16_t fm_writes[16];
 static unsigned fm_count, mapper_count, megaram_count, bank_count, ide_count;
 static uint32_t mapper_offset;
@@ -236,6 +236,35 @@ static void test_profiles(void) {
     record.Mapper = 1;
     assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
     assert(resolve_audio_mode(1, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
+
+    // .DSK (mapper 23, SD): External SCC/SCC+ and MSX-MUSIC only, in the menu
+    // and at launch. The menu's "1MB Mapper" row reuses cur_wifi_enabled and
+    // must not block them.
+    const uint8_t dsk_profiles[] = {
+        AUDIO_PROFILE_SCC, AUDIO_PROFILE_SCC_PLUS, AUDIO_PROFILE_SCC_EXTERNAL, AUDIO_PROFILE_SCC_PLUS_EXTERNAL,
+        AUDIO_PROFILE_MEGARAM_SCC, AUDIO_PROFILE_MEGARAM_SCC_PLUS, AUDIO_PROFILE_YM2151_SFG05, AUDIO_PROFILE_YM2151_SFG01,
+        AUDIO_PROFILE_YM2151_SFG05_4MHZ, AUDIO_PROFILE_YM2151_SFG01_4MHZ, AUDIO_PROFILE_DUAL_PSG, AUDIO_PROFILE_MSX_MUSIC
+    };
+    record.Mapper = (uint8_t)(MAPPER_DSK | 0x80u);
+    cur_is_dsk = 1;
+    for (unsigned mapper_on = 0; mapper_on < 2; mapper_on++) {
+        cur_wifi_enabled = (uint8_t)mapper_on;
+        for (unsigned i = 0; i < sizeof(dsk_profiles); i++) {
+            uint8_t profile = dsk_profiles[i];
+            bool dsk_audio = profile == AUDIO_PROFILE_SCC_EXTERNAL || profile == AUDIO_PROFILE_SCC_PLUS_EXTERNAL ||
+                             profile == AUDIO_PROFILE_MSX_MUSIC;
+            assert(audio_profile_is_supported(&record, profile) == dsk_audio);
+            assert(dsk_audio_mode_supported(resolve_audio_mode(MAPPER_DSK, profile)) == dsk_audio);
+        }
+        assert(audio_profile_is_supported(&record, AUDIO_PROFILE_NONE));
+    }
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_SCC_EXTERNAL) == AUDIO_MODE_SCC_EXTERNAL);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_SCC_PLUS_EXTERNAL) == AUDIO_MODE_SCC_PLUS_EXTERNAL);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
+    assert(!dsk_audio_mode_supported(AUDIO_MODE_NONE));
+    cur_is_dsk = 0;
+    cur_wifi_enabled = 0;
+    puts("PASS: .DSK offers External SCC/SCC+ and MSX-MUSIC only, with or without the 1MB Mapper option");
 }
 
 static void test_fmpac(void) {

@@ -192,7 +192,11 @@ Explorer lists `.DSK` floppy disk images found on the microSD card next to the R
 - Writes (game saves, `SAVE`, `COPY`) are written straight through to the `.DSK` file on the card, sector by sector, so nothing is lost on power-off. The file's timestamp is not updated.
 - The image boots read-only (writes report a disk error) when the file has the read-only attribute or is split into more than 16 fragments on the card. Copy a fragmented image to a freshly formatted card, or defragment it, to make it writable.
 - Only standard floppy sizes are listed: the file size must be a multiple of 360 KB (368,640 bytes), made of 360 KB and 720 KB disks, up to 4 MB minus 1 KB. Files of any other size are not shown.
-- Only the PSG Mirror and **1MB Mapper** options are available for `.DSK` entries; cartridge audio profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered. `1MB Mapper: Yes` boots the image with Nextor plus the 1 MB PSRAM memory mapper, like the `Nextor Sunrise 2.1.4 + 1MB Mapper` entries. Turn it on when a game keeps loading or crashes on a machine with little RAM, such as a 64 KB MSX2+. The choice is saved per image.
+- `.DSK` entries offer **PSG Mirror**, **1MB Mapper**, and the **External SCC**, **External SCC+** and **FMPAC/MSX-MUSIC** audio profiles; other cartridge audio profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered.
+  - `1MB Mapper: Yes` boots the image with Nextor plus the 1 MB PSRAM memory mapper, like the `Nextor Sunrise 2.1.4 + 1MB Mapper` entries. Turn it on when a game keeps loading or crashes on a machine with little RAM, such as a 64 KB MSX2+.
+  - `Audio: External SCC` / `External SCC+` (since v2.55) adds a virtual Konami SCC (or SCC+) cartridge in expanded subslot 2, for disk games that look for an SCC in another slot.
+  - `Audio: FMPAC/MSX-MUSIC` (since v2.55) adds a virtual FM-PAC (FM-PAC BIOS + YM2413) in expanded subslot 2, for disk games with MSX-MUSIC on machines without built-in FM. They are the same profiles the `Nextor Sunrise 2.1.4` entries offer, and they combine with `1MB Mapper` and PSG Mirror.
+  - All choices are saved per image.
 
 #### Multi-disk games
 

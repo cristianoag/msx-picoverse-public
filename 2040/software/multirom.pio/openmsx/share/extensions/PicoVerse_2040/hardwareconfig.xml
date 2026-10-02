@@ -1,5 +1,9 @@
 <?xml version="1.0" ?>
 <!DOCTYPE msxconfig SYSTEM 'msxconfig2.dtd'>
+<!--
+  PicoVerse 2040 MultiROM - Copyright (C) 2026 Cristiano Goncalves (The Retro Hacker)
+  Licensed under the GNU General Public License, version 2 or (at your option) any later version.
+-->
 <msxconfig>
   <info>
     <name>PicoVerse 2040 MultiROM</name>

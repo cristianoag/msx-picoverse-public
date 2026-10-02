@@ -1,9 +1,15 @@
 # Change Log
 
+## PicoVerse 2040 Multirom v2.65
+
+- Version bumped to v2.65 (top-level and tool Makefiles, and the `picoverse2040.tcl` script version).
+- The openMSX add-on files (`openmsx/share/scripts/picoverse2040.tcl`, `openmsx/share/extensions/PicoVerse_2040/hardwareconfig.xml` and `openmsx/src/placeholder.asm`) are now licensed under the GNU GPL v2 or later instead of CC BY-NC-SA 4.0, so they can be contributed to openMSX (submitted as a draft PR to openMSX/openMSX). Only the license header changed; the rest of the project keeps its license.- Fixed the MSX menu ROM list being two columns left of the header and footer on machines that boot with a narrower SCREEN 0 width, such as the Philips VG-8020 (WIDTH 37). The BIOS centers its text window when `LINLEN` < 40, but the list rows are written straight to VRAM at column 0. `displayMenu()` now finds the column where the BIOS printed the header (`detect_menu_col_offset()`), and `blit_row_vram()` adds that offset and writes only up to the end of the line.
+- The MSX menu help key is now F1 instead of H. `main()` clears the BIOS function key strings and sets F1's `FNKSTR` entry to `MENU_KEY_F1_HELP` (0x01), the same technique used by the 2350 Explorer. The footer shows `[F1 - Help]` and the help screen was updated.
+- Letter keys (A-Z, case-insensitive) now jump to the first ROM whose name starts with that letter (`find_first_by_letter()`), switching page when needed. Updated the MultiROM manual, `msx-picoverse-2040-menu.md` and the public readme.
+
 ## PicoVerse 2040 Multirom v2.64
 
 - Version bumped to v2.64 (top-level and tool Makefiles, and the `picoverse2040.tcl` script version).
-- Fixed the MSX menu ROM list being two columns left of the header and footer on machines that boot with a narrower SCREEN 0 width, such as the Philips VG-8020 (WIDTH 37). The BIOS centers its text window when `LINLEN` < 40, but the list rows are written straight to VRAM at column 0. `displayMenu()` now finds the column where the BIOS printed the header (`detect_menu_col_offset()`), and `blit_row_vram()` adds that offset and writes only up to the end of the line.
 - Added `openmsx/`, an openMSX add-on that runs MultiROM UF2 images without changing openMSX. `openmsx/share/scripts/picoverse2040.tcl` adds the `picoverse2040` console command (`insert`, `menu`, `boot`, `list`, `info`, `eject`) and the `picoverse2040_uf2`, `picoverse2040_slot` and `picoverse2040_hd` settings.
   - It rebuilds the Pico flash image from the UF2, finds the menu and config area after the firmware, and inserts the 32KB menu as a `Page12` cartridge.
   - A watchpoint on the menu's `0x9D81` ROM select register catches the selected entry. The script then inserts it with the matching openMSX mapper: `Page12`/`Page012`/`Page0123` for the planar ROMs (padded to their window), `KonamiSCC`, `Konami`, `ASCII8`, `ASCII16`, `NEO-8`, `NEO-16`, `ASCII16-X` and `Manbow2`.
