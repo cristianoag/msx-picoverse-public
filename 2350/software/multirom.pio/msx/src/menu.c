@@ -553,7 +553,7 @@ static void render_menu_page(void) {
     }
 
     Locate(0, 22);
-    printf("Page: %02d/%02d                [H - Help]",currentPage, totalPages); // Print the page number and the help option
+    printf("Page: %02d/%02d               [F1 - Help]",currentPage, totalPages); // Print the page number and the help option
 }
 
 // helpMenu - Display the help menu on the screen
@@ -576,7 +576,11 @@ void helpMenu()
     Locate(0, 5);
     printf("  selected rom file");
     Locate(0, 6);
-    printf("Press [H] to display the help screen");
+    printf("Press [F1] to display the help screen");
+    Locate(0, 7);
+    printf("Press [A]-[Z] to go to the first rom");
+    Locate(0, 8);
+    printf("  file starting with that letter");
     Locate(0, 21);
     print_separator_line();
     Locate(0, 22);
@@ -598,9 +602,33 @@ void loadGame(int index)
     }
 }
 
+// find_first_by_letter - Find the first record whose name starts with a letter
+// Returns the record index, or -1 when key is not a letter or no name starts with it.
+static int find_first_by_letter(unsigned char key)
+{
+    if (key >= 'a' && key <= 'z') {
+        key -= 'a' - 'A';
+    }
+    if (key < 'A' || key > 'Z') {
+        return -1;
+    }
+
+    for (unsigned char i = 0; i < totalFiles; i++) {
+        unsigned char ch = (unsigned char)records[i].Name[0];
+        if (ch >= 'a' && ch <= 'z') {
+            ch -= 'a' - 'A';
+        }
+        if (ch == key) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // navigateMenu - Navigate the menu
 // This function will navigate the menu. It will wait for the user to press a key and then act based on the key pressed. The user can navigate the menu using the arrow keys
-// to move up and down the files, left and right to move between pages, enter to load the game, and H to display the help screen.
+// to move up and down the files, left and right to move between pages, enter to load the game, F1 to display the help screen, and a letter to jump to the first
+// file whose name starts with that letter.
 // The function will update the current page and current index based on the key pressed and display the menu again.
 void navigateMenu() 
 {
@@ -672,15 +700,27 @@ void navigateMenu()
                 // load Nextor
                 //loadGame(0); // Load the Nextor ROM
                 break;
-            case 72: // H - Help (uppercase H)
-            case 104: // h - Help (lowercase h)
-                // Help
+            case MENU_KEY_F1_HELP: // F1 - Help
                 helpMenu(); // Display the help menu
                 break;
             case 13: // Enter
             case 32: // Space
                 // Load the game
                 loadGame(currentIndex); // Load the selected game
+                break;
+            default:
+                {
+                    int target = find_first_by_letter(key);
+                    if (target >= 0 && target != currentIndex) {
+                        int targetPage = (target / FILES_PER_PAGE) + 1;
+                        currentIndex = target;
+                        if (targetPage != currentPage) {
+                            currentPage = targetPage;
+                            render_menu_page();
+                            pageRedrawn = 1;
+                        }
+                    }
+                }
                 break;
         }
         if (!pageRedrawn && currentIndex != previousIndex) {
@@ -702,6 +742,7 @@ void main() {
     //Screen(0); // Set the screen mode
     //invert_chars(32, 126); // Invert the characters from 32 to 126
     clear_fkeys(); // Clear the function keys
+    ((char *)BIOS_FNKSTR)[0] = MENU_KEY_F1_HELP; // F1 returns the help key code
     //KillKeyBuffer(); // Clear the key buffer
 
     // Display the menu

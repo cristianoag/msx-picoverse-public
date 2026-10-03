@@ -137,9 +137,11 @@ capture:
 ; out_base    = GPIO 16 (D0), 8 pins
 ;
 ; /WAIT is not asserted, so the CPU answer can arrive after the I/O cycle has
-; ended. Before driving, /IORQ is re-checked: if the cycle is already over the
-; token is dropped, so a late answer can never drive the bus during the next
-; (memory) cycle. Must stay at 13 instructions: pio0 holds 13 + 6 + 13 = 32.
+; ended (in Core 1 serviced modes it usually does). Before driving, /IORQ is
+; re-checked: if the cycle is already over the token is dropped WITHOUT writing
+; pindirs. pindirs is shared with msx_read_responder on pio0, so tri-stating
+; D0..D7 here at an arbitrary time would cut off a memory read it is driving.
+; Must stay at 13 instructions: pio0 holds 13 + 6 + 13 = 32.
 
 .program msx_io_read_responder
 
@@ -155,12 +157,11 @@ wait_rd:
     in pins, 16                   ; Capture A0..A15 into ISR
     push block                    ; Send address to CPU via RX FIFO
     pull block                    ; Wait for CPU response in TX FIFO (data token)
-    jmp pin cycle_over            ; /IORQ=1: I/O cycle already ended, never drive
+    jmp pin wait_rd               ; /IORQ=1: cycle already ended, drop the token and leave D0..D7 alone
     out pins, 8                   ; Drive D0..D7 with data byte
     out pindirs, 8         [2]    ; Set pindirs (0xFF=output, 0x00=tristate) + data hold
     wait 1 gpio 24                ; Wait for /RD=1 (bus cycle ends)
-cycle_over:
     set x, 0                      ; Prepare zero for tri-state
-    mov osr, x                    ; Load zero into OSR (drops an unused token)
+    mov osr, x                    ; Load zero into OSR
     out pindirs, 8                ; Tri-state D0..D7 (pindirs=0x00)
 .wrap

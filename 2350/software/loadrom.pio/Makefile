@@ -9,7 +9,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.78
+VERSION ?= v2.79
 
 # Paths
 PICO_DIR := pico/loadrom

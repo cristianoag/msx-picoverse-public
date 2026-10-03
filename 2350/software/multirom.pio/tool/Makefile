@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.63
+VERSION ?= v2.64
 
 # Project files
 SOURCES := multirom.c
@@ -44,8 +44,10 @@ PICOBIN   := ../pico/multirom/build/multirom.bin
 PICOBIN_H := $(SRCDIR)/multirom.h
 MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
-NEXTOR_SUNRISE := ../nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
+NEXTOR_SUNRISE := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_SUNRISE_H := $(SRCDIR)/nextor_sunrise.h
+NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
+NEXTOR3_H := $(SRCDIR)/nextor3.h
 ESP8266P_ROM := ../../wifi/bios/ESP8266P.rom
 ESP8266P_ROM_H := $(SRCDIR)/esp8266p_rom.h
 
@@ -60,7 +62,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/multirom.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_SUNRISE_H) $(NEXTOR_SUNRISE) $(ESP8266P_ROM_H) $(ESP8266P_ROM)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_SUNRISE_H) $(NEXTOR_SUNRISE) $(NEXTOR3_H) $(NEXTOR3) $(ESP8266P_ROM_H) $(ESP8266P_ROM)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -74,6 +76,10 @@ $(MSXMENU_H): $(MSXMENU)
 
 $(NEXTOR_SUNRISE_H): $(NEXTOR_SUNRISE)
 	@echo "Embedding Sunrise Nextor ROM into header"
+	$(UTLDIR)/$(XXD) -i $< $@
+
+$(NEXTOR3_H): $(NEXTOR3)
+	@echo "Embedding Nextor 3 beta ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(ESP8266P_ROM_H): $(ESP8266P_ROM)
@@ -92,5 +98,5 @@ $(DISDIR)/multirom.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor_sunrise.h $(SRCDIR)/esp8266p_rom.h $(BINDIR)/multirom.rom $(BINDIR)/multirom_payload.bin
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor_sunrise.h $(SRCDIR)/nextor3.h $(SRCDIR)/esp8266p_rom.h $(BINDIR)/multirom.rom $(BINDIR)/multirom_payload.bin
 	$(RM) $(DISDIR)/*

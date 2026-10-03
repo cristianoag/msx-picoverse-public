@@ -1,6 +1,6 @@
 # MSX PicoVerse 2350 — Sunrise IDE Emulation for Nextor
 
-This document describes the implementation of the Sunrise IDE interface emulation modes in the MSX PicoVerse 2350 firmware. The 2350 variant supports two distinct storage backends — microSD card and USB mass storage — each available standalone, combined with a 1MB PSRAM-backed memory mapper, combined with that mapper plus Carnivore2-compatible RAM-mode loading for `SROM.COM /D15`, or combined with the mapper plus a separate 1MB MegaRAM subslot. The four non-Carnivore2/non-MegaRAM Sunrise modes can also optionally expose ESP-01 WiFi support when built with `-w` in either `loadrom.exe` or `multirom.exe`, or when enabled from the Explorer ROM details screen. Explorer uses the same `-s1`/`-m1`/`-c1`/`-r1` and `-s2`/`-m2`/`-c2`/`-r2` option names to add embedded Nextor SYSTEM entries alongside the ROMs scanned from the source folder, and `-a` / `--allnextor` adds all eight entries at once.
+This document describes the implementation of the Sunrise IDE interface emulation modes in the MSX PicoVerse 2350 firmware. The 2350 variant supports two distinct storage backends — microSD card and USB mass storage — each available standalone, combined with a 1MB PSRAM-backed memory mapper, combined with that mapper plus Carnivore2-compatible RAM-mode loading for `SROM.COM /D15`, or combined with the mapper plus a separate 1MB MegaRAM subslot. The four non-Carnivore2/non-MegaRAM Sunrise modes can also optionally expose ESP-01 WiFi support when built with `-w` in either `loadrom.exe` or `multirom.exe`, or when enabled from the Explorer ROM details screen. Explorer uses the same `-s1`/`-m1`/`-c1`/`-r1` and `-s2`/`-m2`/`-c2`/`-r2` option names to add embedded Nextor SYSTEM entries alongside the ROMs scanned from the source folder, and `-a` / `--allnextor` adds all eight entries at once, plus the `-s3` Nextor 3 beta microSD entry.
 
 ## 1. Overview
 
@@ -342,7 +342,7 @@ MegaRAM modes do not currently have WiFi variants; their mapper types dispatch d
 ### LoadROM command-line options
 
 ```
-loadrom.exe [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-r1] [-r2] [-w] [-scc] [-sccplus] [-o <filename>] [romfile]
+loadrom.exe [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-r1] [-r2] [-s3] [-w] [-scc] [-sccplus] [-o <filename>] [romfile]
 ```
 
 | Option | Long Form | Description |
@@ -355,13 +355,14 @@ loadrom.exe [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-r1] [-r2] [-w] [-scc] [-s
 | `-c2` | `--carnivore2-usb` | Sunrise IDE + 1MB PSRAM mapper + Carnivore2 RAM-mode emulation with USB pendrive |
 | `-r1` | `--megaram-sd` | Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM with microSD card |
 | `-r2` | `--megaram-usb` | Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM with USB pendrive |
-| `-w` | `--wifi` | Add the ESP8266P system ROM + memio UART WiFi surface to `-s1`/`-m1`/`-s2`/`-m2` |
+| `-s3` | `--sunrise3-sd` | Same as `-s1`, with the Nextor 3.0.0 Beta 2 kernel instead of 2.1.4 (for testing) |
+| `-w` | `--wifi` | Add the ESP8266P system ROM + memio UART WiFi surface to `-s1`/`-m1`/`-s2`/`-m2`/`-s3` |
 
-In LoadROM the Sunrise, Carnivore2, and MegaRAM base options are mutually exclusive. The `-w` flag is valid only with `-s1`, `-m1`, `-s2`, or `-m2`.
+In LoadROM the Sunrise, Carnivore2, and MegaRAM base options are mutually exclusive. The `-w` flag is valid only with `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`.
 
 ### MultiROM command-line options
 
-The same `-s1` / `-m1` / `-s2` / `-m2` / `-c1` / `-c2` flags are accepted by `multirom.exe`. In MultiROM they are **not** mutually exclusive — each enabled flag adds an independent SYSTEM entry to the on-cart menu, so a single UF2 can offer several Sunrise / Carnivore2 modes side-by-side. The `-w` WiFi flag is also accepted by `multirom.exe`; it requires at least one of `-s1`/`-m1`/`-s2`/`-m2` and is applied to every selected Sunrise IDE entry. WiFi is intentionally not added to `-c1`/`-c2` Carnivore2 entries. The `-scc` / `-sccplus` flags are accepted by both tools and apply to Konami SCC / Manbow2 ROMs as well as to ROMs uploaded via SROM in the Carnivore2 modes. MegaRAM `-r1`/`-r2` are LoadROM system-image options in the current implementation.
+The same `-s1` / `-m1` / `-s2` / `-m2` / `-c1` / `-c2` / `-s3` flags are accepted by `multirom.exe`, and `-a` / `--allnextor` enables all of them at once. In MultiROM they are **not** mutually exclusive — each enabled flag adds an independent SYSTEM entry to the on-cart menu, so a single UF2 can offer several Sunrise / Carnivore2 modes side-by-side. The `-w` WiFi flag is also accepted by `multirom.exe`; it requires at least one of `-s1`/`-m1`/`-s2`/`-m2`/`-s3` and is applied to every selected Sunrise IDE entry. WiFi is intentionally not added to `-c1`/`-c2` Carnivore2 entries. The `-scc` / `-sccplus` flags are accepted by both tools and apply to Konami SCC / Manbow2 ROMs as well as to ROMs uploaded via SROM in the Carnivore2 modes. MegaRAM `-r1`/`-r2` are LoadROM system-image options in the current implementation.
 
 ### Examples
 
@@ -437,13 +438,14 @@ The WiFi-enabled Sunrise variants additionally use the host tool to append the E
 
 ### Tool Makefile
 
-The PC tool Makefile generates `nextor_sunrise.h` (the embedded ROM as a C byte array) from:
+The PC tool Makefile generates `nextor_sunrise.h` and `nextor3.h` (the embedded ROMs as C byte arrays) from:
 
 ```
-nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM → src/nextor_sunrise.h
+resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM       → src/nextor_sunrise.h
+resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM → src/nextor3.h
 ```
 
-This header is shared by all four Nextor modes.
+`nextor_sunrise.h` is shared by all the Nextor 2.1.4 modes; `nextor3.h` is used only by `-s3`.
 
 ## 13. Source File Reference
 
@@ -462,9 +464,10 @@ This header is shared by all four Nextor modes.
 For the full WiFi-specific register map and usage notes, see `docs/msx-picoverse-2350-wifi.md`.
 | `pico/loadrom/loadrom.h` | Pin definitions, SRAM pool, mapper and MegaRAM constants |
 | `pico/loadrom/CMakeLists.txt` | Build configuration with both USB and SD dependencies |
-| `tool/src/loadrom.c` | PC tool: `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2` options, UF2 generation |
+| `tool/src/loadrom.c` | PC tool: `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3` options, UF2 generation |
 | `tool/Makefile` | Build scripts, embedded ROM header generation |
-| `nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` | 128KB Nextor Sunrise IDE kernel |
+| `resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` | 128KB Nextor Sunrise IDE kernel |
+| `resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM` | 128KB Nextor 3.0.0 Beta 2 Sunrise IDE kernel (`-s3`) |
 | `lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/` | Carl Kugler's FatFS + SPI SD driver library |
 
 All paths are relative to `2350/software/loadrom.pio/`.

@@ -57,7 +57,7 @@ explorer.exe [options]
 
 - `-h`, `--help` : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `explorer.uf2`).
-- `-a`, `--allnextor` : Include every embedded Nextor Sunrise 2.1.4 SYSTEM entry listed below (`-s1` to `-r2`) while still scanning and appending `.ROM` files from the current folder. The Nextor 3 beta entry (`-s3`) is not included.
+- `-a`, `--allnextor` : Include every embedded Nextor SYSTEM entry listed below (the eight Nextor Sunrise 2.1.4 entries `-s1` to `-r2`, plus the Nextor 3 beta entry `-s3`) while still scanning and appending `.ROM` files from the current folder.
 - `-s1`, `--sunrise-sd` : Include Nextor Sunrise 2.1.4 using the on-board microSD card slot.
 - `-m1`, `--mapper-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c1`, `--carnivore2-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
@@ -66,9 +66,9 @@ explorer.exe [options]
 - `-m2`, `--mapper-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c2`, `--carnivore2-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
 - `-r2`, `--megaram-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and a separate 1MB MegaRAM subslot.
-- `-s3`, `--sunrise3-sd` : Include Nextor Sunrise 3.0.0 Beta 1 using the on-board microSD card slot, for testing the upcoming Nextor 3. It uses the Sunrise IDE MasterOnly kernel from Konamiman's [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.7-blueMSX-v0.1.5-Nextor-3.0-beta.1) release and behaves like `-s1` otherwise. This is a beta kernel, so keep backups of the microSD card.
+- `-s3`, `--sunrise3-sd` : Include Nextor Sunrise 3.0.0 Beta 2 using the on-board microSD card slot, for testing the upcoming Nextor 3. It uses the Sunrise IDE MasterOnly kernel from Konamiman's [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release and behaves like `-s1` otherwise. This is a beta kernel, so keep backups of the microSD card.
 
-The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all eight Nextor 2.1.4 entries in one UF2; add `-s3` too if you also want the Nextor 3 beta entry.
+The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all nine Nextor entries (eight Nextor 2.1.4 plus the Nextor 3 beta) in one UF2.
 
 Nextor entries always show the Nextor version in the Explorer menu:
 
@@ -82,7 +82,7 @@ Nextor entries always show the Nextor version in the Explorer menu:
 | `-m2` | `Nextor Sunrise 2.1.4 + 1MB Mapper (USB)` |
 | `-c2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + C2 RAM (USB)` |
 | `-r2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + 1MB MegaRAM (USB)` |
-| `-s3` | `Nextor Sunrise 3.0.0 Beta 1 (SD)` |
+| `-s3` | `Nextor Sunrise 3.0.0 Beta 2 (SD)` |
 
 Per-entry options (audio profile, PSG Mirror, WiFi, SD partition) are saved in a `.PVC` file named after the menu entry, so options saved by a UF2 that used the older names (`Nextor Sunrise IDE ...`) are not picked up and the entries start with default options.
 
@@ -110,7 +110,7 @@ This includes the selected Nextor entries and the supported folder ROMs in one E
 explorer.exe -s1 -s3 -o explorer_nextor3.uf2
 ```
 
-This includes Nextor 2.1.4 and the Nextor 3.0.0 Beta 1 microSD entries side by side, so both kernels can be tested on the same card.
+This includes Nextor 2.1.4 and the Nextor 3.0.0 Beta 2 microSD entries side by side, so both kernels can be tested on the same card.
 
 ## ROM mapper detection and tags
 
@@ -192,10 +192,13 @@ Explorer lists `.DSK` floppy disk images found on the microSD card next to the R
 - Writes (game saves, `SAVE`, `COPY`) are written straight through to the `.DSK` file on the card, sector by sector, so nothing is lost on power-off. The file's timestamp is not updated.
 - The image boots read-only (writes report a disk error) when the file has the read-only attribute or is split into more than 16 fragments on the card. Copy a fragmented image to a freshly formatted card, or defragment it, to make it writable.
 - Only standard floppy sizes are listed: the file size must be a multiple of 360 KB (368,640 bytes), made of 360 KB and 720 KB disks, up to 4 MB minus 1 KB. Files of any other size are not shown.
-- `.DSK` entries offer **PSG Mirror**, **1MB Mapper**, and the **External SCC**, **External SCC+** and **FMPAC/MSX-MUSIC** audio profiles; other cartridge audio profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered.
+- `.DSK` entries offer **PSG Mirror**, **1MB Mapper**, and the same cartridge audio profiles as the `Nextor Sunrise 2.1.4` entries: **External SCC**, **External SCC+**, **FMPAC/MSX-MUSIC**, **YM2164 SFG05**, **YM2151 SFG01** (with their 4MHZ variants) and **Dual PSG**. The native SCC/SCC+ and MegaRAM SCC profiles, WiFi, mapper override, 50/60Hz and CPU speed options are not offered.
   - `1MB Mapper: Yes` boots the image with Nextor plus the 1 MB PSRAM memory mapper, like the `Nextor Sunrise 2.1.4 + 1MB Mapper` entries. Turn it on when a game keeps loading or crashes on a machine with little RAM, such as a 64 KB MSX2+.
   - `Audio: External SCC` / `External SCC+` (since v2.55) adds a virtual Konami SCC (or SCC+) cartridge in expanded subslot 2, for disk games that look for an SCC in another slot.
-  - `Audio: FMPAC/MSX-MUSIC` (since v2.55) adds a virtual FM-PAC (FM-PAC BIOS + YM2413) in expanded subslot 2, for disk games with MSX-MUSIC on machines without built-in FM. They are the same profiles the `Nextor Sunrise 2.1.4` entries offer, and they combine with `1MB Mapper` and PSG Mirror.
+  - `Audio: FMPAC/MSX-MUSIC` (since v2.55) adds a virtual FM-PAC (FM-PAC BIOS + YM2413) in expanded subslot 2, for disk games with MSX-MUSIC on machines without built-in FM.
+  - `Audio: YM2164 SFG05` / `YM2151 SFG01` (since v2.56, also as `4MHZ` variants) adds a virtual Yamaha SFG FM unit (SFG BIOS + YM2164/YM2151) in expanded subslot 2.
+  - `Audio: Dual PSG` (since v2.56) adds a second PSG on I/O ports `10h`/`11h`, with no extra subslot.
+  - All of these are the same profiles the `Nextor Sunrise 2.1.4` entries offer, and they combine with `1MB Mapper` and PSG Mirror.
   - All choices are saved per image.
 
 #### Multi-disk games

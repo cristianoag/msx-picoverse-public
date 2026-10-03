@@ -237,9 +237,11 @@ static void test_profiles(void) {
     assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
     assert(resolve_audio_mode(1, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
 
-    // .DSK (mapper 23, SD): External SCC/SCC+ and MSX-MUSIC only, in the menu
-    // and at launch. The menu's "1MB Mapper" row reuses cur_wifi_enabled and
-    // must not block them.
+    // .DSK (mapper 23, SD): every cartridge-side profile a Sunrise SYSTEM entry
+    // offers (External SCC/SCC+, MSX-MUSIC, YM2151/SFG at both clocks, Dual
+    // PSG), in the menu and at launch; not the native SCC/SCC+ (game mapper)
+    // or MegaRAM SCC profiles. The menu's "1MB Mapper" row reuses
+    // cur_wifi_enabled and must not block them.
     const uint8_t dsk_profiles[] = {
         AUDIO_PROFILE_SCC, AUDIO_PROFILE_SCC_PLUS, AUDIO_PROFILE_SCC_EXTERNAL, AUDIO_PROFILE_SCC_PLUS_EXTERNAL,
         AUDIO_PROFILE_MEGARAM_SCC, AUDIO_PROFILE_MEGARAM_SCC_PLUS, AUDIO_PROFILE_YM2151_SFG05, AUDIO_PROFILE_YM2151_SFG01,
@@ -251,8 +253,8 @@ static void test_profiles(void) {
         cur_wifi_enabled = (uint8_t)mapper_on;
         for (unsigned i = 0; i < sizeof(dsk_profiles); i++) {
             uint8_t profile = dsk_profiles[i];
-            bool dsk_audio = profile == AUDIO_PROFILE_SCC_EXTERNAL || profile == AUDIO_PROFILE_SCC_PLUS_EXTERNAL ||
-                             profile == AUDIO_PROFILE_MSX_MUSIC;
+            bool dsk_audio = profile != AUDIO_PROFILE_SCC && profile != AUDIO_PROFILE_SCC_PLUS &&
+                             profile != AUDIO_PROFILE_MEGARAM_SCC && profile != AUDIO_PROFILE_MEGARAM_SCC_PLUS;
             assert(audio_profile_is_supported(&record, profile) == dsk_audio);
             assert(dsk_audio_mode_supported(resolve_audio_mode(MAPPER_DSK, profile)) == dsk_audio);
         }
@@ -261,10 +263,23 @@ static void test_profiles(void) {
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_SCC_EXTERNAL) == AUDIO_MODE_SCC_EXTERNAL);
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_SCC_PLUS_EXTERNAL) == AUDIO_MODE_SCC_PLUS_EXTERNAL);
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_DUAL_PSG) == AUDIO_MODE_DUAL_PSG);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG05) == AUDIO_MODE_YM2151_SFG05);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG05_4MHZ) == AUDIO_MODE_YM2151_SFG05);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG01) == AUDIO_MODE_YM2151_SFG01);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG01_4MHZ) == AUDIO_MODE_YM2151_SFG01);
     assert(!dsk_audio_mode_supported(AUDIO_MODE_NONE));
+    // The DSK rule must not leak to other system entries: Nextor + MegaRAM
+    // (19) still has no Dual PSG/SFG, standalone MegaRAM (21) no MSX-MUSIC.
     cur_is_dsk = 0;
     cur_wifi_enabled = 0;
-    puts("PASS: .DSK offers External SCC/SCC+ and MSX-MUSIC only, with or without the 1MB Mapper option");
+    record.Mapper = 19;
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_DUAL_PSG));
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_YM2151_SFG05));
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_SCC_EXTERNAL));
+    record.Mapper = 21;
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
+    puts("PASS: .DSK offers External SCC/SCC+, MSX-MUSIC, SFG05/SFG01 (both clocks) and Dual PSG, with or without the 1MB Mapper option");
 }
 
 static void test_fmpac(void) {
@@ -440,7 +455,7 @@ static uint32_t read_le32(const uint8_t *bytes) {
 }
 
 static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_t firmware_size) {
-    uint8_t bios[FMPAC_BIOS_ROM_SIZE], block[512], records[8 * ROM_RECORD_SIZE];
+    uint8_t bios[FMPAC_BIOS_ROM_SIZE], block[512], records[9 * ROM_RECORD_SIZE];
     FILE *file = fopen(bios_path, "rb");
     assert(file);
     assert(fread(bios, 1, sizeof(bios), file) == sizeof(bios));
@@ -489,7 +504,8 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
     assert(!ferror(file) && fclose(file) == 0);
     assert(blocks == total_blocks && bios_bytes == sizeof(bios) && record_bytes == sizeof(records));
 
-    const uint8_t variants[] = {15, 16, 17, 19, 10, 11, 18, 20};
+    // --allnextor: eight Nextor 2.1.4 entries, then the Nextor 3 beta on microSD.
+    const uint8_t variants[] = {15, 16, 17, 19, 10, 11, 18, 20, 15};
     uint32_t nextor_offset = NEXTOR_DSK_FLASH_OFFSET + NEXTOR_DSK_ROM_SIZE;
     for (unsigned i = 0; i < sizeof(variants); i++) {
         const uint8_t *record = records + i * ROM_RECORD_SIZE;
@@ -498,7 +514,7 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
         assert(read_le32(record + ROM_NAME_MAX + 5) == nextor_offset);
         nextor_offset += 128 * 1024;
     }
-    puts("PASS: real BIOS AB/PAC2OPLL discovery and all bank bytes; UF2 BIOS payload and 8 Nextor records");
+    puts("PASS: real BIOS AB/PAC2OPLL discovery and all bank bytes; UF2 BIOS payload and 9 Nextor records");
 }
 
 int main(int argc, char **argv) {

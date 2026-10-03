@@ -1,5 +1,11 @@
 # Change Log
 
+## PicoVerse 2040 Loadrom v2.63
+
+- Version bumped to v2.63 (top-level and tool Makefiles).
+- `../tools/gen_romdb.py` now downloads the latest database by default from Vampier's ROM DB (`https://romdb.vampier.net/Archive/xml-msxromsdb.zip`) and reads `softwaredb.xml` from the zip in memory, so a local openMSX install is no longer needed. A local `softwaredb.xml` or `.zip` can still be passed as an argument for offline use. The generated header now records the source and the database timestamp. The script also accepts the `ASCII16-X` and lowercase `konami` mapper names used by this database.
+- Regenerated `tool/src/romdb.h` from the 2026-10-03 database: 3115 → 3218 entries (103 added, none removed or changed), including 31 ASCII16-X ROMs (mapper 12) that the old DB never matched. Rebuilt `tool/dist/loadrom.exe`.
+
 ## PicoVerse 2040 Loadrom v2.62
 
 - Version bumped to v2.62 (top-level and tool Makefiles).

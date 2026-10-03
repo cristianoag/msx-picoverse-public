@@ -24,7 +24,7 @@ VERBOSE ?= --verbose
 CCFLAGS := -g
 
 # Application metadata
-VERSION ?= v2.78
+VERSION ?= v2.79
 
 # Project files
 SOURCES := loadrom.c
@@ -35,6 +35,8 @@ PICOBIN   := ../pico/loadrom/dist/loadrom.bin
 PICOBIN_H := $(SRCDIR)/loadrom.h
 NEXTOR_SUNRISE := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_SUNRISE_H := $(SRCDIR)/nextor_sunrise.h
+NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
+NEXTOR3_H := $(SRCDIR)/nextor3.h
 ESP8266P_ROM := ../../wifi/bios/ESP8266P.rom
 ESP8266P_ROM_H := $(SRCDIR)/esp8266p_rom.h
 FMPAC_BIOS := ../fmpac/FMPCCMFC.BIN
@@ -61,7 +63,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/loadrom.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(NEXTOR_SUNRISE_H) $(NEXTOR_SUNRISE) $(ESP8266P_ROM_H) $(ESP8266P_ROM) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(OPL4BIN_H) $(OPL4BIN) $(OPL4BIN22K_H) $(OPL4BIN22K) $(YRW801_ROM_H) $(YRW801_ROM) $(MSXAUDIOBIN_H) $(MSXAUDIOBIN) $(MSXAUDIO_BIOS_H) $(MSXAUDIO_BIOS)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(NEXTOR_SUNRISE_H) $(NEXTOR_SUNRISE) $(NEXTOR3_H) $(NEXTOR3) $(ESP8266P_ROM_H) $(ESP8266P_ROM) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(OPL4BIN_H) $(OPL4BIN) $(OPL4BIN22K_H) $(OPL4BIN22K) $(YRW801_ROM_H) $(YRW801_ROM) $(MSXAUDIOBIN_H) $(MSXAUDIOBIN) $(MSXAUDIO_BIOS_H) $(MSXAUDIO_BIOS)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -71,6 +73,10 @@ $(PICOBIN_H): $(PICOBIN)
 
 $(NEXTOR_SUNRISE_H): $(NEXTOR_SUNRISE)
 	@echo "Embedding Sunrise Nextor ROM into header"
+	$(UTLDIR)/$(XXD) -i $< $@
+
+$(NEXTOR3_H): $(NEXTOR3)
+	@echo "Embedding Nextor 3 beta ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(ESP8266P_ROM_H): $(ESP8266P_ROM)
@@ -113,5 +119,5 @@ $(DISDIR)/loadrom.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/loadrom.h $(SRCDIR)/nextor_sunrise.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/opl4_fw.h $(SRCDIR)/opl4_fw_22k.h $(SRCDIR)/yrw801_rom.h $(SRCDIR)/msxaudio_fw.h $(SRCDIR)/msxaudio_bios.h
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/loadrom.h $(SRCDIR)/nextor_sunrise.h $(SRCDIR)/nextor3.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/opl4_fw.h $(SRCDIR)/opl4_fw_22k.h $(SRCDIR)/yrw801_rom.h $(SRCDIR)/msxaudio_fw.h $(SRCDIR)/msxaudio_bios.h
 	$(RM) $(DISDIR)/*

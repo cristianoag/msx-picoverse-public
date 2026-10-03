@@ -54,7 +54,8 @@ loadrom.exe [options] [romfile]
 - `-c2`, `--carnivore2-usb` : Same as `-c1`, but uses USB mass storage on the cartridge's USB-C port as the Nextor backend.
 - `-r1`, `--megaram-sd` : Build a UF2 with Sunrise IDE Nextor on microSD, a 1MB MSX memory mapper, and a separate 1MB PSRAM-backed MegaRAM subslot using 128 × 8KB banks. No external ROM file is needed.
 - `-r2`, `--megaram-usb` : Same as `-r1`, but uses USB mass storage on the cartridge's USB-C port as the Nextor backend.
-- `-w`, `--wifi` : Enable ESP-01 WiFi support for `-s1`, `-m1`, `-s2`, or `-m2`. This adds the ESP8266P system ROM plus a memory-mapped UART backend expected by the WiFi ROM/software stack.
+- `-s3`, `--sunrise3-sd` : Same as `-s1`, but embeds Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release) instead of Nextor 2.1.4, for testing the upcoming Nextor 3. microSD only for now. It is a beta kernel, so keep backups of the microSD card.
+- `-w`, `--wifi` : Enable ESP-01 WiFi support for `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`. This adds the ESP8266P system ROM plus a memory-mapped UART backend expected by the WiFi ROM/software stack.
 - `-scc`, `--scc` : Enable SCC (standard) sound emulation. For embedded ROM builds, this applies to Konami SCC or Manbow2 mapper ROMs. With `-c1` or `-c2`, it enables SCC playback for Konami SCC ROMs uploaded later through `SROM.COM /D15`.
 - `-sccplus`, `--sccplus` : Enable SCC+ (enhanced) sound emulation. For embedded ROM builds, this applies to Konami SCC or Manbow2 mapper ROMs. With `-c1` or `-c2`, it enables SCC+ playback for compatible ROMs uploaded later through `SROM.COM /D15`.
 - `-d`, `--dual-psg` : Enable secondary AY-3-8910 (PSG) emulation on I/O ports `0x10` (register select) and `0x11` (data). The Pico captures `OUT (0x10/0x11),A` writes via PIO1 and streams a mixed signal to the I2S DAC alongside the host MSX's PSG. Only valid with external ROM files whose mapper is not Konami SCC or Manbow2 (those mappers carry an on-cartridge SCC chip and reserve the second audio slot for SCC emulation).
@@ -64,9 +65,9 @@ loadrom.exe [options] [romfile]
 - `-a`, `--msx-audio` : Build a dedicated, standalone MSX-AUDIO / Yamaha Y8950 cartridge. This is **not** a ROM loader: the UF2 contains only the MSX-AUDIO firmware and the 48 KB MSX-Audio BIOS, turning the cartridge into an MSX-AUDIO card (OPL1 FM + ADPCM, 256 KB ADPCM sample RAM) on ports `0xC0`/`0xC1`. It does not take a ROM file and is mutually exclusive with every other option.
 - `--4mhz` : With `-a` / `--msx-audio`, clock the emulated Y8950 at 4 MHz instead of the standard 3.579545 MHz, raising the output rate from 49716 Hz to 55555 Hz.
 - `-o <filename>`, `--output <filename>` : Override the UF2 output name (default `loadrom.uf2`).
-- Positional argument: the ROM file to embed. Required for normal ROM loading; not accepted with `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`.
+- Positional argument: the ROM file to embed. Required for normal ROM loading; not accepted with `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3`.
 
-`-s1`, `-m1`, `-s2`, `-m2`, `-c1`, `-c2`, `-r1`, and `-r2` are mutually exclusive. `-w` is valid only with `-s1`, `-m1`, `-s2`, or `-m2`. The audio options `-scc`, `-sccplus`, `-d`, and `-f`/`-fmpac` are mutually exclusive — only one on-cartridge audio engine can be active per UF2 image. `-d` is additionally rejected for Konami SCC and Manbow2 ROMs, while `-d` and `-f`/`-fmpac` are rejected for the embedded Sunrise/Carnivore2/MegaRAM system modes. `-f`/`-fmpac` is also rejected for Konami SCC and Manbow2 mapper ROMs. If conflicting options are provided, the tool exits with an error.
+`-s1`, `-m1`, `-s2`, `-m2`, `-c1`, `-c2`, `-r1`, `-r2`, and `-s3` are mutually exclusive. `-w` is valid only with `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`. The audio options `-scc`, `-sccplus`, `-d`, and `-f`/`-fmpac` are mutually exclusive — only one on-cartridge audio engine can be active per UF2 image. `-d` is additionally rejected for Konami SCC and Manbow2 ROMs, while `-d` and `-f`/`-fmpac` are rejected for the embedded Sunrise/Carnivore2/MegaRAM system modes. `-f`/`-fmpac` is also rejected for Konami SCC and Manbow2 mapper ROMs. If conflicting options are provided, the tool exits with an error.
 
 `-4`/`--opl4` is fully standalone: it cannot be combined with any other option (no Sunrise/Carnivore2 mode, no audio flag, no `-w`, and no ROM file). If `-4` is mixed with any of those, the tool exits with an error. `--22khz` is only accepted together with `-4`.
 
@@ -228,6 +229,11 @@ Notes:
    loadrom.exe -s1 -w
    loadrom.exe -s1 -w -o nextor_sd_wifi.uf2
    ```
+   Nextor 3.0.0 Beta 2 for testing (microSD):
+   ```
+   loadrom.exe -s3
+   loadrom.exe -s3 -o nextor3_sd.uf2
+   ```
    Sunrise IDE + 1MB PSRAM mapper (microSD):
    ```
    loadrom.exe -m1
@@ -346,8 +352,8 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 | --- | --- | --- |
 | "Invalid ROM size" | ROM < 8 KB or > 16 MB | Use a valid ROM size. |
 | "Failed to detect the ROM type" | Mapper heuristics failed | Add a mapper tag (e.g., `.Konami.ROM`). |
-| "Sunrise options are mutually exclusive" | More than one of `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2` passed | Use only one firmware mode at a time. The `-m` variants add mapper RAM; the `-c` variants add Carnivore2 RAM-mode loading; the `-r` variants add a separate MegaRAM subslot. |
-| "Sunrise options do not accept an external ROM file" | ROM file passed with a Sunrise/Carnivore2/MegaRAM option | Remove the ROM file argument when using `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`. |
+| "Sunrise options are mutually exclusive" | More than one of `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3` passed | Use only one firmware mode at a time. The `-m` variants add mapper RAM; the `-c` variants add Carnivore2 RAM-mode loading; the `-r` variants add a separate MegaRAM subslot; `-s3` swaps in the Nextor 3 beta kernel. |
+| "Sunrise options do not accept an external ROM file" | ROM file passed with a Sunrise/Carnivore2/MegaRAM option | Remove the ROM file argument when using `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3`. |
 | "Error: -w/--wifi is supported only with -s1, -m1, -s2 or -m2" | `-w` was used without a supported Sunrise mode | Pair `-w` only with `-s1`, `-m1`, `-s2`, or `-m2`. |
 | USB pendrive not detected with `-s2`/`-m2`/`-r2` | VBUS not connected or no OTG adapter | Ensure the USB-C port has VBUS power (use an OTG adapter that supplies VBUS). |
 | microSD card not detected with `-s1`/`-m1`/`-r1` | Card not inserted or not FAT-formatted | Insert a FAT16/FAT32-formatted microSD card before powering on. |

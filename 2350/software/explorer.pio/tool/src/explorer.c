@@ -68,10 +68,10 @@
 // Menu label for every embedded Nextor entry. The version is always shown so
 // entries stay unambiguous once other Nextor releases (e.g. 3.x) are added.
 #define NEXTOR_SUNRISE_LABEL       "Nextor Sunrise 2.1.4"
-#define NEXTOR3_SUNRISE_LABEL      "Nextor Sunrise 3.0.0 Beta 1"
+#define NEXTOR3_SUNRISE_LABEL      "Nextor Sunrise 3.0.0 Beta 2"
 
 #define NEXTOR_ROM                 ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_ROM                ___resources_Nextor_3_0_0_beta1_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM                ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
@@ -205,7 +205,7 @@ static void print_usage(const char *prog_name) {
     printf("  without options, the tool scans the current directory for .ROM files to include in the Explorer image\n");
     printf("Options:\n");
     printf("  -h   Show this help message\n");
-    printf("  -a, --allnextor  Include all embedded " NEXTOR_SUNRISE_LABEL " system ROM options (-s1 to -r2)\n");
+    printf("  -a, --allnextor  Include all embedded Nextor system ROM options (-s1 to -r2 and -s3)\n");
     printf("  -r, --megaram    Include standalone 1MB MegaRAM without Nextor or memory mapper\n");
     printf("  -s1, --sunrise-sd  Include " NEXTOR_SUNRISE_LABEL " (microSD card)\n");
     printf("  -m1, --mapper-sd   Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (microSD card)\n");
@@ -341,6 +341,7 @@ int main(int argc, char *argv[])
             use_mapper_usb = true;
             use_c2_usb = true;
             use_megaram_usb = true;
+            use_sunrise3_sd = true;
         } else if ((strcmp(argv[i], "-s1") == 0) || (strcmp(argv[i], "--sunrise-sd") == 0)) {
             use_sunrise_sd = true;
         } else if ((strcmp(argv[i], "-m1") == 0) || (strcmp(argv[i], "--mapper-sd") == 0)) {

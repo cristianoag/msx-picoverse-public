@@ -24,6 +24,7 @@
 #include "multirom.h"
 #include "menu.h"
 #include "nextor_sunrise.h"
+#include "nextor3.h"
 #include "esp8266p_rom.h"
 #include "sha1.h"
 #include "romdb.h"
@@ -88,6 +89,10 @@ static const char *rom_types[] = {
 #define ROM_TYPE_SCCP_FLAG 0x40u
 #define WIFI_ROM_SIZE      16384u
 
+#define NEXTOR3_SUNRISE_LABEL "Nextor Sunrise 3.0.0 Beta 2"
+#define NEXTOR_ROM            ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM           ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
+#define MAX_NEXTOR_ENTRIES    7
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
 static bool equals_ignore_case(const char *a, const char *b) {
@@ -400,20 +405,22 @@ static void print_usage(const char *prog_name) {
     size_t i;
     bool first = true;
 
-    printf("Usage: %s [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-scc] [-sccplus] [-w] [-o <filename>]\n", prog_name);
+    printf("Usage: %s [-h] [-a] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-s3] [-scc] [-sccplus] [-w] [-o <filename>]\n", prog_name);
     printf("  without options, the tool scans the current directory for .ROM files to include in the MultiROM image\n");
     printf("Options:\n");
     printf("  -h   Show this help message\n");
+    printf("  -a, --allnextor  Include all embedded Nextor options (-s1, -m1, -s2, -m2, -c1, -c2 and -s3)\n");
     printf("  -s1, --sunrise-sd  Include Sunrise IDE Nextor ROM (microSD card)\n");
     printf("  -m1, --mapper-sd   Include Sunrise IDE Nextor ROM + 1MB mapper (microSD card)\n");
     printf("  -s2, --sunrise-usb Include Sunrise IDE Nextor ROM (USB pendrive)\n");
     printf("  -m2, --mapper-usb  Include Sunrise IDE Nextor ROM + 1MB mapper (USB pendrive)\n");
     printf("  -c1, --carnivore2-sd  Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM emulation (microSD card)\n");
     printf("  -c2, --carnivore2-usb Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM emulation (USB pendrive)\n");
-    printf("  Options -s1, -m1, -s2, -m2, -c1, -c2 can be combined to add multiple Nextor entries\n");
+    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card) for testing\n");
+    printf("  Options -s1, -m1, -s2, -m2, -c1, -c2, -s3 can be combined to add multiple Nextor entries\n");
     printf("  -scc, --scc        Enable SCC sound emulation (Konami SCC / Manbow2 / Carnivore2 ROMs)\n");
     printf("  -sccplus, --sccplus  Enable SCC+ (enhanced) sound emulation (Konami SCC / Manbow2 / Carnivore2 ROMs)\n");
-    printf("  -w, --wifi         Add ESP-01 WiFi BIOS sub-slot to -s1/-m1/-s2/-m2 Nextor entries\n");
+    printf("  -w, --wifi         Add ESP-01 WiFi BIOS sub-slot to -s1/-m1/-s2/-m2/-s3 Nextor entries\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("Mapper forcing: append tags (case-insensitive) before the ROM extension.\n");
@@ -518,6 +525,7 @@ int main(int argc, char *argv[])
     bool use_mapper_usb = false;
     bool use_c2_sd = false;
     bool use_c2_usb = false;
+    bool use_sunrise3_sd = false;
     bool scc_emulation = false;
     bool scc_plus = false;
     bool use_wifi = false;
@@ -532,6 +540,14 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "-h") == 0) || (strcmp(argv[i], "--help") == 0)) {
             show_help = true;
+        } else if ((strcmp(argv[i], "-a") == 0) || (strcmp(argv[i], "--allnextor") == 0)) {
+            use_sunrise_sd = true;
+            use_mapper_sd = true;
+            use_sunrise_usb = true;
+            use_mapper_usb = true;
+            use_c2_sd = true;
+            use_c2_usb = true;
+            use_sunrise3_sd = true;
         } else if ((strcmp(argv[i], "-s1") == 0) || (strcmp(argv[i], "--sunrise-sd") == 0)) {
             use_sunrise_sd = true;
         } else if ((strcmp(argv[i], "-m1") == 0) || (strcmp(argv[i], "--mapper-sd") == 0)) {
@@ -544,6 +560,8 @@ int main(int argc, char *argv[])
             use_c2_sd = true;
         } else if ((strcmp(argv[i], "-c2") == 0) || (strcmp(argv[i], "--carnivore2-usb") == 0)) {
             use_c2_usb = true;
+        } else if ((strcmp(argv[i], "-s3") == 0) || (strcmp(argv[i], "--sunrise3-sd") == 0)) {
+            use_sunrise3_sd = true;
         } else if ((strcmp(argv[i], "-scc") == 0) || (strcmp(argv[i], "--scc") == 0)) {
             scc_emulation = true;
         } else if ((strcmp(argv[i], "-sccplus") == 0) || (strcmp(argv[i], "--sccplus") == 0)) {
@@ -588,13 +606,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (use_wifi && !(use_sunrise_sd || use_mapper_sd || use_sunrise_usb || use_mapper_usb)) {
-        printf("Error: -w/--wifi requires at least one of -s1, -m1, -s2, -m2.\n");
+    if (use_wifi && !(use_sunrise_sd || use_mapper_sd || use_sunrise_usb || use_mapper_usb || use_sunrise3_sd)) {
+        printf("Error: -w/--wifi requires at least one of -s1, -m1, -s2, -m2, -s3.\n");
         return 1;
     }
 
     bool include_nextor = use_sunrise_sd || use_mapper_sd || use_sunrise_usb || use_mapper_usb
-                       || use_c2_sd || use_c2_usb;
+                       || use_c2_sd || use_c2_usb || use_sunrise3_sd;
 
     // Standard MultiROM build mode
     printf("Scanning current directory for .ROM files...\n\n");
@@ -607,7 +625,9 @@ int main(int argc, char *argv[])
     size_t total_rom_size = 0;
     size_t config_offset = 0;
     int nextor_entry_count = 0;
-    bool nextor_entry_wifi[6] = { false, false, false, false, false, false };
+    bool nextor_entry_wifi[MAX_NEXTOR_ENTRIES] = { false };
+    const uint8_t *nextor_entry_rom[MAX_NEXTOR_ENTRIES] = { NULL };
+    uint32_t nextor_entry_rom_size[MAX_NEXTOR_ENTRIES] = { 0 };
     uint8_t *config_buffer = (uint8_t *)malloc(CONFIG_AREA_SIZE); // Configuration area buffer
     if (!config_buffer) {
         printf("Failed to allocate configuration buffer\n");
@@ -617,16 +637,16 @@ int main(int argc, char *argv[])
 
     // Include embedded Sunrise IDE Nextor ROM entries (one per flag)
     if (include_nextor) {
-        struct { bool enabled; uint8_t mapper; const char *name; } nextor_entries[] = {
-            { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        "Nextor Sunrise IDE (SD)"     },
-            { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, "Nextor Sunrise + 1MB Mapper (SD)"  },
-            { use_sunrise_usb, ROM_TYPE_SUNRISE,           "Nextor Sunrise IDE (USB)"    },
-            { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    "Nextor Sunrise + 1MB Mapper (USB)" },
-            { use_c2_sd,       ROM_TYPE_C2_SD,             "Nextor Sunrise + 1MB Mapper + C2 (SD)"  },
-            { use_c2_usb,      ROM_TYPE_C2_USB,            "Nextor Sunrise + 1MB Mapper + C2 (USB)" },
+        struct { bool enabled; uint8_t mapper; const char *name; const uint8_t *rom; uint32_t rom_size; } nextor_entries[MAX_NEXTOR_ENTRIES] = {
+            { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        "Nextor Sunrise IDE (SD)",                NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, "Nextor Sunrise + 1MB Mapper (SD)",       NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_sunrise_usb, ROM_TYPE_SUNRISE,           "Nextor Sunrise IDE (USB)",               NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_mapper_usb,  ROM_TYPE_SUNRISE_MAPPER,    "Nextor Sunrise + 1MB Mapper (USB)",      NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_c2_sd,       ROM_TYPE_C2_SD,             "Nextor Sunrise + 1MB Mapper + C2 (SD)",  NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_c2_usb,      ROM_TYPE_C2_USB,            "Nextor Sunrise + 1MB Mapper + C2 (USB)", NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
+            { use_sunrise3_sd, ROM_TYPE_SUNRISE_SD,        NEXTOR3_SUNRISE_LABEL " (SD)",            NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
         };
 
-        uint32_t nextor_size = sizeof(___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM);
         uint32_t wifi_rom_size = (uint32_t)______wifi_bios_ESP8266P_rom_len;
         if (use_wifi && wifi_rom_size != WIFI_ROM_SIZE) {
             printf("Error: embedded ESP8266P WiFi ROM size %u != expected %u\n",
@@ -638,6 +658,7 @@ int main(int argc, char *argv[])
         for (int ne = 0; ne < (int)(sizeof(nextor_entries)/sizeof(nextor_entries[0])); ne++) {
             if (!nextor_entries[ne].enabled) continue;
 
+            uint32_t nextor_size = nextor_entries[ne].rom_size;
             uint8_t mapper_byte = nextor_entries[ne].mapper;
             bool entry_wifi_eligible = (mapper_byte == ROM_TYPE_SUNRISE
                                         || mapper_byte == ROM_TYPE_SUNRISE_MAPPER
@@ -683,6 +704,8 @@ int main(int argc, char *argv[])
             }
 
             nextor_entry_wifi[nextor_entry_count] = entry_wifi;
+            nextor_entry_rom[nextor_entry_count] = nextor_entries[ne].rom;
+            nextor_entry_rom_size[nextor_entry_count] = nextor_size;
             nextor_entry_count++;
             file_index++;
             base_offset += entry_total;
@@ -867,10 +890,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Sanity check embedded Nextor ROM size
-    const size_t nextor_rom_size = sizeof(___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM);
-    if (include_nextor && nextor_rom_size == 0) {
-        printf("Embedded Nextor ROM payload is empty\n");
+    // Sanity check embedded Nextor ROM sizes; the Sunrise loaders map at most
+    // 128KB (8 x 16KB segments) of kernel.
+    if (include_nextor && (sizeof(NEXTOR_ROM) == 0 || sizeof(NEXTOR3_ROM) != sizeof(NEXTOR_ROM))) {
+        printf("Embedded Nextor ROMs must be non-empty and the same size (found %zu and %zu bytes)\n",
+               sizeof(NEXTOR_ROM), sizeof(NEXTOR3_ROM));
         free(config_buffer);
         return 1;
     }
@@ -920,8 +944,8 @@ int main(int argc, char *argv[])
 
     if (include_nextor) {
         for (int ne = 0; ne < nextor_entry_count; ne++) {
-            memcpy(combined_buffer + offset, ___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM, nextor_rom_size);
-            offset += nextor_rom_size;
+            memcpy(combined_buffer + offset, nextor_entry_rom[ne], nextor_entry_rom_size[ne]);
+            offset += nextor_entry_rom_size[ne];
             if (nextor_entry_wifi[ne]) {
                 memcpy(combined_buffer + offset, ______wifi_bios_ESP8266P_rom, ______wifi_bios_ESP8266P_rom_len);
                 offset += ______wifi_bios_ESP8266P_rom_len;

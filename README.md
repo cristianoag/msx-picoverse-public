@@ -132,7 +132,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - Standalone OPL4 / YMF278B / MoonSound cartridge firmware (`loadrom.exe -4`): full YMF278B emulation (OPL3 FM with 18 channels plus 24 PCM voices), the 2 MB YRW801-M wave ROM embedded in the UF2, 2 MB of PCM sample RAM in PSRAM, MoonSound ports `0xC4`-`0xC7` and `0x7E`/`0x7F`, FM timer interrupts on `/INT`, and 16-bit stereo 44.1 kHz output through the I2S DAC. Optional `--22khz` reduced-rate build for extreme-polyphony songs.
 - Standalone MSX-AUDIO / Yamaha Y8950 cartridge firmware (`loadrom.exe -a`): OPL1 FM (9 channels) plus ADPCM-B, 256 KB of ADPCM sample RAM in PSRAM, the 48 KB MSX-Audio BIOS v1.3 mapped in the slot (openMSX `Boosted_audio.xml` layout, with base and expanded work RAM), ports `0xC0`/`0xC1`, FM timer interrupts on `/INT`, and 16-bit 49716 Hz output through the I2S DAC. Optional `--4mhz` Y8950 clock.
 - LoadROM Sunrise builds can also expose ESP-01 WiFi support with `-w` on top of the `-s1`/`-m1`/`-s2`/`-m2` modes.
-- LoadROM, MultiROM, and Explorer support the Sunrise IDE options. MultiROM and Explorer allow combining them so multiple Nextor modes appear as selectable SYSTEM entries in the menu; Explorer also provides `-a` / `--allnextor` to add all embedded Nextor entries while still appending folder ROMs.
+- LoadROM, MultiROM, and Explorer support the Sunrise IDE options. MultiROM and Explorer allow combining them so multiple Nextor modes appear as selectable SYSTEM entries in the menu, and both provide `-a` / `--allnextor` to add all embedded Nextor entries while still appending folder ROMs. All three also offer `-s3` for testing the Nextor 3.0.0 Beta 2 kernel over microSD.
 - Shares the same ROM mapper support list as the 2040 build.
 
 #### Bill of Materials
@@ -218,6 +218,7 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
       - Sunrise IDE standalone (PicoVerse 2040): `loadrom.exe -s`
       - Sunrise IDE + 192KB mapper (PicoVerse 2040): `loadrom.exe -m`
       - Sunrise IDE standalone (PicoVerse 2350): `loadrom.exe -s1` or `loadrom.exe -s2`
+      - Nextor 3.0.0 Beta 2 for testing (PicoVerse 2350, microSD): `loadrom.exe -s3`
       - Sunrise IDE + 1MB PSRAM mapper (PicoVerse 2350): `loadrom.exe -m1` or `loadrom.exe -m2`
       - Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM (PicoVerse 2350): `loadrom.exe -r1` or `loadrom.exe -r2`
       - Sunrise IDE + WiFi (PicoVerse 2350): `loadrom.exe -s1 -w`, `loadrom.exe -s2 -w`, `loadrom.exe -m1 -w`, or `loadrom.exe -m2 -w`
@@ -225,7 +226,7 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
       - OPL4 / MoonSound standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -4`, optionally with `--22khz`
       - MSX-AUDIO / Y8950 standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -a`, optionally with `--4mhz`
       - `-4` and `-a` are standalone builds: they take no ROM file and cannot be combined with each other or with any other mode or audio flag.
-      - `-w` is currently supported only with `-s1`, `-m1`, `-s2`, or `-m2`.
+      - `-w` is currently supported only with `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`.
    3. Observe the reported ROM name, size, mapper status (auto vs forced), and Pico offset before the UF2 is written.
    4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.
    5. Insert the cartridge into your MSX—on power-up the embedded game launches immediately.
@@ -241,7 +242,7 @@ Consult the LoadROM manuals linked above for screenshots, troubleshooting, and i
 |<img src="/images/2026-05-17_21-30.png" alt="File Hunter Explorer menu" width="420" height="315">|<img src="/images/2026-05-17_21-31.png" alt="WiFi configuration screen" width="420" height="315">|
 
 
-Explorer is a PicoVerse 2350-only firmware that merges ROMs stored in flash, optional embedded Sunrise Nextor SYSTEM entries, and additional ROMs and MP3/WAV files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 and WAV entries open a player screen with Play/Stop and Pause/Resume controls, the list supports paging, and you can search by name directly in the menu. Explorer can add individual Nextor entries with `-s1`, `-m1`, `-c1`, `-r1`, `-s2`, `-m2`, `-c2`, or `-r2`, or add all of them with `-a` / `--allnextor`, while still appending supported folder ROMs to the UF2. For early testing of Nextor 3, `-s3` adds a `Nextor Sunrise 3.0.0 Beta 1 (SD)` microSD entry (not included by `-a`). In the `F2` microSD screen, `P` cycles supported FAT16, FAT32, and exFAT browsing partitions, while `D` deletes the selected file after confirmation; folders are protected. With an ESP-01 / ESP8266 module installed and WiFi configured, pressing `F3` opens the integrated File Hunter browser. File Hunter results show the name and size, can be searched from the MSX, and `T` switches between the ROM and `.DSK` catalogs. Selected ROMs and disk images are downloaded through the Pico into PSRAM before being saved as `.ROM` or `.DSK` files in the microSD root. microSD ROMs up to 4 MB can be executed directly from there. Use the Explorer tool to build the UF2 and copy extra ROMs and audio files to the microSD card. See the Explorer manual for limits, File Hunter requirements, and supported formats.
+Explorer is a PicoVerse 2350-only firmware that merges ROMs stored in flash, optional embedded Sunrise Nextor SYSTEM entries, and additional ROMs and MP3/WAV files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 and WAV entries open a player screen with Play/Stop and Pause/Resume controls, the list supports paging, and you can search by name directly in the menu. Explorer can add individual Nextor entries with `-s1`, `-m1`, `-c1`, `-r1`, `-s2`, `-m2`, `-c2`, or `-r2`, or add all of them with `-a` / `--allnextor`, while still appending supported folder ROMs to the UF2. For early testing of Nextor 3, `-s3` adds a `Nextor Sunrise 3.0.0 Beta 2 (SD)` microSD entry (also included by `-a`). In the `F2` microSD screen, `P` cycles supported FAT16, FAT32, and exFAT browsing partitions, while `D` deletes the selected file after confirmation; folders are protected. With an ESP-01 / ESP8266 module installed and WiFi configured, pressing `F3` opens the integrated File Hunter browser. File Hunter results show the name and size, can be searched from the MSX, and `T` switches between the ROM and `.DSK` catalogs. Selected ROMs and disk images are downloaded through the Pico into PSRAM before being saved as `.ROM` or `.DSK` files in the microSD root. microSD ROMs up to 4 MB can be executed directly from there. Use the Explorer tool to build the UF2 and copy extra ROMs and audio files to the microSD card. See the Explorer manual for limits, File Hunter requirements, and supported formats.
 
 For Sunrise Nextor SYSTEM entries in Explorer, SD storage is limited to FAT16 microSD partitions up to 4 GB. If more than one compatible partition exists, choose the desired one from the ROM detail screen's `SD Part` option; Explorer saves that selection in the ROM's `.PVC` options file. FAT32 and exFAT partitions remain supported for normal Explorer file browsing but are not offered to Nextor. Nextor entries always show the Nextor version in the menu, for example `Nextor Sunrise 2.1.4 (SD)` or `Nextor Sunrise 2.1.4 + 1MB Mapper (USB)`.
 
@@ -253,7 +254,7 @@ Multi-disk games are supported since Explorer v2.53 by joining their disks, in o
 - No floppy controller is emulated, so copy-protected disks and software that programs the FDC directly will not work.
 - Nextor uses more RAM than a plain disk ROM. On machines with little RAM (for example a 64 KB MSX2+ such as the Panasonic FS-A1FX), turn on the DSK entry's `1MB Mapper` option to boot it with Nextor plus the 1 MB PSRAM memory mapper.
 - An image boots read-only if the file is marked read-only or is split into more than 16 fragments on the card.
-- DSK entries offer PSG Mirror, `1MB Mapper`, and (since v2.55) the **External SCC** / **External SCC+** and **MSX-MUSIC** audio profiles (a virtual SCC or FM-PAC cartridge in expanded subslot 2, as on the Nextor Sunrise entries).
+- DSK entries offer PSG Mirror, `1MB Mapper`, and the same cartridge audio profiles as the Nextor Sunrise entries. Since v2.55: **External SCC** / **External SCC+** and **MSX-MUSIC**. Since v2.56: **YM2164 SFG05** / **YM2151 SFG01** (and their 4 MHz variants) and **Dual PSG**. The SCC, FM-PAC and SFG appear as a virtual cartridge in expanded subslot 2; Dual PSG uses I/O ports `10h`/`11h`.
 
 See [MSX PicoVerse 2350 DSK Disk Image Support](/docs/msx-picoverse-2350-dsk-support.md) for the full design, the multi-disk layout, the write-through details, and the test matrix.
 

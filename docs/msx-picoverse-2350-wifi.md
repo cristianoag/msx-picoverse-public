@@ -72,7 +72,7 @@ The PicoVerse 2350 hardware includes an ESP-01 header. The WiFi implementation a
 - A PicoVerse 2350 board revision that routes the ESP-01 UART signals to the RP2350 firmware backend
 - An ESP-01 / ESP8266 module installed on the board
 - A storage device appropriate for the selected Nextor mode
-  - microSD card for `-s1 -w` / `-m1 -w`
+  - microSD card for `-s1 -w` / `-m1 -w` / `-s3 -w`
   - USB mass storage device for `-s2 -w` / `-m2 -w`
 
 The firmware exposes the ESP link through the MSX-visible memio interface. It does not replace the ESP firmware running on the ESP-01 itself.
@@ -266,7 +266,7 @@ File Hunter downloads are received into PSRAM and saved as `.ROM` files in the r
 
 ## 15. Current Scope And Limitations
 
-- WiFi support is available in **LoadROM** and **MultiROM** (in MultiROM only on `-s1`/`-m1`/`-s2`/`-m2` Nextor entries).
+- WiFi support is available in **LoadROM** and **MultiROM** (in MultiROM only on `-s1`/`-m1`/`-s2`/`-m2`/`-s3` Nextor entries).
 - WiFi support is currently **not available** in `-c1` / `-c2` Carnivore2 RAM-loader builds.
 - Explorer exposes WiFi setup and direct ESP-01 access for File Hunter browsing, but it does not expose the Sunrise IDE `-w` system-ROM boot mode.
 - The PicoVerse firmware provides the ROM mapping and serial transport; the ESP-01 still needs compatible firmware on the module itself.

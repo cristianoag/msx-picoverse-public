@@ -137,8 +137,13 @@ static unsigned char record_supports_scc_audio(const ROMRecord *record) {
     return mapper_code == 3 || mapper_code == 14;
 }
 
+/* Entries that can take the cartridge-side audio profiles (External SCC/SCC+,
+   Dual PSG, MSX-MUSIC, YM2151/SFG): game ROMs, the Sunrise Nextor SYSTEM ROMs
+   and .DSK images (code 23), which boot through those same Nextor loaders. */
 static unsigned char record_supports_external_scc_audio(const ROMRecord *record) {
-    return !record_is_folder(record) && (!record_is_system_rom(record) || record_is_sunrise_system_rom(record));
+    return !record_is_folder(record) &&
+           (!record_is_system_rom(record) || record_is_sunrise_system_rom(record) ||
+            record_mapper_code(record->Mapper) == 23);
 }
 
 static unsigned char record_supports_dual_psg(const ROMRecord *record) {
@@ -990,10 +995,8 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     if (audio_profile >= AUDIO_PROFILE_SCC && audio_profile <= AUDIO_PROFILE_SCC_PLUS) {
         return record_supports_scc_audio(record);
     }
-    /* .DSK entries offer External SCC/SCC+ (Nextor Sunrise SCC loader) and,
-       below, MSX-MUSIC (Nextor Sunrise FM-PAC loader). */
     if (audio_profile >= AUDIO_PROFILE_SCC_EXTERNAL && audio_profile <= AUDIO_PROFILE_SCC_PLUS_EXTERNAL) {
-        return cur_is_dsk || record_supports_external_scc_audio(record);
+        return record_supports_external_scc_audio(record);
     }
     if (audio_profile >= AUDIO_PROFILE_MEGARAM_SCC && audio_profile <= AUDIO_PROFILE_MEGARAM_SCC_PLUS) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
@@ -1008,7 +1011,7 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     }
     if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
-        return cur_is_dsk || record_supports_msx_music(record) || mapper_code == 19 || mapper_code == 20;
+        return record_supports_msx_music(record) || mapper_code == 19 || mapper_code == 20;
     }
     return 0;
 }

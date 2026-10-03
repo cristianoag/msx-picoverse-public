@@ -211,7 +211,7 @@ LoadROM paths below are relative to `2350/software/loadrom.pio/`.
 | `pico/loadrom/sunrise_ide.c` | Existing Sunrise IDE front-end used by the same Nextor storage path. |
 | `pico/loadrom/sunrise_sd.c` | microSD backend used by `-r1`. |
 | `tool/Makefile` | Embeds the firmware and Nextor ROM into `loadrom.exe`. |
-| `nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` | Embedded Nextor Sunrise IDE ROM used by both MegaRAM modes. |
+| `resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` | Embedded Nextor Sunrise IDE ROM used by both MegaRAM modes. |
 
 Explorer uses the same mapper IDs and MegaRAM bus behavior under `2350/software/explorer.pio/`:
 

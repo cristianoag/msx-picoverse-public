@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.79
+
+- Bumped LoadROM version to v2.79 (top-level `Makefile` and `tool/Makefile`).
+- Added the `-s3` / `--sunrise3-sd` tool option for testing Nextor 3, microSD only for now. It builds a `Nextor Sunrise 3.0.0 Beta 2 (SD)` system image with Konamiman's Nextor 3.0.0 beta 2 Sunrise IDE MasterOnly kernel (`resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM`, 128 KB, SunriseIDE-Nextor-driver `v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2` release), embedded by `tool/Makefile` as `tool/src/nextor3.h`. It uses the existing Sunrise SD type (15), so the firmware is unchanged; the beta 2 driver sends the same ATA commands as 2.1.4.
+- `-s3` is mutually exclusive with the other Nextor modes, rejects a ROM file, `-d` and `-f` like `-s1`, and accepts `-w` (same loader as `-s1`). The tool refuses to build a Nextor image whose kernel is not 128 KB. Checked `-s3`, `-s3 -w` and `-s1` UF2s: the record points at the matching kernel bytes, and with `-w` the ESP8266P BIOS follows it. Booting beta 2 on hardware is not yet validated.
+- Docs: LoadROM tool manual (`-s3`, `-w`, exclusivity, example, troubleshooting), Sunrise Nextor implementation notes (option table, MultiROM `-a`/`-s3`, and the stale `nextor/kernel/` paths now point at `resources/`), MegaRAM notes (same path fix), public README and WiFi notes.
+- The shared generator `../tools/gen_romdb.py` now downloads the latest database by default from Vampier's ROM DB (`https://romdb.vampier.net/Archive/xml-msxromsdb.zip`) and reads `softwaredb.xml` from the zip in memory, so a local openMSX install is no longer needed. A local `softwaredb.xml` or `.zip` can still be passed as an argument for offline use. The generated header now records the source and the database timestamp. The script also accepts the `ASCII16-X` and lowercase `konami` mapper names used by this database.
+- Regenerated `tool/src/romdb.h` from the 2026-10-03 database: 3115 → 3218 entries (103 added, none removed or changed), including 31 ASCII16-X ROMs (mapper 12) that the old DB never matched. Rebuilt `tool/dist/loadrom.exe`.
+
 ## PicoVerse 2350 Loadrom v2.78
 
 - Simplified the standalone OPL4 (`-4`) generation options by removing `--opl4-limit` (adaptive PCM voice limiter) and `--lowclock` (282 MHz system clock). The tool now rejects both as unknown options, and `--22khz` is the remaining OPL4 option for extreme-polyphony songs.

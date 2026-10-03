@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.55
+VERSION ?= v2.56
 
 # Project files
 SOURCES := explorer.c
@@ -46,7 +46,7 @@ MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
 NEXTOR := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_H := $(SRCDIR)/nextor.h
-NEXTOR3 := ../resources/Nextor-3.0.0-beta1.SunriseIDE.MasterOnly.ROM
+NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
 NEXTOR3_H := $(SRCDIR)/nextor3.h
 WIFICONFIG := ../../wifi/config/ESP8266_config.rom
 WIFICONFIG_H := $(SRCDIR)/wifibios.h
