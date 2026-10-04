@@ -37,6 +37,8 @@ Typical uses:
 
 The `openmsx/share` folder uses the same layout as the openMSX `share` folder. openMSX loads every `*.tcl` file in `share/scripts` at startup and lists every extension in `share/extensions`. An extension XML can only describe hardware; it can't read a UF2 or react to the menu. So the extension holds a small placeholder ROM, and the script replaces it with the menu of your UF2 when you insert it.
 
+The PicoVerse 2350 Explorer add-on ([MSX PicoVerse 2350 — Explorer in openMSX](./msx-picoverse-2350-openmsx.md)) can be installed next to this one: `picoverse2040.tcl` only takes over RP2040 UF2s, and leaves RP2350 (Explorer) UF2s to `picoverse2350.tcl`.
+
 ## 4. Building
 
 The openMSX add-on is built by the MultiROM aggregate Makefile, together with the MSX menu, the Pico firmware and the tool:

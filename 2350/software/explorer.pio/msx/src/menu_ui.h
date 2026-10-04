@@ -31,6 +31,8 @@ const char *menu_ui_fh_type_label(void);
 void menu_ui_clear_last_line(void);
 void menu_ui_print_last_line_text(const char *text);
 void menu_ui_blink_last_line(const char *text, unsigned char *visible, unsigned char *tick, unsigned char period);
+void menu_ui_wait_key_with_blinking_status(const char *text);
+int menu_ui_read_line(const char *prompt, char *buffer, unsigned char max_len);
 void menu_ui_print_str_inverted_width(const char *str, unsigned char width);
 void menu_ui_render_selectable_line(unsigned char row, const char *text, int selected);
 

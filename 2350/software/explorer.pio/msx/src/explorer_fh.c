@@ -66,8 +66,7 @@ static void fh_write_query(const char *query)
 
 static void fh_write_selected_index(unsigned int index)
 {
-    Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFF));
-    Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFF));
+    POKE_U16(CTRL_QUERY_BASE, index);
 }
 
 static void fh_wait_ready(void)
@@ -119,25 +118,9 @@ static void fh_draw_detail_status(const char *text)
 
 static void fh_draw_detail_progress(unsigned int percent)
 {
-    char text[64];
-    char gauge[21];
-    unsigned char gauge_index;
-    unsigned char gauge_fill;
-
-    if (percent > 100U) {
-        percent = 100U;
-    }
-    gauge_fill = (unsigned char)((percent * 20U + 50U) / 100U);
-    for (gauge_index = 0; gauge_index < 20; gauge_index++) {
-        gauge[gauge_index] = (gauge_index < gauge_fill) ? '#' : ' ';
-    }
-    gauge[20] = '\0';
-    if (use_80_columns) {
-        sprintf(text, "Download Progress: %u%% [%s]", percent, gauge);
-    } else {
-        sprintf(text, "Progress: %u%% [%s]", percent, gauge);
-    }
-    fh_draw_detail_status(text);
+    fh_clear_line(7);
+    Locate(0, 7);
+    printf("Download: %u%%", percent);
 }
 
 static void fh_wait_download_ready(void)
@@ -442,53 +425,6 @@ static void fh_redraw(void)
     fh_refresh_network_status(1);
 }
 
-static int fh_read_search_query(char *buffer, unsigned int max_len)
-{
-    unsigned int len = 0;
-    unsigned char prompt_col = 8;
-    char key;
-
-    if (max_len == 0) {
-        return 0;
-    }
-    buffer[0] = '\0';
-    if (use_80_columns) {
-        fh_draw_status_left("Search: ");
-    } else {
-        unsigned char col;
-        unsigned char content_width = (unsigned char)(menu_ui_row_width() - 2);
-        Locate(0, 23);
-        printf("Search: ");
-        for (col = prompt_col; col < content_width; col++) {
-            PrintChar(' ');
-        }
-    }
-    Locate(prompt_col, 23);
-
-    while (1) {
-        key = (char)bios_chget();
-        if (key == 27) {
-            buffer[0] = '\0';
-            return 0;
-        }
-        if (key == 13) {
-            buffer[len] = '\0';
-            return len > 0;
-        }
-        if ((key == 8 || key == 127) && len > 0) {
-            len--;
-            buffer[len] = '\0';
-            Locate((unsigned char)(prompt_col + len), 23);
-            PrintChar(' ');
-            Locate((unsigned char)(prompt_col + len), 23);
-        } else if (key >= 32 && key <= 126 && len + 1 < max_len) {
-            buffer[len++] = key;
-            buffer[len] = '\0';
-            PrintChar((unsigned char)key);
-        }
-    }
-}
-
 static void fh_render_detail_footer(void)
 {
     /* Row 22 still holds the list footer (page counter and F1/F2/F3 source
@@ -549,7 +485,7 @@ static void fh_show_detail(unsigned int index)
     fh_render_detail_screen(record);
 
     while (1) {
-        key = (char)bios_chget();
+        key = (char)bios_chget_quiet();
         if (key == 27) {
             fh_redraw();
             return;
@@ -584,7 +520,7 @@ static void fh_show_detail(unsigned int index)
                     fh_draw_detail_status("Download or save failed. Press key.");
                 }
             }
-            (void)bios_chget();
+            (void)bios_chget_quiet();
             fh_redraw();
             return;
         }
@@ -662,7 +598,8 @@ unsigned char explorer_fh_run(void)
                 }
                 break;
             case '/':
-                if (fh_read_search_query(search_query, sizeof(search_query))) {
+                search_query[0] = '\0';
+                if (menu_ui_read_line("Search: ", search_query, EXPLORER_FH_MAX_QUERY) > 0 && search_query[0]) {
                     strcpy(active_query, search_query);
                     fh_search(active_query, search_status);
                 }

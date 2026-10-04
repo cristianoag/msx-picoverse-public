@@ -43,7 +43,7 @@
 
 namespace eval picoverse2040 {
 
-variable version "v2.65"
+variable version "v2.66"
 
 # Flash layout, must match pico/multirom/multirom.c and tool/src/multirom.c
 variable flash_base       0x10000000
@@ -939,6 +939,23 @@ proc notify {text level} {
 	catch {message "PicoVerse 2040: $text" $level}
 }
 
+# UF2 files of other boards (the PicoVerse 2350 uses an RP2350) are left to
+# their own scripts: only RP2040 images, or images without a family ID, count.
+proc is_rp2040_uf2 {file} {
+	variable rp2040_family
+	if {[catch {
+		set fh [open $file r]
+		fconfigure $fh -translation binary
+		set block [read $fh 32]
+		close $fh
+	}] || [string length $block] < 32} {
+		return 0
+	}
+	binary scan $block "iuiuiu@28iu" m0 m1 flags family
+	if {$m0 != 0x0A324655 || $m1 != 0x9E5D5157} {return 0}
+	expr {!($flags & 0x2000) || $family == $rp2040_family}
+}
+
 # A .uf2 file was inserted as a ROM image: take over the slot.
 proc take_over_uf2 {letter file} {
 	catch {cart$letter eject}
@@ -987,7 +1004,7 @@ proc check_slots {} {
 		set inserted [lindex [machine_info external_slot $s] 2]
 		if {$inserted eq ""} continue
 		set letter [string range $s 4 end]
-		if {[string match -nocase *.uf2 $inserted]} {
+		if {[string match -nocase *.uf2 $inserted] && [is_rp2040_uf2 $inserted]} {
 			take_over_uf2 $letter $inserted
 			return
 		}

@@ -19,7 +19,7 @@ Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, 
 
 ## Limits
 
-- Flash ROM entries created by the tool: up to 128 files.
+- Flash ROM entries created by the tool: up to 128 files. ROMs copied from the microSD card with `F` count toward the same 128-entry list.
 - Combined Explorer menu limit: 1024 entries per folder view (folders + ROMs + MP3s; the root view also includes ROM files stored directly on the flash memory).
 - Total flash ROM payload size: ~14 MB combined.
 - Supported ROM size range on the flash: 8 KB to ~14 MB.
@@ -36,6 +36,7 @@ Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, 
 5. (Optional) Insert an ESP-01 module and configure WiFi from the Explorer menu if you want to browse File Hunter.
 6. Insert the cartridge into your MSX and power on.
 
+You can also try the UF2 in the openMSX emulator before flashing it, with a PC folder as the microSD card: see [MSX PicoVerse 2350 — Explorer in openMSX](./msx-picoverse-2350-openmsx.md).
 ### Explorer menu capabilities
 
 - **Folder navigation**: Organize your ROMs into folders on the microSD card. Enter folders by pressing Enter or Space on a folder name, and navigate back to parent folders using the ".." entry or by pressing Esc.
@@ -232,6 +233,27 @@ Current limitations:
 - microSD ROM files are limited to 4 MB each. ROMs are streamed into the cartridge's 8 MB external PSRAM (QMI CS1, 52.5 MHz QPI) and executed from there; the first 256 KB are mirrored into the PSRAM ROM cache for mapper access. ROMs larger than 4 MB are skipped during enumeration.
 - Unsupported or invalid ROMs are skipped (same mapper and size rules as flash).
 
+### Copying microSD ROMs to flash
+
+Press `F` on a ROM in the `F2` microSD screen and answer `Y` to copy it into the cartridge's 16 MB flash. The bottom line shows the progress as a percentage, and when the copy is done the ROM appears in the `F1` flash list next to the ROMs added by the tool. To remove a flash entry again, press `D` on it in the `F1` screen.
+
+- The copy keeps the ROM's mapper (detected, tagged in the file name, or chosen on the ROM screen in this session) and copies its `.PVC` options file, so audio and other saved settings carry over.
+- Each copy goes into the first free 4 KB aligned space after the ROMs and hidden payloads written by the tool. Space freed by `D` is reused by later copies. The flash list holds up to 128 entries, including the ones made by the tool.
+- Only ROMs can be copied (up to 4 MB, the microSD ROM limit). Folders, `.DSK` images and MP3/WAV files are not supported, and a ROM whose name is already in the flash list is refused. `Failed` is shown when the copy is not possible: no free space, a full flash list, unknown mapper, duplicate name, or a read error.
+- A 1 MB ROM takes several seconds. While each flash block is erased the MSX waits for the cartridge, so the progress counter moves in steps. Switching the MSX off during a copy only loses that copy; the entry is written after the ROM image has been programmed and verified.
+- `D` on a flash entry only marks its slot as deleted. After about 200 copy/delete operations the flash list is rewritten once to reclaim the deleted slots, which takes a fraction of a second.
+- Writing a new UF2 with the tool replaces the flash list: ROMs copied from the microSD card have to be copied again.
+
+### Renaming ROMs and disk images
+
+Press `R` on a ROM or `.DSK` entry to rename it. The bottom line shows `Name:` with the current name; edit it with Backspace and the character keys, then press Enter to rename or Esc to cancel. Pressing Enter without changing anything leaves the entry as it is. The list is reloaded with the cursor on the renamed entry.
+
+- **microSD files**: the file is renamed in its folder. Only the name shown in the menu changes: a mapper tag and the extension stay, so `Knight Mare.PLA-32.ROM` renamed to `Nightmare` becomes `Nightmare.PLA-32.ROM`. The `.PVC` options file and, for ROMs run as `ASC16X-FR`, the `.FLA` FlashROM save are renamed with it.
+- **Flash entries**: only the menu entry changes, and the ROM data is not touched. The `/<name>.flash.PVC` options file (and the `.FLA` save of an `ASC16X-FR` ROM) is renamed too.
+- Names can be up to 70 characters (32 in 40-column mode, where the field is limited by the screen width). Leading and trailing spaces and trailing dots are dropped, and the characters `\ / : * ? " < > |` are not allowed.
+- `Failed` is shown when the name is not valid, another file or flash entry already uses it (flash names are compared ignoring case), an `ASC16X-FR` ROM would take over another ROM's `.FLA` save with the same name, or the microSD card cannot be written. Folders and MP3/WAV files cannot be renamed.
+- Renaming the ROM that was executed last stops the menu from reopening on it at the next power-up.
+
 ### Performance note: MSX Response Time
 
 MSX computers have slower processors compared to modern hardware. When navigating to a folder with a large number of ROMs (100+), the Pico will scan the directory contents and you will see a blinking "Loading..." message. This is normal behavior:
@@ -254,7 +276,9 @@ For the best experience with very large ROM collections, consider organizing ROM
 - **F4**: Open WiFi configuration.
 - **H**: Show help screen.
 - **P**: In the `F2` microSD screen, cycle through supported FAT16, FAT32, and exFAT partitions. The selected browsing partition is saved in `/PICOVERSE.PVC`.
-- **D**: In the `F2` microSD screen, delete the selected file after a `Y/N` confirmation. This command is valid for files only; folders are protected.
+- **D**: Delete the selected entry after a `Y/N` confirmation. In the `F2` microSD screen it deletes the file (folders are protected); in the `F1` flash screen it removes the flash entry. In both cases the entry's `.PVC` options file is removed too.
+- **F**: In the `F2` microSD screen, copy the selected ROM into the cartridge flash after a `Y/N` confirmation. See [Copying microSD ROMs to flash](#copying-microsd-roms-to-flash).
+- **R**: Rename the selected ROM or `.DSK` file on the microSD card, or the selected flash entry. See [Renaming ROMs and disk images](#renaming-roms-and-disk-images).
 - **/**: Search ROM names. Type a partial name and press Enter to jump to the first matching ROM.
 - **C**: Toggle between 40-column and 80-column layouts when your MSX supports it (auto-detects 80-column capable machines and defaults to 80 columns unless forced otherwise).
 
@@ -337,7 +361,7 @@ Selecting a File Hunter result opens a detail screen showing:
 
 The footer shows only the detail actions (`[ESC - BACK] [ENTER - DOWNLOAD]`); the page counter and `F1`/`F2`/`F3` source shortcuts are hidden on this screen.
 
-Press Enter or Space on the detail screen to download the selected file. Explorer first downloads it from File Hunter into PSRAM. The status line shows a percentage counter from 0% to 100% while the download is active. After the download completes, the Pico saves the file from PSRAM to the root of the microSD card using the same filename shown by File Hunter, with a `.ROM` or `.DSK` extension.
+Press Enter or Space on the detail screen to download the selected file. Explorer first downloads it from File Hunter into PSRAM. The status line shows a `Download: NN%` counter from 0% to 100% while the download is active. After the download completes, the Pico saves the file from PSRAM to the root of the microSD card using the same filename shown by File Hunter, with a `.ROM` or `.DSK` extension.
 
 When the save succeeds, the detail screen shows "Saved to microSD. Press key." Press any key to return to the File Hunter list. The Explorer root microSD list is refreshed after a successful save, so returning to the microSD root with `F2` lets you search for and launch the newly downloaded file as a normal SD ROM or `.DSK` entry.
 
@@ -360,6 +384,7 @@ A `.DSK` download is saved only if Explorer can boot it: its size must be a mult
 - Very deep folder nesting (more than 10+ levels) is supported but may have perception of slowness due to repeated folder scans.
 - File Hunter browsing is unavailable without an ESP-01 / ESP8266 module, compatible ESP firmware, and a configured WiFi network.
 - File Hunter downloads are stored in the root of the microSD card; Explorer does not create a separate File Hunter folder.
+- ROMs copied to flash with `F` are lost when a new UF2 is written, because the tool rebuilds the flash list.
 
 ## MP3 player screen
 

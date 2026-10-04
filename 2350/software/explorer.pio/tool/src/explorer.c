@@ -46,6 +46,7 @@
 #define NEXTOR_DSK_ROM_SIZE     (128 * 1024)    // Hidden Nextor Sunrise IDE kernel used to boot .DSK images from SD
 #define MAX_FILE_NAME_LENGTH    71              // Maximum length of a ROM name on the 80-column detail screen
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
+#define FIRMWARE_ALIGN          4096u           // Flash sector: the menu ROM starts on the first sector boundary after the firmware
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
 #define MAX_TOTAL_ROM_SIZE      (12U * 1024U * 1024U) // Cap combined visible ROM payload to 12 MB
 #define MAX_ROM_SIZE            15*1024*1024    // Maximum size of a ROM file
@@ -722,8 +723,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Final flash image layout: [firmware][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][Nextor ROM + scanned ROM payloads]
-    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + total_rom_size;
+    // Final flash image layout: [firmware][0xFF pad to 4 KB][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][Nextor ROM + scanned ROM payloads]
+    // The menu ROM starts on a flash sector boundary, so the config area owns its
+    // four sectors and the firmware can rewrite it without erasing the menu ROM or
+    // the WiFi setup ROM next to it.
+    const size_t firmware_span = (firmware_size + FIRMWARE_ALIGN - 1u) & ~(size_t)(FIRMWARE_ALIGN - 1u);
+    const size_t total_size = firmware_span + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + total_rom_size;
     uint8_t *combined_buffer = (uint8_t *)malloc(total_size);
     if (!combined_buffer) {
         printf("Failed to allocate combined buffer\n");
@@ -735,7 +740,7 @@ int main(int argc, char *argv[])
     size_t offset = 0;
     // Copy the embedded Pico firmware blob.
     memcpy(combined_buffer + offset, ___pico_explorer_build_explorer_bin, firmware_size);
-    offset += firmware_size;
+    offset += firmware_span;
 
     // Copy the full MSX menu ROM.
     memcpy(combined_buffer + offset, ___msx_dist_menu_rom, MENU_COPY_SIZE);
@@ -772,7 +777,7 @@ int main(int argc, char *argv[])
         if (!rom_dump) {
             printf("DEBUG: Failed to open %s for menu dump\n", rom_dump_filename);
         } else {
-            size_t rom_bytes_written = fwrite(combined_buffer + firmware_size, 1,
+            size_t rom_bytes_written = fwrite(combined_buffer + firmware_span, 1,
                                              MENU_COPY_SIZE + CONFIG_AREA_SIZE, rom_dump);
             if (rom_bytes_written != (MENU_COPY_SIZE + CONFIG_AREA_SIZE)) {
                 printf("DEBUG: Menu dump truncated (%zu of %zu bytes)\n",

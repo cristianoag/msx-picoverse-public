@@ -25,6 +25,11 @@ endif()
 # ====================================================================================
 set(PICO_BOARD pico2 CACHE STRING "Board type")
 set(PICO_COPY_TO_RAM 0)
+# The PicoVerse 2350 boards carry 16 MB of QSPI flash, not the 4 MB of the
+# pico2 board definition. The firmware writes ROMs into the space above the
+# image (Explorer "copy to flash"), so the SDK flash routines must accept it.
+set(EXPLORER_FLASH_SIZE_BYTES 16777216)
+set(PICO_FLASH_SIZE_BYTES ${EXPLORER_FLASH_SIZE_BYTES})
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -90,6 +95,7 @@ target_link_libraries(explorer
     pico_unique_id
         no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
         pico_multicore
+    hardware_flash
     pico_audio_i2s
     picomp3lib
     hardware_dma
@@ -106,6 +112,7 @@ target_compile_definitions(explorer PRIVATE
     # Make SRAM growth fail at link time rather than during menu playback.
     PICO_HEAP_SIZE=0xA800
     PICO_AUDIO_I2S_PIO=1
+    PICO_FLASH_SIZE_BYTES=${EXPLORER_FLASH_SIZE_BYTES}
     EXPLORER_USB_STDIO_DEBUG=$<BOOL:${EXPLORER_USB_STDIO_DEBUG}>
     EXPLORER_AUDIO_TRACE=$<BOOL:${EXPLORER_AUDIO_TRACE}>
     EXPLORER_VERSION="${EXPLORER_VERSION}"

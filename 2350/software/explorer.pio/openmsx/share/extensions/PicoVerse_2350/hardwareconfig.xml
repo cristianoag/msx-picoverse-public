@@ -1,0 +1,37 @@
+<?xml version="1.0" ?>
+<!DOCTYPE msxconfig SYSTEM 'msxconfig2.dtd'>
+<!--
+  PicoVerse 2350 Explorer - openMSX extension
+  (c) 2026 Cristiano Goncalves, The Retro Hacker
+
+  The cartridge window (0x4000-0xBFFF) is served by the picoverse2350.tcl
+  script, which plays the role of the Raspberry Pi Pico 2 firmware: it loads
+  the Explorer menu ROM of the selected UF2 into this window and answers the
+  menu's commands in the Pico control area (0xB900-0xBFFF). MSX writes never
+  stick, the script puts back what the Pico would serve, so the MSX does not
+  see RAM here. Without the script the window stays empty.
+
+  This program is free software; you can redistribute it and/or modify it
+  under the terms of the GNU General Public License as published by the Free
+  Software Foundation; either version 2 of the License, or (at your option)
+  any later version. See <https://www.gnu.org/licenses/>.
+-->
+<msxconfig>
+  <info>
+    <name>PicoVerse 2350 Explorer</name>
+    <manufacturer>The Retro Hacker</manufacturer>
+    <code/>
+    <release_year>2026</release_year>
+    <description>PicoVerse 2350 Explorer cartridge, runs an Explorer UF2 (needs the picoverse2350.tcl script).</description>
+    <type>multi-ROM cartridge</type>
+  </info>
+  <devices>
+    <primary slot="any">
+      <secondary slot="any">
+        <RAM id="PicoVerse 2350 Explorer">
+          <mem base="0x4000" size="0x8000"/>
+        </RAM>
+      </secondary>
+    </primary>
+  </devices>
+</msxconfig>

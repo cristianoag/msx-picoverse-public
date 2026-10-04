@@ -522,6 +522,8 @@ int main(int argc, char **argv) {
     char *end;
     unsigned long firmware_size = strtoul(argv[3], &end, 10);
     assert(*end == '\0' && firmware_size > 0 && firmware_size < 16 * 1024 * 1024);
+    // The tool starts the menu ROM on the first 4 KB boundary after the firmware.
+    firmware_size = (firmware_size + 4095ul) & ~4095ul;
     test_profiles();
     test_fmpac();
     test_bus();

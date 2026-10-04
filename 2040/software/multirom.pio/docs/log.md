@@ -5,6 +5,7 @@
 - Version bumped to v2.66 (top-level and tool Makefiles).
 - `../tools/gen_romdb.py` now downloads the latest database by default from Vampier's ROM DB (`https://romdb.vampier.net/Archive/xml-msxromsdb.zip`) and reads `softwaredb.xml` from the zip in memory, so a local openMSX install is no longer needed. A local `softwaredb.xml` or `.zip` can still be passed as an argument for offline use. The generated header now records the source and the database timestamp. The script also accepts the `ASCII16-X` and lowercase `konami` mapper names used by this database.
 - Regenerated `tool/src/romdb.h` from the 2026-10-03 database: 3115 → 3218 entries (103 added, none removed or changed), including 31 ASCII16-X ROMs (mapper 12) that the old DB never matched. Rebuilt the MSX menu, firmware and `tool/dist/multirom.exe`.
+- openMSX add-on: `picoverse2040.tcl` now only takes over `.uf2` files inserted as ROM images when they are RP2040 images (family `0xE48BFF56`, or no family ID), via the new `is_rp2040_uf2()`. PicoVerse 2350 Explorer UF2s are left to the new 2350 add-on (`2350/software/explorer.pio/openmsx`), so both add-ons can be installed together. Script version bumped to v2.66 to match the project, so the `make openmsx` version check passes again.
 
 ## PicoVerse 2040 Multirom v2.65
 

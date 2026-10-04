@@ -28,6 +28,7 @@
 #include "hardware/uart.h"
 #include "hardware/regs/uart.h"
 #include "hardware/irq.h"
+#include "hardware/flash.h"
 #include "hw_config.h"
 #include "explorer.h"
 #include "mapper_detect.h"
@@ -105,9 +106,11 @@
 #define CMD_SAVE_OPTIONS  0x08 // Command: save ROM options to microSD .PVC file
 #define CMD_PREPARE_QUICK_RUN 0x09 // Command: load saved/default launch options for quick-run
 #define CMD_CYCLE_SD_PARTITION 0x0A // Command: cycle Explorer microSD browse partition
-#define CMD_DELETE_SD_FILE 0x0B // Command: delete selected Explorer microSD file
+#define CMD_DELETE_SD_FILE 0x0B // Command: delete the selected microSD file or flash ROM entry
 #define CMD_LOAD_LAST_SELECTION 0x0C // Command: load the last executed entry from microSD
 #define CMD_SAVE_LAST_SELECTION 0x0D // Command: save the entry being executed to microSD
+#define CMD_COPY_TO_FLASH 0x0E // Command: copy the selected microSD ROM into the flash ROM area
+#define CMD_RENAME_ENTRY 0x0F // Command: rename the selected microSD ROM/DSK or flash entry
 #define CMD_FH_LIST_PAGE   0x40 // Command: File Hunter list page from menu ROM
 #define CMD_FH_DOWNLOAD    0x41 // Command: File Hunter download/save from menu ROM
 #define CMD_FH_SEARCH      0x42 // Command: File Hunter search from menu ROM
@@ -429,7 +432,10 @@ static uint32_t rom_cached_size = 0; // Added for PIO implementation
 static uint32_t rom_cache_capacity = CACHE_SIZE;
 static uint8_t page_buffer[DATA_BUFFER_SIZE];
 
-// pointer to the custom data
+// pointer to the custom data. The tool starts the menu ROM on the first flash
+// sector boundary after the firmware (so the config area owns whole sectors);
+// main() rounds __flash_binary_end up the same way.
+#define FLASH_PAYLOAD_ALIGN 4096u
 static const uint8_t *flash_rom = (const uint8_t *)&__flash_binary_end;
 static const uint8_t *rom_data = (const uint8_t *)&__flash_binary_end;
 static bool rom_data_in_ram = false;
@@ -861,6 +867,11 @@ static volatile uint8_t ctrl_ack_value = 0;
 static uint16_t match_index = 0xFFFF;
 static ROMRecord flash_records[MAX_FLASH_RECORDS];
 static uint16_t flash_record_count = 0;
+// Config-area slot each flash_records[] entry was read from, and the number of
+// slots consumed so far (live + deleted). Slots are append-only: deleting an
+// entry only clears its first name byte, so neither operation needs an erase.
+static uint8_t flash_record_slot[MAX_FLASH_RECORDS];
+static uint16_t flash_slots_used = 0;
 static char sd_current_path[SD_PATH_MAX] = "/";
 static uint8_t browse_source_mode = SOURCE_MODE_FLASH;
 // Last executed entry: source, full microSD path (or flash display name) and the
@@ -1723,7 +1734,10 @@ static uint8_t mapper_number_from_filename(const char *filename) {
     return 0;
 }
 
-static void build_display_name(const char *filename, char *out, size_t out_size) {
+// display_name_length - Length of the part of a microSD file name shown in the
+// menu: everything before the extension and an optional ".<mapper tag>". The
+// rest (tag + extension) is kept when the file is renamed.
+static size_t display_name_length(const char *filename) {
     char name_copy[SD_PATH_MAX];
     strncpy(name_copy, filename, sizeof(name_copy));
     name_copy[sizeof(name_copy) - 1] = '\0';
@@ -1740,14 +1754,20 @@ static void build_display_name(const char *filename, char *out, size_t out_size)
         size_t tag_len = strlen(tag);
         if (name_len > tag_len + 1 && name_copy[name_len - tag_len - 1] == '.') {
             if (equals_ignore_case(name_copy + name_len - tag_len, tag)) {
-                name_copy[name_len - tag_len - 1] = '\0';
-                break;
+                return name_len - tag_len - 1;
             }
         }
     }
+    return name_len;
+}
 
-    strncpy(out, name_copy, out_size);
-    out[out_size - 1] = '\0';
+static void build_display_name(const char *filename, char *out, size_t out_size) {
+    size_t len = display_name_length(filename);
+    if (len >= out_size) {
+        len = out_size - 1;
+    }
+    memcpy(out, filename, len);
+    out[len] = '\0';
 }
 
 static bool has_rom_extension(const char *filename) {
@@ -1897,6 +1917,27 @@ static uint32_t file_download_fattime(uint32_t reported) {
     return file_write_fattime(0u);
 }
 
+// sd_pvc_path_from_rom - .PVC options path of a microSD ROM/DSK: the extension
+// is replaced, except for .DSK, which keeps it so GAME.DSK and GAME.ROM never
+// share GAME.PVC. out may be rom_path itself.
+static bool sd_pvc_path_from_rom(const char *rom_path, bool is_dsk, char *out, size_t out_size) {
+    size_t len = strlen(rom_path);
+    if (len + 1 > out_size) {
+        return false;
+    }
+    memmove(out, rom_path, len + 1);
+    char *slash = strrchr(out, '/');
+    char *dot = strrchr(out, '.');
+    if (!dot || (slash && dot < slash) || is_dsk) {
+        dot = out + len;
+    }
+    if ((size_t)(dot - out) + 5u > out_size) {
+        return false;
+    }
+    memcpy(dot, ".PVC", 5u);
+    return true;
+}
+
 static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_size) {
     if (!out || out_size == 0 || record_index >= full_record_count) {
         return false;
@@ -1915,23 +1956,7 @@ static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_
         if (sd_path_offsets[record_index] == 0xFFFF) {
             return false;
         }
-        const char *rom_path = sd_path_buffer + sd_path_offsets[record_index];
-        size_t len = strlen(rom_path);
-        if (len + 1 > out_size) {
-            return false;
-        }
-        memcpy(out, rom_path, len + 1);
-        char *slash = strrchr(out, '/');
-        char *dot = strrchr(out, '.');
-        // Keep the .DSK extension so GAME.DSK and GAME.ROM never share GAME.PVC.
-        if (!dot || (slash && dot < slash) || is_dsk_record(rec)) {
-            dot = out + len;
-        }
-        if ((size_t)(dot - out) + 5u > out_size) {
-            return false;
-        }
-        memcpy(dot, ".PVC", 5u);
-        return true;
+        return sd_pvc_path_from_rom(sd_path_buffer + sd_path_offsets[record_index], is_dsk_record(rec), out, out_size);
     }
 
     int written = snprintf(out, out_size, "/%s.flash.PVC", rec->Name);
@@ -2701,13 +2726,11 @@ static void process_cycle_sd_partition_request(void) {
     ctrl_ack_value = 1;
 }
 
+static bool flash_store_delete_entry(uint16_t record_index);
+
 static void process_delete_sd_file_request(void) {
     ctrl_ack_value = 0;
     cancel_refresh_work();
-    if (!sd_mount_card()) {
-        ctrl_cmd_state = 0;
-        return;
-    }
 
     uint16_t index = query_filtered_index();
     if (index >= total_record_count) {
@@ -2716,13 +2739,22 @@ static void process_delete_sd_file_request(void) {
     }
 
     uint16_t record_index = filtered_indices[index];
-    if (record_index >= full_record_count || sd_path_offsets[record_index] == 0xFFFF) {
+    if (record_index >= full_record_count || (records[record_index].Mapper & FOLDER_FLAG) != 0) {
         ctrl_cmd_state = 0;
         return;
     }
 
-    ROMRecord *rec = &records[record_index];
-    if ((rec->Mapper & SOURCE_SD_FLAG) == 0 || (rec->Mapper & FOLDER_FLAG) != 0) {
+    if ((records[record_index].Mapper & SOURCE_SD_FLAG) == 0) {
+        if (flash_store_delete_entry(record_index)) {
+            refresh_requested = true;
+            ctrl_ack_value = 1;
+        } else {
+            ctrl_cmd_state = 0;
+        }
+        return;
+    }
+
+    if (!sd_mount_card() || sd_path_offsets[record_index] == 0xFFFF) {
         ctrl_cmd_state = 0;
         return;
     }
@@ -2741,6 +2773,801 @@ static void process_delete_sd_file_request(void) {
     } else {
         ctrl_cmd_state = 0;
     }
+}
+
+// -----------------------------------------------------------------------
+// Flash ROM store: F copies a microSD ROM into the flash ROM area and D
+// removes a flash entry.
+//
+// Layout, relative to flash_rom (__flash_binary_end rounded up to 4 KB):
+//   [menu ROM][config area: 80-byte slots][hidden payloads][ROM images...]
+// A copied image is written 4 KB aligned into the first gap between live
+// entries that can hold it, and only then is its entry appended to the next
+// empty (all 0xFF) config slot, so an interrupted copy leaves no entry behind.
+// Deleting an entry programs its first name byte to 0x00. Neither needs an
+// erase of the config area; only once every slot has been consumed are the
+// four config sectors rewritten with the live entries.
+// -----------------------------------------------------------------------
+#define FLASH_STORE_SIZE      PICO_FLASH_SIZE_BYTES
+#define FLASH_CONFIG_SLOTS    (CONFIG_AREA_SIZE / ROM_RECORD_SIZE)
+#define FLASH_ROM_AREA_OFFSET (NEXTOR_DSK_FLASH_OFFSET + NEXTOR_DSK_ROM_SIZE)
+#define FLASH_RECORD_DELETED  0x00u
+#define FLASH_STORE_CHUNK     FLASH_PAGE_SIZE
+#define FLASH_STORE_BLOCK     65536u
+
+typedef enum {
+    FLASH_JOB_IDLE = 0,
+    FLASH_JOB_START,
+    FLASH_JOB_WRITE,
+    FLASH_JOB_COMMIT
+} flash_job_state_t;
+
+// Program source buffer (one flash page). It has to be in SRAM: flash and
+// PSRAM (both XIP) are unreachable while the flash is being programmed.
+static uint8_t flash_store_buf[FLASH_STORE_CHUNK];
+// Set when the config area holds more live entries than flash_records[] can
+// take (the tool can write up to 138). Space and slots of the unloaded entries
+// are unknown, so copying and compaction are refused while it is set.
+static bool flash_store_overflow = false;
+static volatile flash_job_state_t flash_job_state = FLASH_JOB_IDLE;
+static uint16_t flash_job_index = 0;
+static uint16_t flash_job_record = 0;
+static FIL flash_job_file;
+static bool flash_job_file_open = false;
+static ROMRecord flash_job_entry;
+static uint32_t flash_job_addr = 0;    // Absolute flash offset of the image
+static uint32_t flash_job_span = 0;    // Image size rounded up to whole sectors
+static uint32_t flash_job_erased = 0;  // Bytes of the span erased so far
+static uint32_t flash_job_written = 0; // Image bytes programmed so far
+
+static inline uint32_t flash_store_align_up(uint32_t value, uint32_t align) {
+    return (value + align - 1u) & ~(align - 1u);
+}
+
+static inline uint32_t flash_store_base(void) {
+    return (uint32_t)((uintptr_t)flash_rom - XIP_BASE);
+}
+
+static inline uint32_t flash_store_config_base(void) {
+    return flash_store_base() + MENU_ROM_SIZE;
+}
+
+// Erase (data == NULL) or program a flash range from SRAM with interrupts off.
+// Core 1 must already be stopped. The SDK re-enters XIP with the boot-time QMI
+// settings, so the faster flash timing set in main() and the PSRAM (CS1)
+// window setup are put back before anything touches XIP again.
+static void __no_inline_not_in_flash_func(flash_store_op)(uint32_t addr, const uint8_t *data, uint32_t len) {
+    uint32_t m0_timing = qmi_hw->m[0].timing;
+    uint32_t m1_timing = qmi_hw->m[1].timing;
+    uint32_t m1_rfmt = qmi_hw->m[1].rfmt;
+    uint32_t m1_rcmd = qmi_hw->m[1].rcmd;
+    uint32_t m1_wfmt = qmi_hw->m[1].wfmt;
+    uint32_t m1_wcmd = qmi_hw->m[1].wcmd;
+    uint32_t xip_ctrl = xip_ctrl_hw->ctrl;
+    uint32_t irq_state = save_and_disable_interrupts();
+    if (data) {
+        flash_range_program(addr, data, len);
+    } else {
+        flash_range_erase(addr, len);
+    }
+    qmi_hw->m[0].timing = m0_timing;
+    qmi_hw->m[1].timing = m1_timing;
+    qmi_hw->m[1].rfmt = m1_rfmt;
+    qmi_hw->m[1].rcmd = m1_rcmd;
+    qmi_hw->m[1].wfmt = m1_wfmt;
+    qmi_hw->m[1].wcmd = m1_wcmd;
+    xip_ctrl_hw->ctrl = xip_ctrl;
+    restore_interrupts(irq_state);
+}
+
+static void flash_store_serialize(const ROMRecord *rec, uint8_t *out) {
+    memset(out, 0, ROM_NAME_MAX);
+    memcpy(out, rec->Name, strnlen(rec->Name, ROM_NAME_MAX));
+    out[ROM_NAME_MAX] = rec->Mapper;
+    write_u32_le(out + ROM_NAME_MAX + 1, (uint32_t)rec->Size);
+    write_u32_le(out + ROM_NAME_MAX + 5, (uint32_t)rec->Offset);
+}
+
+// Read the flash entries from the config area, skipping deleted slots.
+static void flash_store_load_records(void) {
+    const uint8_t *slot_ptr = flash_rom + MENU_ROM_SIZE;
+    uint16_t count = 0;
+    uint16_t slot = 0;
+    flash_store_overflow = false;
+    for (; slot < FLASH_CONFIG_SLOTS; slot++, slot_ptr += ROM_RECORD_SIZE) {
+        if (isEndOfData(slot_ptr)) {
+            break;
+        }
+        if (slot_ptr[0] == FLASH_RECORD_DELETED) {
+            continue;
+        }
+        if (count >= MAX_FLASH_RECORDS) {
+            flash_store_overflow = true;
+            continue;
+        }
+        char flash_name[ROM_NAME_MAX + 1];
+        memcpy(flash_name, slot_ptr, ROM_NAME_MAX);
+        flash_name[ROM_NAME_MAX] = '\0';
+        ROMRecord *rec = &flash_records[count];
+        memset(rec->Name, 0, sizeof(rec->Name));
+        trim_name_copy(rec->Name, flash_name);
+        rec->Mapper = slot_ptr[ROM_NAME_MAX];
+        rec->Size = read_ulong(slot_ptr + ROM_NAME_MAX + 1);
+        rec->Offset = read_ulong(slot_ptr + ROM_NAME_MAX + 5);
+        flash_record_slot[count] = (uint8_t)slot;
+        count++;
+    }
+    flash_slots_used = slot;
+    flash_record_count = count;
+}
+
+// Name comparison as the microSD card sees it: case-insensitive, and bounded
+// because a full 71-character flash name has no terminator.
+static bool flash_names_equal(const char *a, const char *b) {
+    for (size_t i = 0; i < ROM_NAME_MAX; i++) {
+        if (toupper((unsigned char)a[i]) != toupper((unsigned char)b[i])) {
+            return false;
+        }
+        if (a[i] == '\0') {
+            return true;
+        }
+    }
+    return true;
+}
+
+static int flash_store_find_entry(const ROMRecord *rec) {
+    for (uint16_t i = 0; i < flash_record_count; i++) {
+        const ROMRecord *entry = &flash_records[i];
+        if (entry->Offset == rec->Offset && entry->Size == rec->Size &&
+            strncmp(entry->Name, rec->Name, ROM_NAME_MAX) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+// Program bytes at any flash offset, one page at a time. The rest of each page
+// is programmed as 0xFF, which leaves the existing contents untouched.
+static bool flash_store_patch(uint32_t addr, const uint8_t *data, uint32_t len) {
+    uint32_t pos = addr;
+    uint32_t done = 0;
+    while (done < len) {
+        uint32_t page = pos & ~(FLASH_PAGE_SIZE - 1u);
+        uint32_t count = page + FLASH_PAGE_SIZE - pos;
+        if (count > len - done) {
+            count = len - done;
+        }
+        memset(flash_store_buf, 0xFF, FLASH_PAGE_SIZE);
+        memcpy(flash_store_buf + (pos - page), data + done, count);
+        flash_store_op(page, flash_store_buf, FLASH_PAGE_SIZE);
+        pos += count;
+        done += count;
+    }
+    return memcmp((const void *)(XIP_BASE + addr), data, len) == 0;
+}
+
+// Rewrite the config area with only the live entries. The tool starts the menu
+// ROM on a sector boundary, so the config area is exactly four sectors of its
+// own and nothing else is erased. The new contents are staged in PSRAM.
+static bool flash_store_compact(void) {
+    uint32_t cfg = flash_store_config_base();
+    if ((cfg & (FLASH_SECTOR_SIZE - 1u)) != 0 || flash_store_overflow ||
+        !psram_bring_up_once() || !sd_rom_region.ptr || sd_rom_region.size < CONFIG_AREA_SIZE) {
+        return false;
+    }
+    uint8_t *stage = sd_rom_region.ptr;
+    printf("FLASHSTORE: compacting %u live of %u slots\n", (unsigned)flash_record_count, (unsigned)flash_slots_used);
+    memset(stage, 0xFF, CONFIG_AREA_SIZE);
+    for (uint16_t i = 0; i < flash_record_count; i++) {
+        flash_store_serialize(&flash_records[i], stage + (uint32_t)i * ROM_RECORD_SIZE);
+    }
+    for (uint32_t sector = 0; sector < CONFIG_AREA_SIZE; sector += FLASH_SECTOR_SIZE) {
+        flash_store_op(cfg + sector, NULL, FLASH_SECTOR_SIZE);
+        for (uint32_t done = 0; done < FLASH_SECTOR_SIZE; done += FLASH_STORE_CHUNK) {
+            memcpy(flash_store_buf, stage + sector + done, FLASH_STORE_CHUNK);
+            flash_store_op(cfg + sector + done, flash_store_buf, FLASH_STORE_CHUNK);
+        }
+    }
+    bool ok = memcmp((const void *)(XIP_BASE + cfg), stage, CONFIG_AREA_SIZE) == 0;
+    if (!ok) {
+        printf("FLASHSTORE: compaction verify failed\n");
+    }
+    flash_store_load_records();
+    return ok;
+}
+
+// Lowest sector-aligned gap after the hidden payloads that holds size bytes
+// without sharing a sector with any live entry.
+static bool flash_store_find_space(uint32_t size, uint32_t *out_addr) {
+    uint32_t base = flash_store_base();
+    uint32_t span = flash_store_align_up(size, FLASH_SECTOR_SIZE);
+    uint32_t cursor = flash_store_align_up(base + FLASH_ROM_AREA_OFFSET, FLASH_SECTOR_SIZE);
+    while (cursor <= FLASH_STORE_SIZE && span <= FLASH_STORE_SIZE - cursor) {
+        uint32_t next = cursor;
+        for (uint16_t i = 0; i < flash_record_count; i++) {
+            const ROMRecord *rec = &flash_records[i];
+            if (rec->Size == 0) {
+                continue;
+            }
+            uint32_t start = base + (uint32_t)rec->Offset;
+            uint32_t end = start + (uint32_t)rec->Size;
+            if (start < cursor + span && end > cursor) {
+                uint32_t after = flash_store_align_up(end, FLASH_SECTOR_SIZE);
+                if (after > next) {
+                    next = after;
+                }
+            }
+        }
+        if (next == cursor) {
+            *out_addr = cursor;
+            return true;
+        }
+        cursor = next;
+    }
+    return false;
+}
+
+// Mark a config slot as deleted by programming its first name byte to 0x00.
+static bool flash_store_tombstone(uint8_t slot) {
+    uint8_t tombstone = FLASH_RECORD_DELETED;
+    return flash_store_patch(flash_store_config_base() + (uint32_t)slot * ROM_RECORD_SIZE, &tombstone, 1u);
+}
+
+// Program rec into the next empty config slot. The caller re-reads the list.
+static bool flash_store_append(const ROMRecord *rec) {
+    uint16_t slot = flash_slots_used;
+    if (slot >= FLASH_CONFIG_SLOTS) {
+        return false;
+    }
+    uint8_t entry[ROM_RECORD_SIZE];
+    flash_store_serialize(rec, entry);
+    // Any programming attempt dirties the slot, so it is consumed either way.
+    flash_slots_used = (uint16_t)(slot + 1u);
+    if (!flash_store_patch(flash_store_config_base() + (uint32_t)slot * ROM_RECORD_SIZE, entry, ROM_RECORD_SIZE)) {
+        printf("FLASHSTORE: entry write failed slot=%u\n", (unsigned)slot);
+        return false;
+    }
+    return true;
+}
+
+static bool flash_store_delete_entry(uint16_t record_index) {
+    if (flash_job_state != FLASH_JOB_IDLE) {
+        return false;
+    }
+    int entry = flash_store_find_entry(&records[record_index]);
+    if (entry < 0) {
+        return false;
+    }
+    quiesce_mp3_core1_before_sd_work();
+
+    if (!flash_store_tombstone(flash_record_slot[entry])) {
+        printf("FLASHSTORE: delete failed slot=%u\n", (unsigned)flash_record_slot[entry]);
+        return false;
+    }
+    printf("FLASHSTORE: deleted '%s' slot=%u\n", flash_records[entry].Name, (unsigned)flash_record_slot[entry]);
+
+    // The entry's .PVC options go with it, as for a deleted microSD file.
+    char pvc_path[SD_PATH_MAX];
+    if (build_pvc_options_path(record_index, pvc_path, sizeof(pvc_path)) && sd_mount_card()) {
+        sd_activity_note();
+        (void)f_unlink(pvc_path);
+    }
+
+    // Re-read the list from flash: an entry the 128-entry list could not hold
+    // before may fit now.
+    flash_store_load_records();
+    return true;
+}
+
+static void __noinline process_copy_to_flash_request(void) {
+    ctrl_ack_value = 0;
+    ctrl_mapper_value = 0;
+    if (flash_job_state != FLASH_JOB_IDLE || fh_save_state == FH_SAVE_RUNNING) {
+        ctrl_cmd_state = 0;
+        return;
+    }
+    cancel_refresh_work();
+    flash_job_index = query_filtered_index();
+    flash_job_state = FLASH_JOB_START;
+}
+
+static bool flash_job_start(void) {
+    quiesce_mp3_core1_before_sd_work();
+    if (!sd_mount_card() || flash_job_index >= total_record_count) {
+        return false;
+    }
+    uint16_t record_index = filtered_indices[flash_job_index];
+    if (record_index >= full_record_count || sd_path_offsets[record_index] == 0xFFFF) {
+        return false;
+    }
+    const ROMRecord *rec = &records[record_index];
+    if ((rec->Mapper & SOURCE_SD_FLAG) == 0 || (rec->Mapper & (FOLDER_FLAG | MP3_FLAG)) != 0 ||
+        rec->Size < MIN_ROM_SIZE || rec->Size > SD_ROM_MAX_SIZE ||
+        flash_record_count >= MAX_FLASH_RECORDS || flash_store_overflow) {
+        return false;
+    }
+    for (uint16_t i = 0; i < flash_record_count; i++) {
+        if (flash_names_equal(flash_records[i].Name, rec->Name)) {
+            printf("FLASHSTORE: '%s' is already in flash\n", rec->Name);
+            return false;
+        }
+    }
+
+    const char *path = sd_path_buffer + sd_path_offsets[record_index];
+    uint8_t mapper = mapper_code_from_record_byte(rec->Mapper);
+    if (mapper == 0) {
+        mapper = mapper_number_from_filename(basename_from_path(path));
+    }
+    if (mapper == 0) {
+        mapper = detect_rom_type_from_file(path, (uint32_t)rec->Size);
+    }
+    if (mapper == 0 || mapper == MAPPER_DSK || is_system_mapper(mapper)) {
+        printf("FLASHSTORE: unsupported mapper %u for %s\n", (unsigned)mapper, path);
+        return false;
+    }
+
+    if (flash_slots_used >= FLASH_CONFIG_SLOTS && !flash_store_compact()) {
+        return false;
+    }
+    if (!flash_store_find_space((uint32_t)rec->Size, &flash_job_addr)) {
+        printf("FLASHSTORE: no room for %lu bytes\n", (unsigned long)rec->Size);
+        return false;
+    }
+
+    sd_activity_note();
+    if (f_open(&flash_job_file, path, FA_READ) != FR_OK) {
+        return false;
+    }
+    flash_job_file_open = true;
+    memset(&flash_job_entry, 0, sizeof(flash_job_entry));
+    memcpy(flash_job_entry.Name, rec->Name, strnlen(rec->Name, ROM_NAME_MAX));
+    flash_job_entry.Mapper = mapper;
+    flash_job_entry.Size = rec->Size;
+    flash_job_entry.Offset = flash_job_addr - flash_store_base();
+    flash_job_record = record_index;
+    flash_job_span = flash_store_align_up((uint32_t)rec->Size, FLASH_SECTOR_SIZE);
+    flash_job_erased = 0;
+    flash_job_written = 0;
+    printf("FLASHSTORE: copying %s (%lu bytes, mapper %u) to 0x%08lx\n", path,
+           (unsigned long)rec->Size, (unsigned)mapper, (unsigned long)flash_job_addr);
+    return true;
+}
+
+// One erase (4 KB sector, or a 64 KB block when aligned) or one sector of
+// programming per call, so the MSX keeps running between steps.
+static bool flash_job_write_step(void) {
+    uint32_t size = (uint32_t)flash_job_entry.Size;
+    if (flash_job_written >= flash_job_erased) {
+        uint32_t addr = flash_job_addr + flash_job_erased;
+        uint32_t len = FLASH_SECTOR_SIZE;
+        if ((addr & (FLASH_STORE_BLOCK - 1u)) == 0 && flash_job_span - flash_job_erased >= FLASH_STORE_BLOCK) {
+            len = FLASH_STORE_BLOCK;
+        }
+        flash_store_op(addr, NULL, len);
+        flash_job_erased += len;
+        return true;
+    }
+
+    uint32_t stop = flash_job_written + FLASH_SECTOR_SIZE;
+    if (stop > flash_job_erased) {
+        stop = flash_job_erased;
+    }
+    while (flash_job_written < stop && flash_job_written < size) {
+        uint32_t want = size - flash_job_written;
+        if (want > FLASH_STORE_CHUNK) {
+            want = FLASH_STORE_CHUNK;
+        }
+        UINT br = 0;
+        sd_activity_note();
+        if (f_read(&flash_job_file, flash_store_buf, want, &br) != FR_OK || br != want) {
+            printf("FLASHSTORE: read failed at %lu\n", (unsigned long)flash_job_written);
+            return false;
+        }
+        uint32_t len = flash_store_align_up(want, FLASH_PAGE_SIZE);
+        if (len > want) {
+            memset(flash_store_buf + want, 0xFF, len - want);
+        }
+        uint32_t addr = flash_job_addr + flash_job_written;
+        flash_store_op(addr, flash_store_buf, len);
+        if (memcmp((const void *)(XIP_BASE + addr), flash_store_buf, want) != 0) {
+            printf("FLASHSTORE: verify failed at 0x%08lx\n", (unsigned long)addr);
+            return false;
+        }
+        flash_job_written += want;
+    }
+    // size is at most SD_ROM_MAX_SIZE (4 MB), so written * 100 fits in 32 bits.
+    ctrl_mapper_value = (uint8_t)((flash_job_written * 100u) / size);
+    if (flash_job_written >= size) {
+        flash_job_state = FLASH_JOB_COMMIT;
+    }
+    return true;
+}
+
+// Carry the ROM's .PVC options over to the new flash entry.
+static void flash_job_copy_options(void) {
+    char src[SD_PATH_MAX];
+    char dst[SD_PATH_MAX];
+    if (!build_pvc_options_path(flash_job_record, src, sizeof(src))) {
+        return;
+    }
+    int written = snprintf(dst, sizeof(dst), "/%s.flash.PVC", flash_job_entry.Name);
+    if (written <= 0 || (size_t)written >= sizeof(dst)) {
+        return;
+    }
+    FIL file;
+    uint8_t data[64];
+    UINT br = 0;
+    UINT bw = 0;
+    sd_activity_note();
+    if (f_open(&file, src, FA_READ) != FR_OK) {
+        return;
+    }
+    FRESULT fr = f_read(&file, data, sizeof(data), &br);
+    f_close(&file);
+    if (fr != FR_OK || br == 0 || f_open(&file, dst, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
+        return;
+    }
+    (void)f_write(&file, data, br, &bw);
+    f_close(&file);
+}
+
+static bool flash_job_commit(void) {
+    f_close(&flash_job_file);
+    flash_job_file_open = false;
+
+    uint16_t slot = flash_slots_used;
+    if (flash_record_count >= MAX_FLASH_RECORDS || flash_store_overflow) {
+        return false;
+    }
+    bool ok = flash_store_append(&flash_job_entry);
+    // Re-read the list either way: a failed write may still have dirtied the slot.
+    flash_store_load_records();
+    if (!ok) {
+        return false;
+    }
+    flash_job_copy_options();
+    printf("FLASHSTORE: stored '%s' slot=%u\n", flash_job_entry.Name, (unsigned)slot);
+    return true;
+}
+
+static void flash_job_finish(bool ok) {
+    if (flash_job_file_open) {
+        f_close(&flash_job_file);
+        flash_job_file_open = false;
+    }
+    flash_job_state = FLASH_JOB_IDLE;
+    if (ok) {
+        // The rebuilt list clears ctrl_cmd_state once the new entry is in it.
+        ctrl_ack_value = 1;
+        refresh_requested = true;
+    } else {
+        ctrl_ack_value = 0;
+        ctrl_cmd_state = 0;
+    }
+}
+
+// The menu loop calls this whenever the PIO read FIFO is empty, which happens
+// between every two MSX bus reads. Without a pause the next step would start
+// right after the Pico answers a single read, and the MSX (running its menu
+// from the cartridge) would be starved until the copy ends, never getting to
+// draw the progress. Each step is therefore followed by a short MSX time slice.
+#define FLASH_JOB_YIELD_US 3000u
+static uint32_t flash_job_resume_us = 0;
+
+static void flash_job_background_work(void) {
+    if ((int32_t)(time_us_32() - flash_job_resume_us) < 0) {
+        return;
+    }
+    switch (flash_job_state) {
+        case FLASH_JOB_START:
+            if (flash_job_start()) {
+                flash_job_state = FLASH_JOB_WRITE;
+            } else {
+                flash_job_finish(false);
+            }
+            break;
+        case FLASH_JOB_WRITE:
+            if (!flash_job_write_step()) {
+                flash_job_finish(false);
+            }
+            break;
+        case FLASH_JOB_COMMIT:
+            flash_job_finish(flash_job_commit());
+            break;
+        default:
+            flash_job_state = FLASH_JOB_IDLE;
+            break;
+    }
+    flash_job_resume_us = time_us_32() + FLASH_JOB_YIELD_US;
+}
+
+// -----------------------------------------------------------------------
+// Rename (R): microSD ROM/DSK files and flash entries.
+//
+// The menu writes the new name (NUL terminated) to the start of the data
+// window (DATA_BASE_ADDR), then sends CMD_RENAME_ENTRY with the list index in
+// the query buffer. After the list is rebuilt, match_index points at the
+// renamed entry and ctrl_ack_value is CTRL_MAGIC, so the menu keeps the cursor
+// on it.
+// -----------------------------------------------------------------------
+#define RENAME_NAME_MAX (ROM_NAME_MAX - 1u) // Longest name: matches the microSD record name field
+
+static char rename_buf[ROM_NAME_MAX];
+static bool rename_select_pending = false;
+static bool rename_select_sd = false;
+static uint32_t rename_select_size = 0;
+
+static void flash_store_build_path(const char *rom_name);
+static char flash_image_path[SD_PATH_MAX];
+
+// Trim the requested name and reject anything a FAT name or the menu cannot
+// hold. Names are printable ASCII without \ / : * ? " < > |.
+static bool rename_clean_name(char *name) {
+    static const char reserved[] = "\\/:*?\"<>|";
+    name[RENAME_NAME_MAX] = '\0';
+    char *start = name;
+    while (*start == ' ') {
+        start++;
+    }
+    size_t len = strlen(start);
+    // Trailing dots and spaces are dropped by FAT.
+    while (len > 0 && (start[len - 1] == ' ' || start[len - 1] == '.')) {
+        len--;
+    }
+    if (len == 0) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)start[i];
+        if (c < 0x20u || c > 0x7Eu || strchr(reserved, (char)c) != NULL) {
+            return false;
+        }
+    }
+    memmove(name, start, len);
+    name[len] = '\0';
+    return true;
+}
+
+// New path for a microSD ROM/DSK renamed to name: same folder, and the mapper
+// tag and extension of the old file name are kept.
+static bool build_renamed_path(const char *old_path, const char *name, char *out, size_t out_size) {
+    const char *base = basename_from_path(old_path);
+    const char *suffix = base + display_name_length(base);
+    int written = snprintf(out, out_size, "%.*s%s%s", (int)(base - old_path), old_path, name, suffix);
+    return written > 0 && (size_t)written < out_size;
+}
+
+// Move an optional sidecar file along with its ROM. A missing sidecar is not an
+// error. replace_stale lets a file already using the new name be replaced; it
+// is only safe where that file cannot belong to another live ROM.
+static void sd_rename_sidecar(const char *from, const char *to, bool replace_stale) {
+    if (strcmp(from, to) == 0) {
+        return;
+    }
+    sd_activity_note();
+    if (f_rename(from, to) == FR_EXIST && replace_stale && f_unlink(to) == FR_OK) {
+        (void)f_rename(from, to);
+    }
+}
+
+// True when the ROM runs as ASC16X-FR: from its list mapper (file name tag or a
+// mapper chosen this session) or from the mapper saved in its .PVC options.
+static bool __noinline rom_uses_flashrom(const ROMRecord *rec, const char *pvc_path) {
+    if (mapper_code_from_record_byte(rec->Mapper) == MAPPER_ASCII16X_FR) {
+        return true;
+    }
+    FIL fil;
+    uint8_t data[PVC_OPTIONS_MAPPER_SIZE];
+    UINT br = 0;
+    if (!pvc_path || f_open(&fil, pvc_path, FA_READ) != FR_OK) {
+        return false;
+    }
+    sd_activity_note();
+    FRESULT fr = f_read(&fil, data, sizeof(data), &br);
+    f_close(&fil);
+    return fr == FR_OK && br == sizeof(data) &&
+           data[0] == PVC_OPTIONS_MAGIC_0 && data[1] == PVC_OPTIONS_MAGIC_1 &&
+           data[2] == PVC_OPTIONS_MAGIC_2 && data[3] == PVC_OPTIONS_MAGIC_3 &&
+           data[6] == MAPPER_ASCII16X_FR;
+}
+
+// ASC16X-FR saves live in "/<name>.FLA", keyed by the name alone, so another
+// ROM with the new name may already own that file. Never overwrite it: such a
+// rename is refused.
+static bool fla_rename_allowed(const char *old_name, const char *new_name, char *scratch) {
+    FILINFO info;
+    flash_store_build_path(old_name);
+    strcpy(scratch, flash_image_path);
+    flash_store_build_path(new_name);
+    return equals_ignore_case(scratch, flash_image_path) || f_stat(flash_image_path, &info) != FR_OK;
+}
+
+static void rename_fla_image(const char *old_name, const char *new_name, char *scratch) {
+    flash_store_build_path(old_name);
+    strcpy(scratch, flash_image_path);
+    flash_store_build_path(new_name);
+    sd_rename_sidecar(scratch, flash_image_path, false);
+}
+
+// Before a flash entry is renamed: false when its FlashROM save would land on
+// another ROM's file. *flashrom tells rename_flash_sidecars() to move the save.
+static bool flash_rename_sidecars_allowed(const ROMRecord *rec, const char *old_name, const char *new_name, bool *flashrom) {
+    char path[SD_PATH_MAX];
+    *flashrom = false;
+    if (!sd_mount_card()) {
+        return true;
+    }
+    snprintf(path, sizeof(path), "/%s.flash.PVC", old_name);
+    *flashrom = rom_uses_flashrom(rec, path);
+    return !*flashrom || fla_rename_allowed(old_name, new_name, path);
+}
+
+static void rename_flash_sidecars(const char *old_name, const char *new_name, bool flashrom) {
+    char from[SD_PATH_MAX];
+    char to[SD_PATH_MAX];
+    if (!sd_mount_card()) {
+        return;
+    }
+    snprintf(from, sizeof(from), "/%s.flash.PVC", old_name);
+    snprintf(to, sizeof(to), "/%s.flash.PVC", new_name);
+    sd_rename_sidecar(from, to, false);
+    if (flashrom) {
+        rename_fla_image(old_name, new_name, from);
+    }
+}
+
+// Rename a flash entry: the renamed entry is appended first and the old slot
+// deleted afterwards, so a power cut in between leaves a duplicate entry but
+// never loses the ROM. The image itself does not move.
+static bool flash_store_rename_entry(uint16_t record_index, const char *name) {
+    if (flash_job_state != FLASH_JOB_IDLE || flash_store_overflow) {
+        return false;
+    }
+    int entry = flash_store_find_entry(&records[record_index]);
+    if (entry < 0) {
+        return false;
+    }
+    if (strncmp(flash_records[entry].Name, name, ROM_NAME_MAX) == 0) {
+        return true;
+    }
+    // Flash entries share name-keyed sidecars on a case-insensitive card.
+    for (uint16_t i = 0; i < flash_record_count; i++) {
+        if (i != (uint16_t)entry && flash_names_equal(flash_records[i].Name, name)) {
+            return false;
+        }
+    }
+    if (flash_slots_used >= FLASH_CONFIG_SLOTS) {
+        if (!flash_store_compact()) {
+            return false;
+        }
+        entry = flash_store_find_entry(&records[record_index]);
+        if (entry < 0) {
+            return false;
+        }
+    }
+
+    ROMRecord renamed = flash_records[entry];
+    char old_name[ROM_NAME_MAX + 1];
+    memcpy(old_name, renamed.Name, ROM_NAME_MAX);
+    old_name[ROM_NAME_MAX] = '\0';
+    memset(renamed.Name, 0, sizeof(renamed.Name));
+    memcpy(renamed.Name, name, strnlen(name, RENAME_NAME_MAX));
+    uint8_t old_slot = flash_record_slot[entry];
+    bool flashrom = false;
+    if (!flash_rename_sidecars_allowed(&renamed, old_name, renamed.Name, &flashrom)) {
+        printf("FLASHSTORE: rename refused, '%s' already has a FlashROM save\n", renamed.Name);
+        return false;
+    }
+
+    bool ok = flash_store_append(&renamed) && flash_store_tombstone(old_slot);
+    flash_store_load_records();
+    if (!ok) {
+        return false;
+    }
+    printf("FLASHSTORE: renamed '%s' to '%s'\n", old_name, renamed.Name);
+    rename_flash_sidecars(old_name, renamed.Name, flashrom);
+    return true;
+}
+
+static bool sd_rename_entry(uint16_t record_index, const char *name) {
+    if (sd_path_offsets[record_index] == 0xFFFF || !sd_mount_card()) {
+        return false;
+    }
+    const ROMRecord *rec = &records[record_index];
+    const char *old_path = sd_path_buffer + sd_path_offsets[record_index];
+    char new_path[SD_PATH_MAX];
+    char scratch[SD_PATH_MAX];
+    if (!build_renamed_path(old_path, name, new_path, sizeof(new_path))) {
+        return false;
+    }
+    if (strcmp(old_path, new_path) == 0) {
+        return true;
+    }
+    bool is_dsk = is_dsk_record(rec);
+    bool has_pvc = sd_pvc_path_from_rom(old_path, is_dsk, scratch, sizeof(scratch));
+    bool flashrom = !is_dsk && rom_uses_flashrom(rec, has_pvc ? scratch : NULL);
+    if (flashrom && !fla_rename_allowed(rec->Name, name, scratch)) {
+        printf("RENAME: refused, '%s' already has a FlashROM save\n", name);
+        return false;
+    }
+    has_pvc = sd_pvc_path_from_rom(old_path, is_dsk, scratch, sizeof(scratch));
+
+    sd_activity_note();
+    FRESULT fr = f_rename(old_path, new_path);
+    if (fr != FR_OK) {
+        printf("RENAME: %s -> %s failed fr=%d\n", old_path, new_path, (int)fr);
+        return false;
+    }
+    printf("RENAME: %s -> %s\n", old_path, new_path);
+    // The .PVC sits next to the ROM and is named after its full file name, so
+    // a file already using the new .PVC name is an orphan and may be replaced.
+    if (has_pvc && sd_pvc_path_from_rom(new_path, is_dsk, new_path, sizeof(new_path))) {
+        sd_rename_sidecar(scratch, new_path, true);
+    }
+    if (flashrom) {
+        rename_fla_image(rec->Name, name, scratch);
+    }
+    return true;
+}
+
+// Called from the RAM-resident menu write handler: kept out of line so the
+// rename code stays in flash instead of being inlined into SRAM.
+static void __noinline process_rename_request(void) {
+    ctrl_ack_value = 0;
+    cancel_refresh_work();
+
+    bool ok = false;
+    uint16_t index = query_filtered_index();
+    if (index < total_record_count && rename_clean_name(rename_buf)) {
+        uint16_t record_index = filtered_indices[index];
+        if (record_index < full_record_count &&
+            (records[record_index].Mapper & (FOLDER_FLAG | MP3_FLAG)) == 0) {
+            bool sd = (records[record_index].Mapper & SOURCE_SD_FLAG) != 0;
+            uint32_t size = (uint32_t)records[record_index].Size;
+            quiesce_mp3_core1_before_sd_work();
+            ok = sd ? sd_rename_entry(record_index, rename_buf)
+                    : flash_store_rename_entry(record_index, rename_buf);
+            if (ok) {
+                rename_select_sd = sd;
+                rename_select_size = size;
+                rename_select_pending = true;
+            }
+        }
+    }
+
+    if (ok) {
+        // The rebuilt list clears ctrl_cmd_state and resolve_rename_match()
+        // reports the renamed entry.
+        refresh_requested = true;
+        ctrl_ack_value = 1;
+    } else {
+        ctrl_cmd_state = 0;
+    }
+}
+
+// Point match_index at the renamed entry once the list has been rebuilt.
+static void resolve_rename_match(void) {
+    if (!rename_select_pending) {
+        return;
+    }
+    rename_select_pending = false;
+    match_index = 0xFFFF;
+    for (uint16_t i = 0; i < total_record_count; i++) {
+        uint16_t record_index = filtered_indices[i];
+        if (record_index >= full_record_count) {
+            continue;
+        }
+        ROMRecord const *rec = &records[record_index];
+        if ((rec->Mapper & FOLDER_FLAG) != 0 || ((rec->Mapper & SOURCE_SD_FLAG) != 0) != rename_select_sd ||
+            (uint32_t)rec->Size != rename_select_size) {
+            continue;
+        }
+        if (strncmp(rec->Name, rename_buf, ROM_NAME_MAX) == 0) {
+            match_index = i;
+            break;
+        }
+    }
+    ctrl_ack_value = CTRL_MAGIC;
 }
 
 static bool sd_is_mounted(void) {
@@ -3180,6 +4007,7 @@ static bool refresh_records_chunked(void) {
         memset(filter_query, 0, sizeof(filter_query));
         apply_filter();
         resolve_last_selection_match();
+        resolve_rename_match();
         current_page = 0;
         build_page_buffer(current_page);
         refresh_state = REFRESH_IDLE;
@@ -3562,6 +4390,10 @@ static void quiesce_mp3_core1_before_sd_work(void) {
 // folder navigation raced with MP3 work on Core 1.
 static void fh_save_background_work(void);
 static void core1_bg_work(void) {
+    if (flash_job_state != FLASH_JOB_IDLE) {
+        flash_job_background_work();
+        return;
+    }
     if (fh_save_state == FH_SAVE_RUNNING) {
         fh_save_background_work();
         return;
@@ -6637,6 +7469,13 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         return;
     }
 
+    // New name for CMD_RENAME_ENTRY, written to the start of the data window.
+    if (addr >= DATA_BASE_ADDR && addr < (DATA_BASE_ADDR + sizeof(rename_buf)))
+    {
+        rename_buf[addr - DATA_BASE_ADDR] = (char)data;
+        return;
+    }
+
     if (addr == CTRL_CMD)
     {
         ctrl_cmd_state = data;
@@ -6724,6 +7563,14 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         {
             process_delete_sd_file_request();
         }
+        else if (data == CMD_COPY_TO_FLASH)
+        {
+            process_copy_to_flash_request();
+        }
+        else if (data == CMD_RENAME_ENTRY)
+        {
+            process_rename_request();
+        }
         else if (data == CMD_LOAD_LAST_SELECTION)
         {
             process_load_last_selection_request();
@@ -6740,7 +7587,8 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
             handle_menu_fh_command(data, menu_ctx);
         }
         
-           if (data != CMD_ENTER_DIR && data != CMD_DETECT_MAPPER && data != CMD_DELETE_SD_FILE) {
+           if (data != CMD_ENTER_DIR && data != CMD_DETECT_MAPPER && data != CMD_DELETE_SD_FILE &&
+               data != CMD_COPY_TO_FLASH && data != CMD_RENAME_ENTRY) {
              ctrl_cmd_state = 0;
         }
         return;
@@ -8827,27 +9675,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     memcpy(rom_sram, flash_rom + offset, MENU_ROM_SIZE); // Load full 32KB menu ROM
     gpio_set_dir(PIN_WAIT, GPIO_IN); // Lets go!
 
-    int record_count = 0; // Record count
-    const uint8_t *record_ptr = flash_rom + offset + MENU_ROM_SIZE; // Pointer to the ROM records
-    for (int i = 0; i < MAX_FLASH_RECORDS; i++)      // Read the ROMs from the configuration area
-    {
-        if (isEndOfData(record_ptr)) {
-            break; // Stop if end of data is reached
-        }
-        char flash_name[ROM_NAME_MAX + 1];
-        memcpy(flash_name, record_ptr, ROM_NAME_MAX);
-        flash_name[ROM_NAME_MAX] = '\0';
-        memset(flash_records[record_count].Name, 0, sizeof(flash_records[record_count].Name));
-        trim_name_copy(flash_records[record_count].Name, flash_name);
-        record_ptr += ROM_NAME_MAX; // Move the pointer to the next field
-        flash_records[record_count].Mapper = *record_ptr++; // Read the mapper code
-        flash_records[record_count].Size = read_ulong(record_ptr); // Read the ROM size
-        record_ptr += sizeof(unsigned long); // Move the pointer to the next field
-        flash_records[record_count].Offset = read_ulong(record_ptr); // Read the ROM offset
-        record_ptr += sizeof(unsigned long); // Move the pointer to the next record
-        record_count++; // Increment the record count
-    }
-    flash_record_count = (uint16_t)record_count;
+    flash_store_load_records(); // Read the flash ROM entries from the configuration area
     set_root_path();
     refresh_records_for_current_path();
 
@@ -14140,6 +14968,9 @@ void __no_inline_not_in_flash_func(loadrom_wifi_config_setup)(uint32_t offset)
 // Main function running on core 0
 int __no_inline_not_in_flash_func(main)()
 {
+    flash_rom = (const uint8_t *)(((uintptr_t)__flash_binary_end + FLASH_PAYLOAD_ALIGN - 1u) &
+                                  ~(uintptr_t)(FLASH_PAYLOAD_ALIGN - 1u));
+    rom_data = flash_rom;
     qmi_hw->m[0].timing = 0x40000202; // Set the QMI timing for the MSX bus
     set_sys_clock_khz(210000, true);     // Set system clock to 210Mhz
 

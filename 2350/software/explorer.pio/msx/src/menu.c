@@ -7,6 +7,7 @@
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+#define MENU_KEEP_FUSION_TAG // Keep the single FUSION-C credit string (see menu.h)
 #include <string.h>
 #include <stdint.h>
 #include "menu.h"
@@ -29,7 +30,6 @@ static unsigned char menu_message_row;
 static unsigned char restore_pending; // waiting for the Pico to locate the last executed entry
 
 // --- Forward declarations (UI + Pico protocol) ---
-static int read_search_query(char *buffer, int max_len);
 static void send_query_to_pico(const char *query);
 static unsigned int read_match_index(void);
 static unsigned int bios_calatr(void);
@@ -39,7 +39,6 @@ void trim_name_to_buffer(const char *src, char *dst, int max_len);
 static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width);
 static void enter_directory(int index);
 static void refresh_menu_state(const char *loading_text);
-static void wait_key_with_blinking_status(const char *text);
 static void wait_command_with_blinking_status(const char *text, unsigned int wait_limit);
 static void draw_menu_row(unsigned char row, ROMRecord *record, int selected);
 static void redefine_function_keys(void);
@@ -298,8 +297,7 @@ static void enter_directory(int index) {
     }
     send_query_to_pico("");
     if (index >= 0) {
-        Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFF));
-        Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFF));
+        POKE_U16(CTRL_QUERY_BASE, index);
         Poke(CTRL_QUERY_BASE + 2, CTRL_MAGIC);
     }
     Poke(CTRL_CMD, CMD_ENTER_DIR);
@@ -367,18 +365,6 @@ static void refresh_menu_state(const char *loading_text) {
     }
 }
 
-static void wait_key_with_blinking_status(const char *text) {
-    unsigned char blink_state = 1;
-    unsigned char blink_tick = 0;
-
-    menu_ui_print_last_line_text(text);
-    while (!bios_chsns()) {
-        delay_ms(20);
-        menu_ui_blink_last_line(text, &blink_state, &blink_tick, 8);
-    }
-    (void)bios_chget();
-}
-
 static void wait_command_with_blinking_status(const char *text, unsigned int wait_limit) {
     unsigned char blink_state = 1;
     unsigned char blink_tick = 0;
@@ -391,6 +377,50 @@ static void wait_command_with_blinking_status(const char *text, unsigned int wai
         delay_ms(10);
         menu_ui_blink_last_line(text, &blink_state, &blink_tick, 8);
     }
+}
+
+// run_record_command - Run a Pico command on the selected entry: delete or copy
+// to flash (prompt asks for Y/N confirmation; the copy shows a progress
+// percentage), or rename (prompt is 0: the new name is edited first).
+static void run_record_command(const char *prompt, unsigned char cmd) {
+    ROMRecord *record = &records[currentIndex % FILES_PER_PAGE];
+    char name[MAX_FILE_NAME_LENGTH + 1];
+
+    if (menu_message_row || record_is_folder(record)) {
+        return;
+    }
+    if (prompt) {
+        menu_ui_print_last_line_text(prompt);
+        if ((bios_chget_quiet() | 0x20) != 'y') {
+            menu_ui_clear_last_line();
+            return;
+        }
+    } else {
+        strcpy(name, record->Name);
+        // Only an edited name is sent: the field may have shortened a long one.
+        if (menu_ui_read_line("Name: ", name, MAX_FILE_NAME_LENGTH - 1) != 1 || !name[0]) {
+            menu_ui_clear_last_line();
+            return;
+        }
+        // The Pico captures the new name written to the start of the data window.
+        memcpy((void *)MEMORY_START, name, strlen(name) + 1);
+    }
+    POKE_U16(CTRL_QUERY_BASE, currentIndex);
+    Poke(CTRL_CMD, cmd);
+    menu_ui_print_last_line_text("Wait");
+    for (unsigned int wait = 0; wait < 60000u && Peek(CTRL_CMD); wait++) {
+        if (cmd == CMD_COPY_TO_FLASH) {
+            Locate(5, 23);
+            printf("%u%% ", (unsigned int)Peek(CTRL_MAPPER));
+        }
+        delay_ms(100);
+    }
+    if (!Peek(CTRL_ACK)) {
+        menu_ui_wait_key_with_blinking_status("Failed");
+    } else if (!prompt) {
+        restore_pending = 1; // The Pico reports the renamed entry's new position
+    }
+    refresh_menu_state(0);
 }
 
 // load_page_records - Request a page from Pico and load it into the local records array.
@@ -692,8 +722,7 @@ unsigned char run_ctrl_cmd(unsigned char cmd) {
 // save_last_selection - Ask the Pico to store the entry being executed on the
 // microSD card so the next boot reopens the menu on it.
 void save_last_selection(unsigned int index) {
-    Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFF));
-    Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFF));
+    POKE_U16(CTRL_QUERY_BASE, index);
     (void)run_ctrl_cmd(CMD_SAVE_LAST_SELECTION);
 }
 
@@ -891,9 +920,9 @@ void helpMenu()
     Locate(0, 11);
     printf("/ - Search / P - Cycle SD partition");
     Locate(0, 12);
-    printf("H - Show this help / D - Delete file");
+    printf("H - Help / D - Delete / R - Rename");
     Locate(0, 13);
-    printf("C - Toggle 40/80 columns");
+    printf("C - 40/80 columns / F - Copy to flash");
     Locate(0, 14);
     menu_ui_print_str_inverted_width("ROM Detail", 10);
     Locate(0, 15);
@@ -1086,25 +1115,27 @@ void navigateMenu()
             case 112: // p
                 cycle_sd_partition();
                 break;
-            case 68: // D
+            case 68: // D - delete the microSD file or flash entry
             case 100: // d
-                if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD && !menu_message_row && !record_is_folder(&records[currentIndex % FILES_PER_PAGE])) {
-                    menu_ui_print_last_line_text("Delete? Y/N");
-                    key = (char)bios_chget();
-                    if (key == 'y' || key == 'Y') {
-                        Poke(CTRL_QUERY_BASE + 0, (unsigned char)(currentIndex & 0xFF));
-                        Poke(CTRL_QUERY_BASE + 1, (unsigned char)((currentIndex >> 8) & 0xFF));
-                        Poke(CTRL_CMD, CMD_DELETE_SD_FILE);
-                        wait_command_with_blinking_status("Del...", 1000);
-                        refresh_menu_state(0);
-                    } else {
-                        menu_ui_clear_last_line();
-                    }
+                run_record_command("Delete? Y/N", CMD_DELETE_SD_FILE);
+                break;
+            case 70: // F - copy the microSD ROM to flash
+            case 102: // f
+                if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+                    run_record_command("To flash? Y/N", CMD_COPY_TO_FLASH);
+                }
+                break;
+            case 82: // R - rename the ROM/DSK file or flash entry
+            case 114: // r
+                if (!record_is_mp3(&records[currentIndex % FILES_PER_PAGE])) {
+                    run_record_command(0, CMD_RENAME_ENTRY);
                 }
                 break;
             case 47: // / - Search
             {
-                int search_result = read_search_query(search_query, SEARCH_MAX_LEN);
+                int search_result;
+                search_query[0] = '\0';
+                search_result = menu_ui_read_line("Search: ", search_query, SEARCH_MAX_LEN);
                 if (search_result < 0) {
                     launch_wifi_config();
                     break;
@@ -1116,7 +1147,7 @@ void navigateMenu()
                     wait_command_with_blinking_status(message, 1000);
                     unsigned int match = read_match_index();
                     if (match == 0xFFFFu || match >= totalFiles) {
-                        wait_key_with_blinking_status(menu_ui_status_text("Not found", "No matching ROM found."));
+                        menu_ui_wait_key_with_blinking_status(menu_ui_status_text("Not found", "No matching ROM found."));
                         menu_ui_clear_last_line();
                     } else {
                         currentIndex = (int)match;
@@ -1186,74 +1217,6 @@ void main() {
     navigateMenu();
 }
 
-
-static int read_search_query(char *buffer, int max_len) {
-    int len = 0;
-    const char *prompt = "Search: ";
-    unsigned char prompt_col = (unsigned char)strlen(prompt);
-    unsigned char content_width = (unsigned char)(menu_ui_row_width() - 2);
-    unsigned char right_len = use_80_columns ? 47 : 0;
-    unsigned char left_limit = content_width > right_len ? (unsigned char)(content_width - right_len) : 0;
-    int input_limit = max_len;
-
-    if (left_limit <= prompt_col) {
-        return 0;
-    }
-
-    if (input_limit > (int)(left_limit - prompt_col)) {
-        input_limit = (int)(left_limit - prompt_col);
-    }
-
-    buffer[0] = '\0';
-    if (use_80_columns) {
-        menu_ui_print_last_line_text(prompt);
-    } else {
-        Locate(0, 23);
-        printf("Search: ");
-        for (unsigned char col = prompt_col; col < content_width; col++) {
-            PrintChar(' ');
-        }
-    }
-    Locate(prompt_col, 23);
-    for (int i = 0; i < input_limit; i++) {
-        PrintChar(' ');
-    }
-    Locate(prompt_col, 23);
-
-    while (1) {
-        char ch = (char)bios_chget();
-        if (ch == MENU_KEY_F4_CONFIG) {
-            buffer[0] = '\0';
-            return -1;
-        }
-        if (ch == 13) {
-            buffer[len] = '\0';
-            return 1;
-        }
-        if (ch == 27) {
-            buffer[0] = '\0';
-            return 0;
-        }
-        if (ch == 8 || ch == 127) {
-            if (len > 0) {
-                len--;
-                buffer[len] = '\0';
-                Locate(prompt_col + len, 23);
-                printf(" ");
-                Locate(prompt_col + len, 23);
-            }
-            continue;
-        }
-        if (ch >= 32 && ch <= 126) {
-            if (len < input_limit) {
-                buffer[len++] = ch;
-                buffer[len] = '\0';
-                Locate(prompt_col + len - 1, 23);
-                PrintChar((unsigned char)ch);
-            }
-        }
-    }
-}
 
 #pragma disable_warning 85
 void msx_wait(uint16_t times_jiffy)

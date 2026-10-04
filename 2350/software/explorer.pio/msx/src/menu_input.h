@@ -12,5 +12,6 @@
 
 unsigned char bios_chsns(void);
 unsigned char bios_chget(void);
+unsigned char bios_chget_quiet(void);
 
 #endif

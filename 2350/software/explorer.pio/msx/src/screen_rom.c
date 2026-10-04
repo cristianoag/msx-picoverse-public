@@ -97,8 +97,7 @@ static unsigned char cur_is_dsk;
 static int cur_selection;
 
 static void write_index_query(unsigned int index) {
-    Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFFu));
-    Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFFu));
+    POKE_U16(CTRL_QUERY_BASE, index);
 }
 
 static void clear_query_tail(unsigned char start) {

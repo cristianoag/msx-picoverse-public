@@ -22,7 +22,6 @@ __at (BIOS_RG4SAV) unsigned char vdp_reg4;
 
 static unsigned char menu_ui_render_shortcuts(unsigned char content_width);
 static unsigned char menu_ui_shortcuts_length(void);
-static void menu_ui_wait_key_with_blinking_status(const char *text);
 
 static void clear_rows_vram(unsigned char start_row, unsigned char end_row, unsigned char width) __naked
 {
@@ -454,7 +453,7 @@ void menu_ui_blink_last_line(const char *text, unsigned char *visible, unsigned 
     }
 }
 
-static void menu_ui_wait_key_with_blinking_status(const char *text) {
+void menu_ui_wait_key_with_blinking_status(const char *text) {
     unsigned char visible = 1;
     unsigned char tick = 0;
 
@@ -464,6 +463,59 @@ static void menu_ui_wait_key_with_blinking_status(const char *text) {
         menu_ui_blink_last_line(text, &visible, &tick, 8);
     }
     (void)bios_chget();
+}
+
+// menu_ui_read_line - Edit buffer (its current text is the starting value) after
+// prompt on the last line. buffer must hold max_len + 1 bytes; the field is
+// also limited to the room left on the line, which can shorten the starting
+// text. Returns 1 on Enter after an edit, 2 on Enter with the text untouched,
+// 0 on ESC and -1 on F4.
+int menu_ui_read_line(const char *prompt, char *buffer, unsigned char max_len)
+{
+    unsigned char width = (unsigned char)(menu_ui_row_width() - 2);
+    unsigned char col = (unsigned char)strlen(prompt);
+    unsigned char len;
+    unsigned char i;
+    unsigned char edited = 0;
+    char ch;
+
+    if (max_len > (unsigned char)(width - col)) {
+        max_len = (unsigned char)(width - col);
+    }
+    buffer[max_len] = '\0';
+    len = (unsigned char)strlen(buffer);
+    Locate(0, 23);
+    printf("%s%s", prompt, buffer);
+    for (i = (unsigned char)(col + len); i < width; i++) {
+        PrintChar(' ');
+    }
+
+    while (1) {
+        Locate((unsigned char)(col + len), 23);
+        ch = (char)bios_chget();
+        if (ch == 13) {
+            return edited ? 1 : 2;
+        }
+        if (ch == 27) {
+            return 0;
+        }
+        if (ch == MENU_KEY_F4_CONFIG) {
+            return -1;
+        }
+        if (ch == 8 || ch == 127) {
+            if (len > 0) {
+                buffer[--len] = '\0';
+                Locate((unsigned char)(col + len), 23);
+                PrintChar(' ');
+                edited = 1;
+            }
+        } else if (ch >= 32 && ch <= 126 && len < max_len) {
+            PrintChar((unsigned char)ch);
+            buffer[len++] = ch;
+            buffer[len] = '\0';
+            edited = 1;
+        }
+    }
 }
 
 void menu_ui_print_str_inverted_width(const char *str, unsigned char width)

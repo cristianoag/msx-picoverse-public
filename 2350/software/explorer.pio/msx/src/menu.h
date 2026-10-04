@@ -7,6 +7,13 @@
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+// msx_fusion.h defines a 45-byte static credit string in every module that
+// includes it. menu.c keeps its copy; the other modules park theirs at an
+// absolute address above the 0x4000-0xBFFF ROM window, which hex2bin drops,
+// so the duplicates no longer use menu ROM space.
+#ifndef MENU_KEEP_FUSION_TAG
+#define Done_Version_tag __at(0xFF00) Done_Version_tag
+#endif
 #include <msx_fusion.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -56,6 +63,9 @@
 #define CTRL_SD_BROWSE_PARTITION (CTRL_BASE_ADDR + 14)
 #define CTRL_AUDIO_VOLUME (CTRL_BASE_ADDR + 15)
 #define CTRL_MAGIC   0xA5
+// Little-endian 16-bit store (low byte first, as the Z80 writes it); one
+// "ld (nn),hl" instead of two separate byte pokes.
+#define POKE_U16(addr, value) (*(volatile unsigned int *)(addr) = (unsigned int)(value))
 #define CTRL_STATUS_SD_MISSING 0x5D
 #define CTRL_QUERY_BASE 0xBFC0
 #define CTRL_QUERY_SIZE 32
@@ -138,6 +148,8 @@
 #define CMD_DELETE_SD_FILE 0x0B
 #define CMD_LOAD_LAST_SELECTION 0x0C
 #define CMD_SAVE_LAST_SELECTION 0x0D
+#define CMD_COPY_TO_FLASH 0x0E
+#define CMD_RENAME_ENTRY 0x0F
 #define CMD_FH_LIST_PAGE 0x40
 #define CMD_FH_DOWNLOAD  0x41
 #define CMD_FH_SEARCH    0x42

@@ -31,6 +31,20 @@ bios_chsns_no_key:
     __endasm;
 }
 
+// bios_chget_quiet - Like bios_chget, but waits with CHSNS first: CHGET draws
+// the text cursor at the current position while it blocks for a key.
+unsigned char bios_chget_quiet(void) __naked
+{
+    __asm
+bios_chget_quiet_wait:
+    call    _bios_chsns
+    ld      a,l
+    or      a
+    jr      z, bios_chget_quiet_wait
+    jp      _bios_chget
+    __endasm;
+}
+
 unsigned char bios_chget(void) __naked
 {
     __asm

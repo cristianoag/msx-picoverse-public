@@ -325,13 +325,15 @@ One problem showed up: holding a disk key *during* back-to-back directory reads 
 Before v2.52, the Nextor ROM was in the UF2 only when a Sunrise option (`-s1`, `-a`, …) was used, with one copy per SYSTEM entry. DSK boot must work with any UF2, so the tool now always embeds **one** extra Nextor copy as a hidden payload right after the SFG BIOS:
 
 ```
-[firmware][menu ROM 32K][config 16K][WiFi config 8K][ESP8266P BIOS 16K]
+[firmware][0xFF pad to 4K][menu ROM 32K][config 16K][WiFi config 8K][ESP8266P BIOS 16K]
 [FM-PAC BIOS 64K][SFG BIOS 64K][DSK Nextor kernel 128K][SYSTEM Nextor copies + visible ROMs]
 ```
 
+Since v2.57 the menu ROM starts on the first 4 KB flash sector boundary after the firmware, so the config area occupies four whole sectors and "copy to flash" can rewrite it without erasing the menu ROM or the WiFi setup ROM. The firmware's `main()` rounds `__flash_binary_end` up to 4 KB to find it.
+
 | Symbol | Where | Value |
 |---|---|---|
-| `NEXTOR_DSK_FLASH_OFFSET` | firmware `explorer.c` | `SFG_BIOS_FLASH_OFFSET + SFG_BIOS_ROM_SIZE` (200 KB after the firmware end) |
+| `NEXTOR_DSK_FLASH_OFFSET` | firmware `explorer.c` | `SFG_BIOS_FLASH_OFFSET + SFG_BIOS_ROM_SIZE` (200 KB after the menu ROM start) |
 | `NEXTOR_DSK_ROM_SIZE` | firmware and tool | 128 KB |
 
 - The tool now requires the embedded Nextor ROM to be exactly 128 KB, and visible ROM offsets start 128 KB later.

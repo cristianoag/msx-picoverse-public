@@ -3,11 +3,12 @@
 #                                                                    #
 # Invokes the individual build systems for each Explorer component.  #
 # Build order matters because later stages embed artifacts produced  #
-# by earlier ones, so the tool target always runs last.              #
+# by earlier ones, so the tool target always runs last. The openMSX  #
+# add-on does not depend on the other stages.                        #
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.56
+VERSION ?= v2.57
 
 # Sub-project locations
 MSX_DIR       := msx
@@ -15,6 +16,7 @@ PICO_DIR      := pico/explorer
 PICO_BUILD    := $(PICO_DIR)/build
 PICO_CONFIG   := $(PICO_BUILD)/CMakeCache.txt
 TOOL_DIR      := tool
+OPENMSX_DIR   := openmsx
 WIFI_CONFIG_DIR := ../wifi/config
 
 # CMake options
@@ -30,9 +32,9 @@ CMAKE_GENERATOR_FLAG := $(if $(CMAKE_GENERATOR),-G "$(CMAKE_GENERATOR)",)
 CMAKE_BUILD_TYPE ?= Release
 CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CMAKE_MAKE_PROGRAM)",)
 
-.PHONY: all msx pico wifi-config tool clean
+.PHONY: all msx pico wifi-config tool openmsx clean
 
-all: tool
+all: tool openmsx
 
 msx:
 	"$(MAKE)" -C $(MSX_DIR) VERSION=$(VERSION)
@@ -49,6 +51,10 @@ wifi-config:
 
 tool: pico wifi-config
 	"$(MAKE)" -C $(TOOL_DIR) VERSION=$(VERSION)
+
+# openMSX add-on (Tcl script + extension); independent of the other stages.
+openmsx:
+	"$(MAKE)" -C $(OPENMSX_DIR) VERSION=$(VERSION)
 
 clean:
 	-"$(MAKE)" -C $(MSX_DIR) clean VERSION=$(VERSION)
