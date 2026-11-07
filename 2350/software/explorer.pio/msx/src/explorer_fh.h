@@ -10,6 +10,6 @@
 #ifndef EXPLORER_FH_H
 #define EXPLORER_FH_H
 
-unsigned char explorer_fh_run(void);
+unsigned char explorer_fh_run(unsigned char resume);
 
 #endif

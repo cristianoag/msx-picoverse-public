@@ -16,4 +16,6 @@ unsigned char name_col_width;
 int frame_rendered;
 unsigned char menu_shortcut_selection;
 unsigned char menu_pending_key;
+unsigned char menu_move_pending;
+unsigned char menu_pick_download;
 unsigned char fh_catalog_type;

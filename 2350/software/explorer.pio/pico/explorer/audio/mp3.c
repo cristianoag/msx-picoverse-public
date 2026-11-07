@@ -11,6 +11,7 @@
 #include "ff.h"
 #include "mp3dec.h"
 #include "../storage/sd_activity.h"
+#include "../picoamp/mp3_alloc_dispatch.h"
 
 #if EXPLORER_USB_STDIO_DEBUG
 #include <malloc.h>
@@ -1399,7 +1400,7 @@ void mp3_update(void) {
 #if EXPLORER_USB_STDIO_DEBUG
         mp3_debug_heap("before decoder init");
 #endif
-        mp3_decoder = MP3InitDecoder();
+        mp3_decoder = pv_mp3_use_menu_allocator() ? MP3InitDecoder() : NULL;
         if (!mp3_decoder) {
             printf("MP3: decoder init failed\n");
             error_flag = true;

@@ -1,6 +1,6 @@
 # PicoVerse 2040 MultiROM for openMSX
 
-Run a PicoVerse 2040 MultiROM UF2 in [openMSX](https://openmsx.org/) as if the cartridge were plugged into the emulated MSX. You point openMSX at the same `.uf2` file you would flash to the Pico. The MSX then boots the PicoVerse menu and shows every entry in that UF2: your ROMs, plus the Nextor Sunrise IDE entries if the UF2 was built with `-s` or `-m`.
+Run a PicoVerse 2040 MultiROM UF2 in [openMSX](https://openmsx.org/) as if the cartridge were plugged into the emulated MSX. You point openMSX at the same `.uf2` file you would flash to the Pico. The MSX then boots the PicoVerse menu and shows every entry in that UF2: your ROMs, plus the Nextor Sunrise IDE entries if the UF2 was built with `-s` or `-m` (Nextor 2.1.4), or `-s3` or `-m3` (Nextor 3.0.0).
 
 The Raspberry Pi Pico is not emulated. An openMSX Tcl script does the Pico firmware's job instead, and a normal openMSX extension makes the cartridge appear in the openMSX menus. You don't need to change or rebuild openMSX.
 

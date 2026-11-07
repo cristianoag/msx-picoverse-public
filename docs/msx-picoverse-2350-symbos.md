@@ -90,7 +90,7 @@ These commands select the appropriate firmware features; the forum's explicitly 
 
 For disk-only use, omit `-w`. The `-s1`/`-s2` modes are alternatives if the MSX already has sufficient mapper RAM. Do not substitute MegaRAM alone for a standard memory mapper, or assume that Carnivore2/MegaRAM modes are the WiFi configuration described here.
 
-Use the regular **Nextor 2.1.4** modes for the documented starting point. The Nextor 3 beta entries are not the setup demonstrated in the linked SymbOS discussion. See the [LoadROM manual](./msx-picoverse-2350-loadrom-tool-manual.en-us.md) for other options and flashing details.
+Use the regular **Nextor 2.1.4** modes for the documented starting point. The Nextor 3.0.0 entries are not the setup demonstrated in the linked SymbOS discussion. See the [LoadROM manual](./msx-picoverse-2350-loadrom-tool-manual.en-us.md) for other options and flashing details.
 
 ### Explorer: disk access and v2.59 network testing
 

@@ -46,7 +46,7 @@ multirom.exe [options]
 | `-m2`, `--mapper-usb` | Include Sunrise IDE Nextor ROM + 1MB PSRAM mapper (USB pendrive). |
 | `-c1`, `--carnivore2-sd` | Include Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM-mode emulation (microSD card). |
 | `-c2`, `--carnivore2-usb` | Include Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM-mode emulation (USB pendrive). |
-| `-s3`, `--sunrise3-sd` | Include Nextor Sunrise 3.0.0 Beta 2 (microSD card), for testing the upcoming Nextor 3. Listed as `Nextor Sunrise 3.0.0 Beta 2 (SD)`. |
+| `-s3`, `--sunrise3-sd` | Include released Nextor Sunrise 3.0.0 (microSD card). Listed as `Nextor Sunrise 3.0.0 (SD)`. |
 | `-scc`, `--scc` | Enable SCC sound emulation for Konami SCC and Manbow2 ROMs, and for ROMs uploaded via SROM in `-c1`/`-c2` Carnivore2 modes. |
 | `-sccplus`, `--sccplus` | Enable SCC+ (enhanced) sound emulation for Konami SCC and Manbow2 ROMs, and for ROMs uploaded via SROM in `-c1`/`-c2` Carnivore2 modes. |
 | `-w`, `--wifi` | Add ESP-01 WiFi BIOS sub-slot to every `-s1`/`-m1`/`-s2`/`-m2`/`-s3` Nextor entry. Requires at least one of those flags (or `-a`); the WiFi sub-slot is not added to `-c1`/`-c2` Carnivore2 entries. |
@@ -85,7 +85,7 @@ Include Sunrise IDE + mapper over USB with ESP-01 WiFi support, alongside scanne
 multirom.exe -m2 -w
 ```
 
-Include every Nextor entry (Nextor 2.1.4 on microSD and USB, the Carnivore2 modes, and the Nextor 3.0.0 Beta 2 microSD entry), alongside scanned ROMs:
+Include every Nextor entry (Nextor 2.1.4 on microSD and USB, the Carnivore2 modes, and the Nextor 3.0.0 microSD entry), alongside scanned ROMs:
 
 ```
 multirom.exe -a
@@ -170,7 +170,7 @@ Knight Mare.PLA-32.ROM
 | 12 | ASCII16-X | `ASC16X` | ASCII16 + SST-compatible flash commands |
 | 13 | Planar 64 KB | `PLN-64` | Full 64 KB linear mapping (0000h–FFFFh) |
 | 14 | Manbow2 | `MANBW2` | Konami SCC banking + AM29F040B flash emulation |
-| 15 | Sunrise IDE (SD) | SYSTEM | Nextor 2.1.4 Sunrise IDE via microSD (`-s1`); also used by the Nextor 3.0.0 Beta 2 entry (`-s3`) |
+| 15 | Sunrise IDE (SD) | SYSTEM | Nextor 2.1.4 Sunrise IDE via microSD (`-s1`); also used by the Nextor 3.0.0 entry (`-s3`) |
 | 16 | Sunrise IDE + Mapper (SD) | SYSTEM | Nextor + 1MB PSRAM mapper via microSD (`-m1`) |
 | 17 | Carnivore2 (SD) | SYSTEM | Nextor + 1MB mapper + Carnivore2 RAM-mode emulation via microSD (`-c1`) |
 | 18 | Carnivore2 (USB) | SYSTEM | Nextor + 1MB mapper + Carnivore2 RAM-mode emulation via USB (`-c2`) |
@@ -188,11 +188,11 @@ Knight Mare.PLA-32.ROM
 
 The Sunrise IDE options embed the Nextor 2.1.4 Sunrise IDE kernel ROM (128 KB) into the MultiROM image. Each option adds a SYSTEM entry that appears in the MSX menu alongside regular ROM entries.
 
-### Nextor 3 beta (`-s3`)
+### Nextor 3.0.0 (`-s3`)
 
-- Embeds Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly kernel (128 KB, from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release) instead of Nextor 2.1.4.
+- Embeds Konamiman's released Nextor 3.0.0 Sunrise IDE MasterOnly kernel (128 KB, from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0) release) instead of Nextor 2.1.4.
 - microSD only for now; it uses the same firmware path as `-s1`, so everything in the microSD section below applies.
-- It is a beta kernel: keep backups of the microSD card.
+- PicoVerse hardware boot validation of this kernel is still pending; keep backups of the microSD card.
 
 ### USB modes (`-s2`, `-m2`)
 

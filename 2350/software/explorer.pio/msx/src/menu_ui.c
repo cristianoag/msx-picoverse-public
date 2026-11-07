@@ -348,6 +348,13 @@ static void menu_ui_render_last_line(const char *text) {
     static char summary_text[32];
 
     if (menu_ui_listing) {
+        if (!text && menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+            if (menu_move_pending) {
+                text = "M: move here";
+            } else if (menu_pick_download) {
+                text = "A: set download folder";
+            }
+        }
         sprintf(row, "Page %02d/%02d", currentPage, totalPages);
         col = (unsigned char)strlen(row);
         if (menu_shortcut_selection == MENU_SHORTCUT_FLASH) {
@@ -587,4 +594,114 @@ void menu_ui_render_selectable_line(unsigned char row, const char *text, int sel
     }
 
     blit_row_vram(row, buffer, width);
+}
+
+// blit_vram - Copy `length` bytes from RAM to VRAM address `dest` with the BIOS
+// LDIRVM, in one call.
+static void blit_vram(unsigned int dest, const char *src, unsigned int length) __naked
+{
+    (void)dest;
+    (void)src;
+    (void)length;
+    __asm
+    ld      hl, #2
+    add     hl, sp
+    ld      e, (hl)
+    inc     hl
+    ld      d, (hl)        ; DE = dest
+    inc     hl
+    ld      c, (hl)
+    inc     hl
+    ld      b, (hl)        ; BC = src (temporarily)
+    inc     hl
+    ld      a, (hl)
+    inc     hl
+    ld      h, (hl)
+    ld      l, a           ; HL = length
+    push    bc
+    ld      b, h
+    ld      c, l           ; BC = length
+    pop     hl             ; HL = src
+
+    ld      iy,(#BIOS_EXPTBL-1)
+    push    ix
+    ld      ix,#BIOS_LDIRVM
+    call    BIOS_CALSLT
+    pop     ix
+    ret
+    __endasm;
+}
+
+// menu_ui_blit_rows - Write `rows` screen rows, already laid out in RAM at the
+// current row width, to the text screen starting at `first_row`. One block
+// transfer paints a whole list page at once.
+void menu_ui_blit_rows(unsigned char first_row, const char *src, unsigned char rows) {
+    unsigned char width = menu_ui_row_width();
+    blit_vram((unsigned int)(*(volatile unsigned int *)BIOS_TXTNAM + (unsigned int)first_row * width),
+              src, (unsigned int)rows * width);
+}
+
+// The rows of the list on screen (rows 2 to 20), kept in RAM so that a page is
+// built once and written to VRAM in a single transfer, and a single row can be
+// rebuilt and redrawn without touching the others.
+char menu_ui_list_rows[FILES_PER_PAGE * 80];
+
+// menu_ui_build_row - Build one list row straight into its final screen form:
+// the selection marker, the name (truncated or padded to the name column), the
+// size right-aligned in 6 columns, the 2-column source and the 5-column type.
+// A selected row has its content in the inverted glyphs (+96), as
+// menu_ui_render_selectable_line() does. The layout matches the old
+// " %-61.61s %6s %-2s %-5s" (80 columns) / " %-21.21s ..." (40 columns) rows.
+void menu_ui_build_row(char *out, const char *name, const char *size_text, const char *source, const char *type, unsigned char selected) {
+    unsigned char width = menu_ui_row_width();
+    unsigned char name_width = use_80_columns ? 61 : 21;
+    unsigned char length;
+    unsigned char i;
+    char *field = out + name_width + 2;
+
+    memset(out, ' ', width);
+    for (i = 0; i < name_width && name[i]; i++) {
+        out[1 + i] = name[i];
+    }
+    length = (unsigned char)strlen(size_text);
+    if (length > 6) {
+        length = 6;
+    }
+    memcpy(field + 6 - length, size_text, length);
+    field += 7;
+    field[0] = source[0];
+    field[1] = source[1];
+    field += 3;
+    while (*type) {
+        *field++ = *type++;
+    }
+    if (selected) {
+        out[0] = '>';
+        for (i = 1; i <= width - 3; i++) {
+            out[i] += 96;
+        }
+    }
+}
+
+// menu_ui_size_text - "<value>KB" or "<value>MB" without printf.
+void menu_ui_size_text(char *out, unsigned int value, char unit) {
+    static const unsigned int powers[] = {10000u, 1000u, 100u, 10u};
+    unsigned char started = 0;
+    unsigned char i;
+
+    for (i = 0; i < 4; i++) {
+        char digit = '0';
+        while (value >= powers[i]) {
+            value -= powers[i];
+            digit++;
+        }
+        if (digit != '0' || started) {
+            *out++ = digit;
+            started = 1;
+        }
+    }
+    *out++ = (char)('0' + value);
+    *out++ = unit;
+    *out++ = 'B';
+    *out = '\0';
 }

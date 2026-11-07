@@ -1,5 +1,15 @@
 # Change Log
 
+## PicoVerse 2350 LoadROM v2.81
+
+- Refreshed the ROM mapper SHA1 database (3363 entries, from the latest Vampier softwaredb) by re-running `gen_romdb.py`: `tool/src/romdb.h`.
+
+- Bumped the aggregate and PC tool versions to v2.81.
+- Replaced the Nextor 3 beta 2 resource with the official 128 KB `resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM` from release `v0.1.8-blueMSX-v0.1.5-Nextor-3.0`, and updated the generated header symbol.
+- Updated `-s3` / `--sunrise3-sd` help, SYSTEM name and related manuals for released Nextor 3.0.0. Kept Nextor 2.1.4, microSD/WiFi loaders, mapper types and UF2 layouts unchanged.
+- Bounded configuration-record name copying, following the 2040 LoadROM pattern, so shortened Nextor labels remain zero-padded without reading past string literals. Added `tests/nextor.ps1` checks for exact names/padding, kernel bytes, UF2 layout and optional WiFi payloads.
+- Validation: reproduced the padding regression against the pre-fix binary, rebuilt the packaged tool, and passed `tests/nextor.ps1` for Nextor 3.0.0, its alias/WiFi mode and Nextor 2.1.4. Official ROM size/SHA-256 and runtime v2.81 verified; hardware boot not tested.
+
 ## PicoVerse 2350 Loadrom v2.80
 
 - Excluded `build` directories at every depth from public software and case packaging in `build/Makefile`, preserving the existing firmware/library exclusions. Non-Windows case copying now uses `rsync` to apply the same directory filter.

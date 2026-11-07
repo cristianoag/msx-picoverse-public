@@ -57,7 +57,7 @@ static const char *MAPPER_DESCRIPTIONS[] = {
 #define ROM_TYPE_SUNRISE         10
 #define ROM_TYPE_SUNRISE_MAPPER  11
 #define NEXTOR_ROM               ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_ROM              ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM              ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
 #define NEXTOR_KERNEL_ROM_SIZE   (128u * 1024u)
 #define MAX_NEXTOR_ENTRIES       4
 
@@ -403,8 +403,8 @@ static void print_usage(const char *prog_name) {
     printf("  -h   Show this help message\n");
     printf("  -s, --sunrise    Include embedded Sunrise IDE Nextor 2.1.4 ROM in the MultiROM image\n");
     printf("  -m, --mapper     Include embedded Sunrise IDE Nextor 2.1.4 ROM + 192KB Mapper in the MultiROM image\n");
-    printf("  -s3, --sunrise3  Include embedded Sunrise IDE Nextor 3.0.0 Beta 2 ROM in the MultiROM image (testing)\n");
-    printf("  -m3, --mapper3   Include embedded Sunrise IDE Nextor 3.0.0 Beta 2 ROM + 192KB Mapper in the MultiROM image (testing)\n");
+    printf("  -s3, --sunrise3  Include embedded Sunrise IDE Nextor 3.0.0 ROM in the MultiROM image\n");
+    printf("  -m3, --mapper3   Include embedded Sunrise IDE Nextor 3.0.0 ROM + 192KB Mapper in the MultiROM image\n");
     printf("  Options -s, -m, -s3, -m3 can be combined to add multiple Nextor entries\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
@@ -645,8 +645,8 @@ int main(int argc, char *argv[])
     } nextor_entries[MAX_NEXTOR_ENTRIES] = {
         { include_sunrise,  ROM_TYPE_SUNRISE,        "Nextor 2.1.4 Sunrise IDE",                       NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
         { include_mapper,   ROM_TYPE_SUNRISE_MAPPER, "Nextor 2.1.4 Sunrise IDE + 192KB Mapper",        NEXTOR_ROM,  sizeof(NEXTOR_ROM)  },
-        { include_sunrise3, ROM_TYPE_SUNRISE,        "Nextor 3.0.0 Beta 2 Sunrise IDE",                NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
-        { include_mapper3,  ROM_TYPE_SUNRISE_MAPPER, "Nextor 3.0.0 Beta 2 Sunrise IDE + 192KB Mapper", NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
+        { include_sunrise3, ROM_TYPE_SUNRISE,        "Nextor 3.0.0 Sunrise IDE",                       NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
+        { include_mapper3,  ROM_TYPE_SUNRISE_MAPPER, "Nextor 3.0.0 Sunrise IDE + 192KB Mapper",        NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
     };
     const uint8_t *nextor_payload[MAX_NEXTOR_ENTRIES];
     int nextor_count = 0;

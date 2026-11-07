@@ -37,7 +37,7 @@ ROM file names are used to name the entries in the MSX menu. There is a limit of
 
 > **Note:** To use a USB thumdrive you may need a OTG adapter or cable. That can be used to convert the USB-C port to a standard USB-A female port.
 
-> **Note:** The `-s` option includes Sunrise IDE Nextor 2.1.4, and the `-m` option includes Sunrise IDE Nextor 2.1.4 plus an additional 192KB mapper implementation. Both provide USB mass-storage support via the cartridge's USB-C port and work on MSX1, MSX2, and MSX2+ systems. The `-s3` and `-m3` options add the same two entries with the Nextor 3.0.0 Beta 2 kernel for testing.
+> **Note:** The `-s` option includes Sunrise IDE Nextor 2.1.4, and the `-m` option includes Sunrise IDE Nextor 2.1.4 plus an additional 192KB mapper implementation. Both provide USB mass-storage support via the cartridge's USB-C port and work on MSX1, MSX2, and MSX2+ systems. The `-s3` and `-m3` options add the same two entries with the released Nextor 3.0.0 kernel.
 
 ## Command-line usage
 
@@ -52,16 +52,16 @@ multirom.exe [options]
 ### Options:
 - `-s`, `--sunrise` : Includes the embedded Sunrise IDE Nextor 2.1.4 ROM for USB mass-storage support. The cartridge's USB-C port can be used as a block device with Nextor-compatible loaders like SofaRun.
 - `-m`, `--mapper` : Includes the embedded Sunrise IDE Nextor 2.1.4 ROM with 192KB mapper support (12 x 16KB pages). In the MSX menu this entry is still shown with mapper text `SYSTEM`.
-- `-s3`, `--sunrise3` : Same as `-s`, but with Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release), for testing the upcoming Nextor 3. It is a beta kernel, so keep backups of the USB drive.
-- `-m3`, `--mapper3` : Same as `-m` (192KB mapper), but with the Nextor 3.0.0 Beta 2 kernel, for testing.
+- `-s3`, `--sunrise3` : Same as `-s`, but with Konamiman's released Nextor 3.0.0 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0) release). PicoVerse hardware boot validation of this kernel is still pending; keep backups of the USB drive.
+- `-m3`, `--mapper3` : Same as `-m` (192KB mapper), but with the released Nextor 3.0.0 kernel.
 - `-s`, `-m`, `-s3` and `-m3` can be combined; each one adds its own entry at the top of the menu, in that order:
 
   | Option | Menu entry name |
   | --- | --- |
   | `-s` | `Nextor 2.1.4 Sunrise IDE` |
   | `-m` | `Nextor 2.1.4 Sunrise IDE + 192KB Mapper` |
-  | `-s3` | `Nextor 3.0.0 Beta 2 Sunrise IDE` |
-  | `-m3` | `Nextor 3.0.0 Beta 2 Sunrise IDE + 192KB Mapper` |
+  | `-s3` | `Nextor 3.0.0 Sunrise IDE` |
+  | `-m3` | `Nextor 3.0.0 Sunrise IDE + 192KB Mapper` |
 - `-h`, `--help`   : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `multirom.uf2`).
 - If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PLA-32.ROM` forces the use of the PLA-32 mapper for that ROM. `SYSTEM` tags are ignored. The list of current tags is: `PLA-16, PLA-32, KonSCC, PLN-48, ASC-08, ASC-16, ASC-16X, Konami, NEO-8, NEO-16, PLN-64, MANBW2`.
@@ -75,7 +75,7 @@ multirom.exe [options]
   ```
   multirom.exe -m -o multirom_mapper.uf2
   ```
-- Adds both Nextor 2.1.4 and Nextor 3.0.0 Beta 2 entries with the 192KB mapper, so you can compare them on the same cartridge:
+- Adds both Nextor 2.1.4 and Nextor 3.0.0 entries with the 192KB mapper, so you can compare them on the same cartridge:
   ```
   multirom.exe -m -m3 -o multirom_nextor.uf2
   ```
@@ -123,7 +123,7 @@ At any time while in the menu, you can press the F1 key to read the help screen 
 
 ## Using Nextor with the PicoVerse 2040 cartridge
 
-The `-s` option of the multirom tool includes Sunrise IDE Nextor 2.1.4 ROM, and the `-m` option includes Sunrise IDE Nextor 2.1.4 ROM plus an additional 192KB mapper implementation (`-s3` and `-m3` do the same with Nextor 3.0.0 Beta 2). When the multirom UF2 is flashed with any of these options, the Pico's USB-C port exposes a block device that Nextor-compatible loaders (such as SofaRun) can use to load ROMs, DSK files, and other media from a connected USB thumb drive.
+The `-s` option of the multirom tool includes Sunrise IDE Nextor 2.1.4 ROM, and the `-m` option includes Sunrise IDE Nextor 2.1.4 ROM plus an additional 192KB mapper implementation (`-s3` and `-m3` do the same with Nextor 3.0.0). When the multirom UF2 is flashed with any of these options, the Pico's USB-C port exposes a block device that Nextor-compatible loaders (such as SofaRun) can use to load ROMs, DSK files, and other media from a connected USB thumb drive.
 
 The Sunrise IDE implementation uses ATA register emulation, making it compatible with a wide range of MSX systems including MSX1, MSX2, and MSX2+ models. 
 
@@ -156,7 +156,7 @@ You can try a MultiROM UF2 in the openMSX emulator before flashing it. Install t
 - The tool does not currently validate the integrity of ROM files beyond size and basic header checks. Corrupted ROMs may lead to unexpected behavior.
 - Due to the nature of MultiROM tool (embedding multiple files into a single UF2), some antivirus software may flag the executable as suspicious. This is a false positive; ensure you download the tool from a trusted source.
 - The MultiROM menu does not support DSK files; only ROM files are listed and launched.
-- The `-s3` and `-m3` entries use a Nextor 3.0.0 beta kernel intended for testing; booting it on hardware has not yet been validated.
+- The `-s3` and `-m3` entries use released Nextor 3.0.0; booting it on PicoVerse hardware has not yet been validated.
 - The tool does not currently support subdirectories; only ROM files in the current working directory are processed.
 - The pico flash memory can wear out after many write cycles. Avoid excessive re-flashing of the cartridge.
 

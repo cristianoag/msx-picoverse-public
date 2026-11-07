@@ -41,6 +41,7 @@
    reserved as an "override" flag, which would have collided with every mapper
    code from 16 up, including ASC16X-FR. */
 #define MAPPER_ASCII16X_FR 22
+#define MAPPER_PICOAMP 24
 #define AUDIO_TYPE_MASK 0x0F
 #define AUDIO_TYPE_WAV 0x01
 #define NAME_COL_WIDTH 22
@@ -158,6 +159,20 @@
 #define CMD_COPY_TO_FLASH 0x0E
 #define CMD_RENAME_ENTRY 0x0F
 #define CMD_PREPARE_FLASH_ROM 0x10
+#define CMD_CREATE_FOLDER 0x11
+#define CMD_MOVE_MARK 0x12
+#define CMD_MOVE_PASTE 0x13
+#define MOVE_ERR_EXISTS 1
+#define MOVE_ERR_SAME 2
+#define CMD_HELP_PAGE 0x14
+#define CMD_HELP_END 0x15
+#define CMD_SET_DOWNLOAD_DIR 0x16
+#define DOWNLOAD_DIR_ERR_LONG 1
+// First help page (served by the Pico) for the screen F5 was pressed on.
+#define HELP_PAGE_LIST 0
+#define HELP_PAGE_ROM 2
+#define HELP_PAGE_MP3 3
+#define HELP_PAGE_FILEHUNTER 4
 #define FLASH_COPY_DETECTING 0x7F
 #define FLASH_COPY_NO_SPACE  0x80
 #define FLASH_COPY_TOO_LARGE 0x81
@@ -169,6 +184,7 @@
 #define CMD_FH_SEARCH    0x42
 #define CMD_FH_WIFI_STATUS 0x43
 #define CMD_FH_WIFI_CONFIG 0x44
+#define CMD_FH_DOWNLOAD_DIR 0x45
 #define CTRL_FH_PROGRESS_L CTRL_MAPPER
 #define CTRL_FH_PROGRESS_H CTRL_ACK
 #define CTRL_FH_RESULT CTRL_AUDIO
@@ -210,8 +226,6 @@
 #define TLV_MAPPER 0x02
 #define TLV_SIZE 0x03
 
-#define MENU_ROW_FORMAT_80 " %-61.61s %6s %-2s %-5s"
-#define MENU_ROW_FORMAT_40 " %-21.21s %6s %-2s %-5s"
 
 // Local page cache, not the wire record layout. The Pico owns flash offsets;
 // the menu selects entries by index and only needs their display/launch fields.
@@ -243,7 +257,7 @@ int build_sliding_name_window(const char *str, int startPos, char *out, unsigned
 void displayMenu();
 void load_page_records(unsigned int page_index);
 void navigateMenu();
-void helpMenu();
+void helpMenu(unsigned char page);
 void loadGame(int index, unsigned char quick_run);
 void wait_ctrl_cmd(void);
 unsigned char run_ctrl_cmd(unsigned char cmd);

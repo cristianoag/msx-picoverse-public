@@ -568,20 +568,20 @@ The communication is safe because:
 
 ## 13. Nextor ROM Embedding
 
-The Nextor 2.1.4 Sunrise IDE (Master Only) ROM is embedded directly in the loadrom and multirom tool binaries, together with Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE (Master Only) ROM for testing:
+The Nextor 2.1.4 Sunrise IDE (Master Only) ROM is embedded directly in the loadrom and multirom tool binaries, together with Konamiman's released Nextor 3.0.0 Sunrise IDE (Master Only) ROM:
 
-- **Source files**: `nextor_sunrise.h` (Nextor 2.1.4) and `nextor3.h` (Nextor 3.0.0 Beta 2), generated via `xxd` from the ROM files in each project's `resources/` folder
-- **ROM files**: `Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` and `Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM`
+- **Source files**: `nextor_sunrise.h` (Nextor 2.1.4) and `nextor3.h` (Nextor 3.0.0), generated via `xxd` from the ROM files in each project's `resources/` folder
+- **ROM files**: `Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` and `Nextor-3.0.0.SunriseIDE.MasterOnly.ROM`
 - **Size**: 131,072 bytes (128 KB, exactly 8 × 16 KB pages)
-- **ROM type**: 10 (`ROM_TYPE_SUNRISE`) for standard Sunrise mode, 11 for Sunrise + 192KB mapper mode. Both kernels use the same types; the Nextor 3 beta driver sends the same ATA commands as 2.1.4.
+- **ROM type**: 10 (`ROM_TYPE_SUNRISE`) for standard Sunrise mode, 11 for Sunrise + 192KB mapper mode. Both kernels use the same existing Sunrise loader types.
 
 The loadrom tool creates a UF2 file with a configuration record containing:
-- ROM name: `"Nextor Sunrise IDE"` (`-s`), `"Nextor Sunrise+Mapper"` (`-m`), `"Nextor Sunrise 3.0.0 Beta 2"` (`-s3`) or `"Nextor Sunrise 3.0.0 Beta 2+Mapper"` (`-m3`) (up to 50 chars, padded)
+- ROM name: `"Nextor Sunrise IDE"` (`-s`), `"Nextor Sunrise+Mapper"` (`-m`), `"Nextor Sunrise 3.0.0"` (`-s3`) or `"Nextor Sunrise 3.0.0+Mapper"` (`-m3`) (up to 50 chars, padded)
 - ROM type: `10` or `11`
 - ROM size: `131072`
 - ROM data: The full 128 KB ROM
 
-In the multirom tool, the same options add menu entries named `Nextor 2.1.4 Sunrise IDE`, `Nextor 2.1.4 Sunrise IDE + 192KB Mapper`, `Nextor 3.0.0 Beta 2 Sunrise IDE` and `Nextor 3.0.0 Beta 2 Sunrise IDE + 192KB Mapper`, each followed by its own copy of the kernel.
+In the multirom tool, the same options add menu entries named `Nextor 2.1.4 Sunrise IDE`, `Nextor 2.1.4 Sunrise IDE + 192KB Mapper`, `Nextor 3.0.0 Sunrise IDE` and `Nextor 3.0.0 Sunrise IDE + 192KB Mapper`, each followed by its own copy of the kernel.
 
 The firmware's `main()` reads the rom_type byte and dispatches to `loadrom_sunrise()` when type = 10, or `loadrom_sunrise_mapper()` when type = 11.
 

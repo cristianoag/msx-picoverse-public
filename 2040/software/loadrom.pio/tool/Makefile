@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.65
+VERSION ?= v2.66
 
 # Project files
 SOURCES := loadrom.c 
@@ -44,7 +44,7 @@ PICOBIN   := ../pico/loadrom/dist/loadrom.bin
 PICOBIN_H := $(SRCDIR)/loadrom.h
 NEXTOR_SUNRISE := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_SUNRISE_H := $(SRCDIR)/nextor_sunrise.h
-NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
+NEXTOR3 := ../resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM
 NEXTOR3_H := $(SRCDIR)/nextor3.h
 KEYBOARDBIN   := ../pico/keyboard/dist/keyboard.bin
 KEYBOARDBIN_H := $(SRCDIR)/keyboard.h
@@ -78,7 +78,7 @@ $(NEXTOR_SUNRISE_H): $(NEXTOR_SUNRISE)
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(NEXTOR3_H): $(NEXTOR3)
-	@echo "Embedding Sunrise Nextor 3 ROM into header"
+	@echo "Embedding Sunrise Nextor 3.0.0 ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(KEYBOARDBIN_H): $(KEYBOARDBIN)

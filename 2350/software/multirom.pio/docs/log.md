@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 MultiROM v2.66
+
+- Refreshed the ROM mapper SHA1 database (3363 entries, from the latest Vampier softwaredb) by re-running `gen_romdb.py`: `tool/src/romdb.h`.
+
+- Bumped the aggregate, MSX menu and PC tool versions to v2.66.
+- Replaced the Nextor 3 beta 2 resource with the official 128 KB `resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM` from release `v0.1.8-blueMSX-v0.1.5-Nextor-3.0`, and updated the generated header symbol.
+- Updated `-s3` / `--sunrise3-sd` help, menu entry name and related manuals for released Nextor 3.0.0. Kept Nextor 2.1.4, `-a` combined entries, microSD/WiFi loaders, mapper types and UF2 layouts unchanged.
+- Validation: MSX menu/tool builds, official ROM size/SHA-256, `-s3`/alias, `-a`, `-a -w` and mixed Nextor/scanned-ROM UF2s pass. Verified exact names, record fields and firmware/menu/kernel/WiFi bytes. `_CODE` ends at `0x61E7`, below `0x8000`; hardware boot not tested.
+
 ## PicoVerse 2350 Multirom v2.65
 - Version bumped to v2.65 (top-level, MSX, and tool Makefiles).
 - The MSX menu can now be driven with a joystick on either MSX joystick port, as in PicoVerse 2040 MultiROM v2.68. The commented-out Fusion-C `JoystickRead`/`TriggerRead` code in `msx/src/menu.c` was replaced by `poll_joystick()`, which uses the BIOS `GTSTCK`/`GTTRIG` routines through the new `bios_gtstck()`/`bios_gttrig()` wrappers. Directions map to the cursor keys with a first-press delay (`JOY_FIRST_DELAY`) and auto-repeat (`JOY_REPEAT_DELAY`); fire buttons A/B on both ports act as Enter, once per press (a button held at boot is ignored until released). The help screen mentions the joystick.

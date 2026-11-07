@@ -89,9 +89,9 @@ static const char *rom_types[] = {
 #define ROM_TYPE_SCCP_FLAG 0x40u
 #define WIFI_ROM_SIZE      16384u
 
-#define NEXTOR3_SUNRISE_LABEL "Nextor Sunrise 3.0.0 Beta 2"
+#define NEXTOR3_SUNRISE_LABEL "Nextor Sunrise 3.0.0"
 #define NEXTOR_ROM            ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_ROM           ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM           ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
 #define MAX_NEXTOR_ENTRIES    7
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
@@ -416,7 +416,7 @@ static void print_usage(const char *prog_name) {
     printf("  -m2, --mapper-usb  Include Sunrise IDE Nextor ROM + 1MB mapper (USB pendrive)\n");
     printf("  -c1, --carnivore2-sd  Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM emulation (microSD card)\n");
     printf("  -c2, --carnivore2-usb Include Sunrise IDE Nextor ROM + 1MB mapper + Carnivore2 RAM emulation (USB pendrive)\n");
-    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card) for testing\n");
+    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card)\n");
     printf("  Options -s1, -m1, -s2, -m2, -c1, -c2, -s3 can be combined to add multiple Nextor entries\n");
     printf("  -scc, --scc        Enable SCC sound emulation (Konami SCC / Manbow2 / Carnivore2 ROMs)\n");
     printf("  -sccplus, --sccplus  Enable SCC+ (enhanced) sound emulation (Konami SCC / Manbow2 / Carnivore2 ROMs)\n");

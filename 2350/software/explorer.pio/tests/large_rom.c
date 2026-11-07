@@ -7,10 +7,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#ifdef _WIN32
+#include <direct.h>
+static int mkdir_host(const char *path) { return _mkdir(path); }
+#else
+#include <sys/stat.h>
+static int mkdir_host(const char *path) { return mkdir(path, 0755); }
+#endif
 #define __noinline
 #include "large-rom-types.h"
 #include "mapper_detect.h"
+#include "help_text.h"
 
 enum { HOST_DATA_BUFFER_SIZE = DATA_BUFFER_SIZE };
 static unsigned char mock_page_data[HOST_DATA_BUFFER_SIZE];
@@ -42,6 +49,9 @@ static uint8_t fh_active_type, fh_result, fh_tcp_last_error;
 static char fh_active_query[FH_QUERY_SIZE];
 static struct { char name[ROM_NAME_MAX + 1]; uint16_t size_kb; } fh_catalog[1];
 static bool refresh_requested, root_selected, mounted = true;
+static char sd_current_path[SD_PATH_MAX] = "/";
+static char mock_download_dir[FH_DOWNLOAD_DIR_MAX + 1u] = "/";
+static bool mock_dir_missing;
 static bool sd_mounted, have_free_fs = true;
 static uint8_t sd_mounted_partition, ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
 static DWORD free_clusters;
@@ -143,6 +153,11 @@ static uint32_t file_download_fattime(uint32_t time) { return time; }
 static void sd_activity_note(void) {}
 static bool sd_mount_card(void) { return mounted; }
 static void set_root_path(void) { root_selected = true; }
+// The firmware resolves the saved folder (and checks it still exists) on the card.
+static void fh_download_dir_resolve(char *out, bool *missing) {
+    *missing = mock_dir_missing;
+    strcpy(out, mock_dir_missing ? "/" : mock_download_dir);
+}
 static void fh_quiesce_audio_for_qmi(void) { quiesce_count++; }
 static void fh_copy_status_prefix(const char *text) {
     snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "%s", text);
@@ -213,6 +228,8 @@ static uint8_t mock_jiffy, mock_partition[32];
 static int use_80_columns;
 static unsigned char menu_shortcut_selection;
 static unsigned char menu_pending_key;
+static unsigned char menu_move_pending;
+static unsigned char menu_pick_download;
 static unsigned char fh_catalog_type, menu_ui_listing;
 static char menu_ui_sd_text[32];
 static int currentPage, totalPages;
@@ -281,7 +298,26 @@ static char bios_chget_quiet(void) {
     questions++;
     return permission_key;
 }
+static unsigned help_pages_requested, help_ends, help_last_page;
 static uint8_t run_ctrl_cmd(uint8_t cmd) {
+    if (cmd == CMD_HELP_PAGE) {
+        // The firmware puts the requested page in the data window.
+        const help_page_t *pages = control[CTRL_QUERY_BASE + 1] ? help_pages_80 : help_pages_40;
+        unsigned page = control[CTRL_QUERY_BASE];
+        assert(page < HELP_PAGE_COUNT);
+        memset(mock_page_data, 0, sizeof(mock_page_data));
+        mock_page_data[0] = HELP_PAGE_COUNT;
+        memcpy(mock_page_data + 1, pages[page].text, pages[page].size);
+        help_last_page = page;
+        help_pages_requested++;
+        // CTRL_ACK holds another value while File Hunter is open: the menu must not use it.
+        control[CTRL_ACK] = 0;
+        return 0;
+    }
+    if (cmd == CMD_HELP_END) {
+        help_ends++;
+        return control[CTRL_ACK] = 1;
+    }
     assert(cmd == CMD_PREPARE_QUICK_RUN || cmd == CMD_LOAD_OPTIONS);
     unsigned int index = control[CTRL_QUERY_BASE] | ((unsigned int)control[CTRL_QUERY_BASE + 1] << 8);
     ROMRecord *record = &records[index % FILES_PER_PAGE];
@@ -432,6 +468,9 @@ static void reset_download(uint64_t size) {
     fh_result = fh_tcp_last_error = 0;
     fh_progress_percent = previous_progress = 0;
     refresh_requested = root_selected = false;
+    strcpy(mock_download_dir, "/");
+    mock_dir_missing = false;
+    strcpy(sd_current_path, "/");
     mounted = transport_ok = true;
     fail_write_at = 0;
     short_write = fail_publish = false;
@@ -564,6 +603,42 @@ static void test_downloads(void) {
         strcpy(fh_catalog[0].name, "Disk");
         assert(!fh_download_selected() && fh_result == 0);
         assert(!file_exists("/Disk.DSK") && !file_exists("/Disk.DSK.part"));
+    }
+    cleanup_files();
+
+    // File Hunter saves into the chosen download folder and opens the list there.
+    {
+        char host[1024], dir[1024];
+        host_path("/TFH", dir, sizeof(dir));
+        if (mkdir_host(dir) != 0) assert(errno == EEXIST);
+        reset_download(8192);
+        strcpy(mock_download_dir, "/TFH");
+        assert(fh_download_selected());
+        assert(file_exists("/TFH/Large.ROM") && !file_exists("/Large.ROM") && !file_exists("/TFH/Large.ROM.part"));
+        assert(strcmp(sd_current_path, "/TFH") == 0 && !root_selected && refresh_requested && fh_result == 1);
+        assert(strcmp(fh_wifi_status_text, "Saved to microSD. Press key.") == 0);
+        host_path("/TFH/Large.ROM", host, sizeof(host));
+        assert(remove(host) == 0);
+
+        // A saved folder that no longer exists: the file goes to the root and the user is told.
+        reset_download(8192);
+        strcpy(mock_download_dir, "/TFH");
+        mock_dir_missing = true;
+        assert(fh_download_selected());
+        assert(file_exists("/Large.ROM") && root_selected);
+        assert(strcmp(fh_wifi_status_text, "Saved in root: folder gone. Press key.") == 0);
+
+        // The longest folder plus the longest name still fits the save path.
+        char longest[FH_DOWNLOAD_DIR_MAX + 1u], long_name[ROM_NAME_MAX + 1u], save_path[FH_DOWNLOAD_PATH_SIZE];
+        longest[0] = '/';
+        memset(longest + 1, 'd', FH_DOWNLOAD_DIR_MAX - 1u);
+        longest[FH_DOWNLOAD_DIR_MAX] = '\0';
+        memset(long_name, 'n', ROM_NAME_MAX);
+        long_name[ROM_NAME_MAX] = '\0';
+        assert(fh_build_download_path(long_name, FH_TYPE_ROM, longest, save_path, sizeof(save_path)));
+        assert(strlen(save_path) == FH_DOWNLOAD_DIR_MAX + 1u + ROM_NAME_MAX + 4u);
+        assert(fh_build_download_path("Game", FH_TYPE_DSK, "/", save_path, sizeof(save_path)) && strcmp(save_path, "/Game.DSK") == 0);
+        assert(fh_build_download_path("Game", FH_TYPE_ROM, "/A/B", save_path, sizeof(save_path)) && strcmp(save_path, "/A/B/Game.ROM") == 0);
     }
     cleanup_files();
 }
@@ -1090,7 +1165,7 @@ static void test_footer_options(void) {
     const char *const flash_80[] = {"F1 FLASH", "F2 SD CARD", "F3 FILE HUNTER", "F4 WIFI", "F5 HELP"};
     const char *const rom[] = {"ESC Back", "L/R Chg", "U/D Opt", "F5 Help"};
     const char *const rom_80[] = {"ESC Back", "L/R Change value", "U/D Select option", "ENTER Run", "F5 Help"};
-    const char *const download[] = {"ESC Back", "ENTER Save", "F5 Help"};
+    const char *const download[] = {"ESC Back", "ENTER Save", "A Folder", "F5 Help"};
     const char *const mp3_single[] = {"ESC Back", "ENTER Action", "F5 Help"};
     const char *const mp3_multi[] = {"ESC Back", "ENTER", "N Next", "P Prev", "F5 Help"};
     const char *const mp3_single_80[] = {"ESC Back", "U/D Select option", "ENTER Action", "F5 Help"};
@@ -1111,7 +1186,7 @@ static void test_footer_options(void) {
         render_rom_footer_line();
         assert_footer_options(use_80_columns ? rom_80 : rom, use_80_columns ? 5 : 4, 0);
         fh_render_detail_footer();
-        assert_footer_options(download, 3, 0);
+        assert_footer_options(download, 4, 0);
         control[MP3_CTRL_MODE] = MP3_PLAY_MODE_SINGLE;
         render_mp3_footer_line();
         assert_footer_options(use_80_columns ? mp3_single_80 : mp3_single, use_80_columns ? 4 : 3, 0);
@@ -1125,11 +1200,13 @@ static void test_footer_options(void) {
         memcpy(control + 0xBFAF, "0123456789ABCDEF", CTRL_CHIP_ID_SIZE);
         const unsigned char keys[] = {'1', '2', '3', MENU_KEY_F4_CONFIG, MENU_KEY_F5_HELP, 27};
         for (size_t i = 0; i < sizeof(keys); i++) {
+            unsigned ends = help_ends;
             menu_pending_key = 0;
             set_ui_keys(keys + i, 1);
-            helpMenu();
+            helpMenu(HELP_PAGE_LIST);
             assert_footer_options(use_80_columns ? flash_80 : flash_40, 5, MENU_SHORTCUT_HELP);
-            assert_centered_status("Chip ID: 0123456789ABCDEF");
+            assert_centered_status("Help 1/6 - LEFT/RIGHT page, key closes");
+            assert(help_ends == ends + 1);
             assert(!strstr(ui_input_lines[0], "Any key") && !strstr(ui_input_lines[0], "Page "));
             assert(frame_rendered == 0 && menu_pending_key == (i < 4 ? keys[i] : 0));
         }
@@ -1141,6 +1218,157 @@ static void test_footer_options(void) {
     assert(mock_fnkstr[0] == '1' && mock_fnkstr[16] == '2' && mock_fnkstr[32] == '3');
     assert(mock_fnkstr[48] == MENU_KEY_F4_CONFIG && mock_fnkstr[49] == 0);
     assert(mock_fnkstr[64] == MENU_KEY_F5_HELP && mock_fnkstr[65] == 0);
+}
+
+// The F5 pages come from the firmware: they must fit the screen of the mode they
+// are written for, and the help must page, clamp and close as documented.
+static void test_help_pages(void) {
+    for (int columns = 0; columns <= 1; columns++) {
+        const help_page_t *pages = columns ? help_pages_80 : help_pages_40;
+        unsigned max_width = columns ? HELP_WIDTH_80 : HELP_WIDTH_40;
+        for (unsigned page = 0; page < HELP_PAGE_COUNT; page++) {
+            const char *line = pages[page].text;
+            const char *end = pages[page].text + pages[page].size;
+            unsigned rows = 0;
+            assert(pages[page].size > 1 && pages[page].size + 1 + 200 < DATA_BUFFER_SIZE);
+            assert(end[-1] == '\0' && line[0] == '\1');
+            while (line < end) {
+                size_t length = strlen(line);
+                assert(length > 0 && length - (*line == '\1') <= max_width);
+                for (size_t i = (*line == '\1'); i < length; i++) {
+                    assert((unsigned char)line[i] >= 0x20 && (unsigned char)line[i] < 0x7F);
+                }
+                rows++;
+                line += length + 1;
+            }
+            assert(rows <= HELP_MAX_ROWS);
+        }
+    }
+
+    use_80_columns = 1;
+    menu_shortcut_selection = MENU_SHORTCUT_FLASH;
+    {
+        // RIGHT twice, LEFT once, then a key that closes: pages 0, 1, 2, 1.
+        const unsigned char keys[] = {28, 28, 29, 'x'};
+        unsigned requested = help_pages_requested, ends = help_ends;
+        set_ui_keys(keys, sizeof(keys));
+        helpMenu(HELP_PAGE_LIST);
+        assert(help_pages_requested == requested + 4 && help_last_page == 1 && help_ends == ends + 1);
+        assert_centered_status("Help 2/6 - LEFT/RIGHT page, key closes");
+        // The first row of the page is its inverted heading.
+        assert(mock_screen[2][0] == (unsigned char)(help_pages_80[1].text[1] + 96));
+    }
+    {
+        // LEFT on the first page and RIGHT on the last one stay where they are.
+        const unsigned char keys[] = {29, 28, 28, 28, 28, 28, 28, 28, 27};
+        unsigned requested = help_pages_requested;
+        set_ui_keys(keys, sizeof(keys));
+        helpMenu(HELP_PAGE_LIST);
+        assert(help_pages_requested == requested + sizeof(keys) && help_last_page == HELP_PAGE_COUNT - 1);
+        assert_centered_status("Help 6/6 - LEFT/RIGHT page, key closes");
+    }
+    {
+        // Each screen opens the page that describes it.
+        const unsigned char key = 27;
+        const unsigned char pages[] = {HELP_PAGE_LIST, HELP_PAGE_ROM, HELP_PAGE_MP3, HELP_PAGE_FILEHUNTER};
+        for (size_t i = 0; i < sizeof(pages); i++) {
+            set_ui_keys(&key, 1);
+            helpMenu(pages[i]);
+            assert(help_last_page == pages[i]);
+        }
+    }
+}
+
+// The list rows are built without printf now. They must match what the old
+// sprintf-based builder and the old selectable-line renderer produced.
+static void reference_row(const ROMRecord *record, const char *name, char *out, unsigned char width, int selected) {
+    // The row layouts the menu printed before the printf-free builder.
+    const char *const format_80 = " %-61.61s %6s %-2s %-5s";
+    const char *const format_40 = " %-21.21s %6s %-2s %-5s";
+    const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
+    const char *type_label = " ROM";
+    char size_text[16] = "";
+    char text[96];
+    unsigned long size_kb = record->Size / 1024u;
+
+    if (record_is_folder(record)) {
+        type_label = "<DIR>";
+        source = "SD";
+    } else if (record_is_mp3(record) && ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV)) {
+        type_label = " WAV";
+        source = "SD";
+    } else if (record_is_mp3(record)) {
+        type_label = " MP3";
+        source = "SD";
+    } else if (record_mapper_code(record->Mapper) == 23) {
+        type_label = " DSK";
+    }
+    if (!record_is_folder(record)) {
+        if (size_kb <= 1024u) {
+            snprintf(size_text, sizeof(size_text), "%luKB", size_kb);
+        } else {
+            snprintf(size_text, sizeof(size_text), "%luMB", (size_kb + 1023u) / 1024u);
+        }
+    }
+    snprintf(text, sizeof(text), width == 80 ? format_80 : format_40, name, size_text, source, type_label);
+    size_t length = strlen(text);
+    for (size_t i = length; i < width; i++) text[i] = ' ';
+    text[width] = '\0';
+
+    // The old selectable-line renderer, fed with the text after its first space.
+    const char *content = text + 1;
+    unsigned char content_width = width - 1, selected_width = width - 3;
+    size_t content_length = strlen(content);
+    if (content_length > content_width) content_length = content_width;
+    out[0] = selected ? '>' : ' ';
+    if (selected) {
+        for (unsigned i = 0; i < selected_width; i++) out[1 + i] = (char)((i < content_length ? content[i] : ' ') + 96);
+        for (unsigned i = selected_width; i < content_width; i++) out[1 + i] = ' ';
+    } else {
+        for (unsigned i = 0; i < content_width; i++) out[1 + i] = i < content_length ? content[i] : ' ';
+    }
+}
+
+static void test_list_rows(void) {
+    const unsigned long sizes[] = {0, 1, 1023, 1024, 1025, 4096, 524288, 1048575, 1048576, 1048576 + 1023, 1048576 + 1024,
+                                   1048576 + 1025, 2097152, 3145728 + 1, 33554432UL, 67108864UL + 5000, 4294967295UL};
+    const unsigned char mappers[] = {SOURCE_SD_FLAG | 4, 7, FOLDER_FLAG | SOURCE_SD_FLAG, MP3_FLAG | SOURCE_SD_FLAG,
+                                     MP3_FLAG | SOURCE_SD_FLAG | AUDIO_TYPE_WAV, SOURCE_SD_FLAG | 23, 23};
+    const char *const names[] = {"", "A", "Game", "123456789012345678901", "1234567890123456789012",
+                                 "1234567890123456789012345678901234567890123456789012345678901",
+                                 "12345678901234567890123456789012345678901234567890123456789012",
+                                 "12345678901234567890123456789012345678901234567890123456789012345678901"};
+    char row[81], expected[81];
+
+    for (use_80_columns = 0; use_80_columns <= 1; use_80_columns++) {
+        unsigned char width = menu_ui_row_width();
+        for (size_t m = 0; m < sizeof(mappers); m++) {
+            for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+                for (size_t n = 0; n < sizeof(names) / sizeof(names[0]); n++) {
+                    ROMRecord record = {.Mapper = mappers[m], .Size = sizes[s]};
+                    snprintf(record.Name, sizeof(record.Name), "%s", names[n]);
+                    for (int selected = 0; selected <= 1; selected++) {
+                        memset(row, 0x55, sizeof(row));
+                        build_record_row(&record, NULL, row, (unsigned char)selected);
+                        reference_row(&record, record.Name, expected, width, selected);
+                        assert(memcmp(row, expected, width) == 0 && row[width] == 0x55);
+                        // A sliding name window replaces the name only.
+                        build_record_row(&record, "sliding", row, (unsigned char)selected);
+                        reference_row(&record, "sliding", expected, width, selected);
+                        assert(memcmp(row, expected, width) == 0);
+                    }
+                }
+            }
+        }
+    }
+    // The catalog sizes use the same number formatter.
+    for (unsigned value = 0; value < 65536; value += (value < 2000 ? 1 : 37)) {
+        char text[16], expected_text[16];
+        menu_ui_size_text(text, (uint16_t)value, 'M');
+        snprintf(expected_text, sizeof(expected_text), "%uMB", value);
+        assert(strcmp(text, expected_text) == 0);
+    }
+    use_80_columns = 0;
 }
 
 static void test_line_editor(void) {
@@ -1208,6 +1436,8 @@ int main(int argc, char **argv) {
     test_page_records();
     test_status_line();
     test_footer_options();
+    test_help_pages();
+    test_list_rows();
     test_line_editor();
     puts("PASS: legacy/PVEX decoding, streamed downloads, flash options, exact SD/flash MB tenths, centered status, contextual controls, F5 Help and search restoration in 40/80 columns");
     return 0;

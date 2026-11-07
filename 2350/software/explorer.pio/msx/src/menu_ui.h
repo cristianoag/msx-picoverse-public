@@ -36,5 +36,11 @@ void menu_ui_wait_key_with_blinking_status(const char *text);
 int menu_ui_read_line(const char *prompt, char *buffer, unsigned char max_len);
 void menu_ui_print_str_inverted_width(const char *str, unsigned char width);
 void menu_ui_render_selectable_line(unsigned char row, const char *text, int selected);
+// List rows: built in RAM (menu_ui_list_rows, one row per list line) and written
+// to the screen in one block transfer.
+extern char menu_ui_list_rows[];
+void menu_ui_build_row(char *out, const char *name, const char *size_text, const char *source, const char *type, unsigned char selected);
+void menu_ui_blit_rows(unsigned char first_row, const char *src, unsigned char rows);
+void menu_ui_size_text(char *out, unsigned int value, char unit);
 
 #endif

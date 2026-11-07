@@ -107,6 +107,8 @@ static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE], sd_partition
 static uint8_t sd_browse_partition, sd_mounted_partition, saved_browse_partition;
 static uint8_t browse_source_mode;
 static bool sd_mounted, has_filesystem, fh_menu_window_active, refresh_requested;
+// State the firmware's unmount and partition-cycle code also clears.
+static bool fh_download_dir_loaded, move_src_valid;
 static sd_card_t *sd_card;
 static ROMRecord records[1];
 static uint16_t total_record_count, filtered_indices[1];
@@ -370,6 +372,23 @@ static void test_persistence_and_blank_card(void)
     process_load_options_request();
     assert(ctrl_ack_value == 0 && ctrl_sd_partition_info[0] == 0);
     puts("PASS: exact PVC bytes and reload across SD profiles; old defaults; failed saves; blank and zero-capacity cards");
+
+    reset_state();
+    records[0].Mapper = MAPPER_PICOAMP;
+    filter_query[4] = MAPPER_PICOAMP;
+    filter_query[6] = 200;
+    filter_query[9] = 1;
+    process_save_options_request();
+    assert(ctrl_ack_value == 1 && pvc[8] == 200 && pvc[11] == 1);
+    process_load_options_request();
+    assert(ctrl_ack_value == 1 && ctrl_wifi_support == 1 && ctrl_audio_volume == 200);
+    pvc[6] = 6;
+    process_load_options_request();
+    assert(records[0].Mapper == MAPPER_PICOAMP);
+    pvc_size = PVC_OPTIONS_LEGACY_SIZE;
+    process_load_options_request();
+    assert(ctrl_wifi_support == 0);
+    puts("PASS: PicoAmp saved WiFi/200% volume, legacy defaults and fixed system mapper");
 }
 
 static void test_raw_and_partition_io(void)

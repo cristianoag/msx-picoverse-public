@@ -1,6 +1,6 @@
 # MSX PicoVerse 2350 — Sunrise IDE Emulation for Nextor
 
-This document describes the implementation of the Sunrise IDE interface emulation modes in the MSX PicoVerse 2350 firmware. The 2350 variant supports two distinct storage backends — microSD card and USB mass storage — each available standalone, combined with a 1MB PSRAM-backed memory mapper, combined with that mapper plus Carnivore2-compatible RAM-mode loading for `SROM.COM /D15`, or combined with the mapper plus a separate 1MB MegaRAM subslot. The four non-Carnivore2/non-MegaRAM Sunrise modes can also optionally expose ESP-01 WiFi support when built with `-w` in either `loadrom.exe` or `multirom.exe`, or when enabled from the Explorer ROM details screen. Explorer uses the same `-s1`/`-m1`/`-c1`/`-r1` and `-s2`/`-m2`/`-c2`/`-r2` option names to add embedded Nextor SYSTEM entries alongside the ROMs scanned from the source folder, and `-a` / `--allnextor` adds all eight Nextor 2.1.4 entries at once, plus both Nextor 3.0.0 Beta 2 microSD entries (`-s3` and `-m3`).
+This document describes the implementation of the Sunrise IDE interface emulation modes in the MSX PicoVerse 2350 firmware. The 2350 variant supports two distinct storage backends — microSD card and USB mass storage — each available standalone, combined with a 1MB PSRAM-backed memory mapper, combined with that mapper plus Carnivore2-compatible RAM-mode loading for `SROM.COM /D15`, or combined with the mapper plus a separate 1MB MegaRAM subslot. The four non-Carnivore2/non-MegaRAM Sunrise modes can also optionally expose ESP-01 WiFi support when built with `-w` in either `loadrom.exe` or `multirom.exe`, or when enabled from the Explorer ROM details screen. Explorer uses the same `-s1`/`-m1`/`-c1`/`-r1` and `-s2`/`-m2`/`-c2`/`-r2` option names to add embedded Nextor SYSTEM entries alongside the ROMs scanned from the source folder, and `-a` / `--allnextor` adds all eight Nextor 2.1.4 entries at once, plus both Nextor 3.0.0 microSD entries (`-s3` and `-m3`).
 
 ## 1. Overview
 
@@ -29,7 +29,7 @@ All eight modes:
 
 The mapper variants (`-m1`, `-m2`) additionally provide 1MB of mapper RAM (64 × 16KB pages) in an expanded sub-slot architecture, with mapper page registers intercepted via PIO1.
 
-Explorer's `-m3` / `--mapper3-sd` uses the same mapper type 16 and 1MB PSRAM layout as `-m1`, but serves the Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly ROM already used by `-s3`. It appears as `Nextor Sunrise 3.0.0 Beta 2 + 1MB Mapper (SD)` and can be combined with the other Nextor options. `-a` therefore adds ten SYSTEM entries; the hidden `.DSK` boot kernel remains Nextor 2.1.4.
+Explorer's `-m3` / `--mapper3-sd` uses the same mapper type 16 and 1MB PSRAM layout as `-m1`, but serves the released Nextor 3.0.0 Sunrise IDE MasterOnly ROM already used by `-s3`. It appears as `Nextor Sunrise 3.0.0 + 1MB Mapper (SD)` and can be combined with the other Nextor options. `-a` therefore adds ten SYSTEM entries; the hidden `.DSK` boot kernel remains Nextor 2.1.4.
 
 The Carnivore2 RAM-mode variants (`-c1`, `-c2`) build on that same mapper architecture and add a Carnivore2-compatible control/register surface plus banked RAM windows so `SROM.COM /D15` can upload ROM images into PSRAM and launch them directly from RAM.
 
@@ -41,7 +41,7 @@ The `-w` WiFi flag is available for `-s1`, `-m1`, `-s2`, and `-m2`. It does not 
 
 Nextor storage uses the Sunrise IDE block device and supports FAT12/FAT16 volumes, with a 4 GB limit per FAT16 partition rather than per device. FAT32 and exFAT partitions can be useful on the same microSD card for Explorer browsing, ROM loading, MP3/WAV playback, or File Hunter downloads, but are not Nextor FAT12/FAT16 volumes.
 
-In Explorer, all Sunrise Nextor SD SYSTEM entries, including Nextor 3 beta, offer **WHOLE DISK** alongside compatible primary FAT16 partitions up to 4 GB in the ROM detail screen's `SD Part` option. Use Left/Right to select:
+In Explorer, all Sunrise Nextor SD SYSTEM entries, including Nextor 3.0.0, offer **WHOLE DISK** alongside compatible primary FAT16 partitions up to 4 GB in the ROM detail screen's `SD Part` option. Use Left/Right to select:
 
 - **WHOLE DISK**: pass the card's physical sector count to ATA IDENTIFY and map each read/write LBA directly to the physical card, including the MBR at LBA zero. Nextor handles primary and logical partitions natively and can map several FAT12/FAT16 partitions concurrently using `CALL FDISK` / `MAPDRV`, without removing primary partitions. This uses the existing 28-bit ATA commands; cards larger than 128 GiB are not fully addressable.
 - **A filesystem volume label**: expose just the selected primary FAT16 partition, with its own sector count and an LBA offset to its start. Existing saved partition choices and the automatic first-compatible-partition default are preserved. With no compatible primary partition, the selection defaults to `WHOLE DISK`.
@@ -366,7 +366,7 @@ loadrom.exe [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-r1] [-r2] [-s3] [-w] [-sc
 | `-c2` | `--carnivore2-usb` | Sunrise IDE + 1MB PSRAM mapper + Carnivore2 RAM-mode emulation with USB pendrive |
 | `-r1` | `--megaram-sd` | Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM with microSD card |
 | `-r2` | `--megaram-usb` | Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM with USB pendrive |
-| `-s3` | `--sunrise3-sd` | Same as `-s1`, with the Nextor 3.0.0 Beta 2 kernel instead of 2.1.4 (for testing) |
+| `-s3` | `--sunrise3-sd` | Same as `-s1`, with the released Nextor 3.0.0 kernel instead of 2.1.4 |
 | `-w` | `--wifi` | Add the ESP8266P system ROM + memio UART WiFi surface to `-s1`/`-m1`/`-s2`/`-m2`/`-s3` |
 
 In LoadROM the Sunrise, Carnivore2, and MegaRAM base options are mutually exclusive. The `-w` flag is valid only with `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`.
@@ -452,8 +452,8 @@ The WiFi-enabled Sunrise variants additionally use the host tool to append the E
 The PC tool Makefile generates `nextor_sunrise.h` and `nextor3.h` (the embedded ROMs as C byte arrays) from:
 
 ```
-resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM       → src/nextor_sunrise.h
-resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM → src/nextor3.h
+resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM → src/nextor_sunrise.h
+resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM → src/nextor3.h
 ```
 
 `nextor_sunrise.h` is shared by all the Nextor 2.1.4 modes; `nextor3.h` is used only by `-s3`.
@@ -478,7 +478,7 @@ For the full WiFi-specific register map and usage notes, see `docs/msx-picoverse
 | `tool/src/loadrom.c` | PC tool: `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3` options, UF2 generation |
 | `tool/Makefile` | Build scripts, embedded ROM header generation |
 | `resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` | 128KB Nextor Sunrise IDE kernel |
-| `resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM` | 128KB Nextor 3.0.0 Beta 2 Sunrise IDE kernel (`-s3`) |
+| `resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM` | 128KB Nextor 3.0.0 Sunrise IDE kernel (`-s3`) |
 | `lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/` | Carl Kugler's FatFS + SPI SD driver library |
 
 All paths are relative to `2350/software/loadrom.pio/`.

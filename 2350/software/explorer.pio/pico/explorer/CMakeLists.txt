@@ -69,6 +69,23 @@ set(EXPLORER_SOURCES
     audio/emu2151.cpp
     audio/ymfm/ymfm_opm.cpp
     debug/audio_trace.c
+    picoamp/picoamp.c
+    picoamp/mp3_alloc_dispatch.c
+    picoamp/pvaudio/pva_window.c
+    picoamp/pvaudio/pva_engine.c
+    picoamp/pvaudio/pva_decode.c
+    picoamp/pvaudio/pva_net.c
+    picoamp/pvaudio/pva_esp.c
+    picoamp/pvaudio/pva_dir.c
+    picoamp/pvaudio/pva_eq.c
+    picoamp/pvaudio/pva_viz.c
+    picoamp/pvaudio/pva_json.c
+    picoamp/pvaudio/pva_web.c
+    picoamp/pvaudio/pva_cfg.c
+    picoamp/pvaudio/pva_clock.c
+    picoamp/pvaudio/pva_news.c
+    picoamp/pvaudio/pva_news_cat.c
+    picoamp/pvaudio/pva_hal_pico.c
     msx_bus.pio
 )
 
@@ -82,6 +99,10 @@ pico_generate_pio_header(explorer ${CMAKE_CURRENT_SOURCE_DIR}/msx_bus.pio)
 
 add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
 add_subdirectory(lib/picomp3lib/src picomp3lib_build)
+
+set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/lib/picomp3lib/src/buffers.c PROPERTIES
+    COMPILE_DEFINITIONS "MPDEC_ALLOCATOR=pv_mp3_alloc"
+    COMPILE_OPTIONS "-include;${CMAKE_CURRENT_LIST_DIR}/picoamp/mp3_alloc_dispatch.h")
 
 pico_set_program_name(explorer "explorer")
 pico_set_program_version(explorer "${EXPLORER_VERSION}")

@@ -24,7 +24,7 @@ function Get-CFunction([string]$source, [string]$name) {
     return $source.Substring($match.Index, $end - $match.Index)
 }
 
-foreach ($name in @("CMD_PREPARE_FLASH_ROM", "CTRL_FLASH_FREE_KB", "CTRL_FLASH_LARGEST_KB",
+foreach ($name in @("CMD_PREPARE_FLASH_ROM", "CMD_HELP_PAGE", "CMD_HELP_END", "CMD_SET_DOWNLOAD_DIR", "CMD_FH_DOWNLOAD_DIR", "CTRL_FLASH_FREE_KB", "CTRL_FLASH_LARGEST_KB",
                     "FLASH_COPY_DETECTING",
                     "FLASH_COPY_NO_SPACE", "FLASH_COPY_TOO_LARGE", "FLASH_COPY_DUPLICATE",
                     "FLASH_COPY_MAPPER", "FLASH_COPY_IO")) {
@@ -37,6 +37,33 @@ foreach ($name in @("CMD_PREPARE_FLASH_ROM", "CTRL_FLASH_FREE_KB", "CTRL_FLASH_L
 }
 if ($fh -match "fh_record_fits_sd_cache|exceeds 4MB|Action: Too large|Locate\(0, 7\)") {
     throw "File Hunter still has a size block or uses the main screen for download status"
+}
+# The help pages come from the firmware, which must rebuild the list page they replace.
+$helpHandler = Get-CFunction $firmware "handle_menu_write_explorer"
+if ($helpHandler -notmatch "data == CMD_HELP_PAGE\)\s*\{\s*process_help_page_request\(\);" -or
+    $helpHandler -notmatch "data == CMD_HELP_END\)\s*\{\s*process_help_end_request\(\);" -or
+    $firmware -notmatch "static void __noinline process_help_page_request\(void\)" -or
+    $firmware -notmatch "static void __noinline process_help_end_request\(void\)" -or
+    (Get-CFunction $firmware "process_help_end_request") -notmatch "fh_build_page_buffer\(\);[\s\S]*build_page_buffer\(current_page\);" -or
+    (Get-CFunction $menu "helpMenu") -notmatch "run_ctrl_cmd\(CMD_HELP_END\)") {
+    throw "F5 help must be served by the firmware and close with CMD_HELP_END"
+}
+if ($menu -match "static const char help_text\[\]") {
+    throw "The help text belongs in pico/explorer/help_text.h, not in the menu ROM"
+}
+# The download folder (A): the Pico answers CMD_SET_DOWNLOAD_DIR without a refresh, the menu
+# reads the failure reason from CTRL_MAPPER, and downloads go to the resolved folder.
+if ([regex]::Match($firmware, "(?m)^#define DOWNLOAD_DIR_ERR_LONG\s+(\d+)u").Groups[1].Value -ne
+    [regex]::Match($header, "(?m)^#define DOWNLOAD_DIR_ERR_LONG\s+(\d+)").Groups[1].Value) {
+    throw "Firmware and menu disagree on DOWNLOAD_DIR_ERR_LONG"
+}
+if ($helpHandler -notmatch "data == CMD_SET_DOWNLOAD_DIR\)\s*\{\s*process_set_download_dir_request\(\);" -or
+    $firmware -notmatch "static void __noinline process_set_download_dir_request\(void\)" -or
+    $firmware -notmatch "data == CMD_FH_WIFI_CONFIG \|\| data == CMD_FH_DOWNLOAD_DIR\)") {
+    throw "The download folder commands must be dispatched by the menu write handler (and stay out of line)"
+}
+if ((Get-CFunction $firmware "fh_download_selected") -notmatch "(?s)fh_download_dir_resolve\(save_dir, &dir_missing\);.*fh_build_download_path\([^;]*save_dir,") {
+    throw "File Hunter downloads must go to the resolved download folder"
 }
 if ((Get-CFunction $fh "fh_wait_download_ready") -notmatch "menu_ui_print_progress" -or
     (Get-CFunction $fh "fh_show_detail") -notmatch "menu_ui_wait_key_with_blinking_status\(fh_status_text\)") {
@@ -100,8 +127,8 @@ if ($loadGame -notmatch "(?s)refresh_menu_state\(0\);\s*show_rom_screen\(\(unsig
     throw "Large-ROM copying must open flash options and return without resetting"
 }
 
-$firmwareNames = 'ROM_NAME_MAX|FH_STATUS_TEXT_SIZE|FH_QUERY_SIZE|FH_TYPE_ROM|FH_TYPE_DSK|FH_RESULT_SAVING|FH_HTTP_CHUNK_SIZE|SD_ROM_MAX_SIZE|DSK_SIZE_360K|DSK_HEADER_BYTES'
-$menuNames = 'FILES_PER_PAGE|MAX_FILE_NAME_LENGTH|ROM_RECORD_SIZE|MAX_ROM_RECORDS|MEMORY_START|DATA_\w+|TLV_\w+|SOURCE_SD_FLAG|FOLDER_FLAG|MP3_FLAG|MAPPER_ASCII16X_FR|SD_ROM_MAX_SIZE_KB|MENU_KEY_F4_CONFIG|MENU_KEY_F5_HELP|CTRL_BASE_ADDR|CTRL_COUNT_[LH]|CTRL_PAGE|CTRL_CMD|CTRL_ACK|CTRL_MAPPER|CTRL_AUDIO|CTRL_MAGIC|CTRL_QUERY_BASE|CTRL_STATUS|CTRL_STATUS_SD_MISSING|CTRL_NET_STATUS|NET_STATUS_ONLINE|CTRL_FH_TYPE_ROM|CTRL_FH_TYPE_DSK|CTRL_CHIP_ID_SIZE|CTRL_FH_STATUS_TEXT_BASE|CTRL_SD_PARTITION_INFO_SIZE|CMD_LOAD_OPTIONS|CMD_PREPARE_QUICK_RUN|CMD_PREPARE_FLASH_ROM|AUDIO_PROFILE_MSX_MUSIC|ROM_SELECT_REGISTER|MP3_CTRL_BASE|MP3_CTRL_CMD|MP3_CTRL_MODE|MP3_CMD_STOP|MP3_PLAY_MODE_\w+|FLASH_COPY_\w+'
+$firmwareNames = 'ROM_NAME_MAX|SD_PATH_MAX|FH_DOWNLOAD_DIR_MAX|FH_STATUS_TEXT_SIZE|FH_QUERY_SIZE|FH_TYPE_ROM|FH_TYPE_DSK|FH_RESULT_SAVING|FH_HTTP_CHUNK_SIZE|SD_ROM_MAX_SIZE|DSK_SIZE_360K|DSK_HEADER_BYTES'
+$menuNames = 'FILES_PER_PAGE|AUDIO_TYPE_MASK|AUDIO_TYPE_WAV|MAX_FILE_NAME_LENGTH|ROM_RECORD_SIZE|MAX_ROM_RECORDS|MEMORY_START|DATA_\w+|TLV_\w+|SOURCE_SD_FLAG|FOLDER_FLAG|MP3_FLAG|MAPPER_ASCII16X_FR|MAPPER_PICOAMP|SD_ROM_MAX_SIZE_KB|MENU_KEY_F4_CONFIG|MENU_KEY_F5_HELP|CTRL_BASE_ADDR|CTRL_COUNT_[LH]|CTRL_PAGE|CTRL_CMD|CTRL_ACK|CTRL_MAPPER|CTRL_AUDIO|CTRL_MAGIC|CTRL_QUERY_BASE|CTRL_STATUS|CTRL_STATUS_SD_MISSING|CTRL_NET_STATUS|NET_STATUS_ONLINE|CTRL_FH_TYPE_ROM|CTRL_FH_TYPE_DSK|CTRL_CHIP_ID_SIZE|CTRL_FH_STATUS_TEXT_BASE|CTRL_SD_PARTITION_INFO_SIZE|CMD_LOAD_OPTIONS|CMD_PREPARE_QUICK_RUN|CMD_PREPARE_FLASH_ROM|CMD_HELP_PAGE|CMD_HELP_END|HELP_PAGE_(?:LIST|ROM|MP3|FILEHUNTER)|AUDIO_PROFILE_MSX_MUSIC|ROM_SELECT_REGISTER|MP3_CTRL_BASE|MP3_CTRL_CMD|MP3_CTRL_MODE|MP3_CMD_STOP|MP3_PLAY_MODE_\w+|FLASH_COPY_\w+'
 $cmake = Get-Content (Join-Path $root "pico\explorer\CMakeLists.txt") -Raw
 $flashSize = [regex]::Match($cmake, "(?m)^set\(EXPLORER_FLASH_SIZE_BYTES (\d+)\)")
 if (!$flashSize.Success) { throw "Cannot find physical flash size" }
@@ -136,7 +163,7 @@ $code += (Get-CFunction $menu "wait_flash_copy") + "`n" + (Get-CFunction $menu "
 foreach ($name in @("menu_ui_status_text", "menu_ui_fh_type_label", "menu_ui_render_footer", "menu_ui_print_footer_line", "menu_ui_capture_sd_status",
                     "menu_ui_render_last_line", "menu_ui_render_frame", "menu_ui_render_menu_frame",
                     "menu_ui_render_detail_frame", "menu_ui_update_list_footer", "menu_ui_blink_last_line",
-                    "menu_ui_read_line", "menu_ui_print_str_inverted_width")) {
+                    "menu_ui_read_line", "menu_ui_print_str_inverted_width", "menu_ui_size_text", "menu_ui_build_row")) {
     $function = Get-CFunction $ui $name
     if ($name -eq "menu_ui_render_last_line") {
         # SDCC uses 16-bit unsigned int for memory-mapped status words.
@@ -155,11 +182,14 @@ foreach ($name in @("read_ulong", "isEndOfData", "read_u16_le", "buffer_has_magi
 if ((Get-CFunction $menu "refresh_menu_state") -notmatch 'menu_ui_capture_sd_status\(\);') {
     throw "A refreshed microSD list must capture its browsing free-space summary"
 }
+foreach ($name in @("build_record_size_text", "build_record_row")) {
+    $code += (Get-CFunction $menu $name) + "`n"
+}
 foreach ($name in @("render_rom_footer_line", "render_mp3_footer_line")) {
     $code += (Get-CFunction $screenRom $name) + "`n"
 }
 $code += (Get-CFunction $fh "fh_render_detail_footer") + "`n"
-foreach ($name in @("print_chip_id_line", "helpMenu", "redefine_function_keys")) {
+foreach ($name in @("helpMenu", "redefine_function_keys")) {
     $code += [regex]::Replace((Get-CFunction $menu $name), '\bprintf\(', 'ui_printf(') + "`n"
 }
 

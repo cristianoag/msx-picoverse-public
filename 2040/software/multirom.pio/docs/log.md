@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2040 MultiROM v2.70
+
+- Refreshed the ROM mapper SHA1 database (3363 entries, from the latest Vampier softwaredb) by re-running `gen_romdb.py`: `tool/src/romdb.h`.
+
+- Bumped the aggregate, MSX menu and PC tool versions and openMSX add-on to v2.70; standalone MSX builds now default to the same project version.
+- Replaced the Nextor 3 beta 2 resource with the official 128 KB `resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM` from release `v0.1.8-blueMSX-v0.1.5-Nextor-3.0`, and updated the generated header symbol.
+- Updated `-s3` / `--sunrise3` and `-m3` / `--mapper3` help, menu entry names and related manuals for released Nextor 3.0.0. Kept Nextor 2.1.4, combined entries, USB loaders, mapper types and UF2 layouts unchanged.
+- Validation: MSX menu/tool builds, openMSX version check, official ROM size/SHA-256 and standalone/combined Nextor UF2s with scanned ROMs pass. Verified exact names, record fields and firmware/menu/kernel bytes. `_CODE` ends at `0x63EC`, below `0x8000`; 
+
 ## PicoVerse 2040 Multirom v2.69
 
 - Version bumped to v2.69 (top-level and tool Makefiles, and the `picoverse2040.tcl` script version).

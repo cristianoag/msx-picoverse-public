@@ -26,7 +26,7 @@ Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, 
 - ROMs must be at least 8 KB to appear in the microSD list; its size field supports files up to 4 GB minus one byte. ROM execution is limited by the available PSRAM or cartridge flash, not by File Hunter's download limit.
 - ROM names in the menu are limited to 60 characters (longer names are truncated).
 - File Hunter search text is limited to 24 characters.
-- File Hunter downloads are saved as `.ROM` or `.DSK` files directly in the root of the microSD card.
+- File Hunter downloads are saved as `.ROM` or `.DSK` files in the File Hunter download folder, which is the root of the microSD card until you choose another one with `A` (see [File Hunter download folder](#file-hunter-download-folder)).
 - File Hunter ROM downloads have no Explorer-imposed size cap and do not need to fit in PSRAM or flash. The selected microSD filesystem's file-size limit and available space still apply. `.DSK` boot-size restrictions remain unchanged.
 
 ## Basic workflow
@@ -43,7 +43,7 @@ You can also try the UF2 in the openMSX emulator before flashing it, with a PC f
 
 - **Folder navigation**: Organize your ROMs into folders on the microSD card. Enter folders by pressing Enter or Space on a folder name, and navigate back to parent folders using the ".." entry or by pressing Esc.
 - **Search** by ROM name directly on the MSX by pressing `/`, typing part of the name, and pressing Enter to jump to the first match. Note that this feature only searches ROMs inside the current folder. When in the root, it searches all flash and SD ROMs located in the root.
-- **File Hunter browser**: Press `F3` to browse online ROM results from File Hunter through the ESP-01 WiFi module, and press `T` to switch to `.DSK` disk images. Results show the name, size, source and type, and selected files can be downloaded and saved to the microSD root.
+- **File Hunter browser**: Press `F3` to browse online ROM results from File Hunter through the ESP-01 WiFi module, and press `T` to switch to `.DSK` disk images. Results show the name, size, source and type, and selected files can be downloaded and saved to the microSD root or to the download folder you choose.
 - **WiFi configuration**: Press `F4` to enter the WiFi setup flow used by the ESP8266P-compatible WiFi firmware.
 - **Automatic detection** of MSX models that support 80-column text mode. Compatible machines boot the menu in 80 columns; others fall back to 40 columns, and you can press `C` at any time to toggle between layouts.
 - MP3 entries from the microSD card are listed in the menu with a "MP3" type label and open an **MP3 player** screen when selected.
@@ -60,7 +60,7 @@ explorer.exe [options]
 
 - `-h`, `--help` : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `explorer.uf2`).
-- `-a`, `--allnextor` : Include every embedded Nextor SYSTEM entry listed below (the eight Nextor Sunrise 2.1.4 entries `-s1` to `-r2`, plus the Nextor 3 beta entries `-s3` and `-m3`) while still scanning and appending `.ROM` files from the current folder.
+- `-a`, `--allnextor` : Include every embedded Nextor SYSTEM entry listed below (the eight Nextor Sunrise 2.1.4 entries `-s1` to `-r2`, plus the Nextor 3.0.0 entries `-s3` and `-m3`) while still scanning and appending `.ROM` files from the current folder.
 - `-s1`, `--sunrise-sd` : Include Nextor Sunrise 2.1.4 using the on-board microSD card slot.
 - `-m1`, `--mapper-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c1`, `--carnivore2-sd` : Include Nextor Sunrise 2.1.4 on microSD plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
@@ -69,10 +69,11 @@ explorer.exe [options]
 - `-m2`, `--mapper-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB PSRAM-backed MSX memory mapper.
 - `-c2`, `--carnivore2-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
 - `-r2`, `--megaram-usb` : Include Nextor Sunrise 2.1.4 on USB plus the 1MB mapper and a separate 1MB MegaRAM subslot.
-- `-s3`, `--sunrise3-sd` : Include Nextor Sunrise 3.0.0 Beta 2 using the on-board microSD card slot, for testing the upcoming Nextor 3. It uses the Sunrise IDE MasterOnly kernel from Konamiman's [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release and behaves like `-s1` otherwise. This is a beta kernel, so keep backups of the microSD card.
-- `-m3`, `--mapper3-sd` : Include the same Nextor Sunrise 3.0.0 Beta 2 microSD kernel as `-s3`, plus the 1MB PSRAM-backed MSX memory mapper, following the `-m1` layout.
+- `-s3`, `--sunrise3-sd` : Include released Nextor Sunrise 3.0.0 using the on-board microSD card slot. It uses the Sunrise IDE MasterOnly kernel from Konamiman's [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0) release and behaves like `-s1` otherwise. PicoVerse hardware boot validation of this kernel is still pending; keep backups of the microSD card.
+- `-m3`, `--mapper3-sd` : Include the same released Nextor Sunrise 3.0.0 microSD kernel as `-s3`, plus the 1MB PSRAM-backed MSX memory mapper, following the `-m1` layout.
+- `-pa`, `--picoamp` : Include the standalone 64 KB PicoAmp player ROM and its PicoVerse Audio Engine mode (MSX2 or later, 64 KB MSX RAM, microSD and I2S DAC). It can be combined with the other options, but `-a` does not implicitly include it.
 
-The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all ten Nextor entries (eight Nextor 2.1.4 plus two Nextor 3 beta variants) in one UF2. The hidden Nextor 2.1.4 kernel used to boot `.DSK` images is unchanged.
+The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all ten Nextor entries (eight Nextor 2.1.4 plus two Nextor 3.0.0 variants) in one UF2. The hidden Nextor 2.1.4 kernel used to boot `.DSK` images is unchanged.
 
 Nextor entries always show the Nextor version in the Explorer menu:
 
@@ -86,10 +87,34 @@ Nextor entries always show the Nextor version in the Explorer menu:
 | `-m2` | `Nextor Sunrise 2.1.4 + 1MB Mapper (USB)` |
 | `-c2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + C2 RAM (USB)` |
 | `-r2` | `Nextor Sunrise 2.1.4 + 1MB Mapper + 1MB MegaRAM (USB)` |
-| `-s3` | `Nextor Sunrise 3.0.0 Beta 2 (SD)` |
-| `-m3` | `Nextor Sunrise 3.0.0 Beta 2 + 1MB Mapper (SD)` |
+| `-s3` | `Nextor Sunrise 3.0.0 (SD)` |
+| `-m3` | `Nextor Sunrise 3.0.0 + 1MB Mapper (SD)` |
 
-Per-entry options (audio profile, PSG Mirror, WiFi, SD partition) are saved in a `.PVC` file named after the menu entry, so options saved by a UF2 that used the older names (`Nextor Sunrise IDE ...`) are not picked up and the entries start with default options.
+Per-entry options (audio profile, PSG Mirror, WiFi, SD partition) are saved in a `.PVC` file named after the menu entry, so options saved by a UF2 that used the older names (`Nextor Sunrise IDE ...` or `Nextor Sunrise 3.0.0 Beta 2 ...`) are not picked up and the entries start with default options. Reapply the desired settings to the renamed Nextor 3.0.0 entries.
+
+### PicoAmp player ROM
+
+```
+explorer.exe -pa -o explorer_picoamp.uf2
+explorer.exe -a -pa -o explorer_all.uf2
+```
+
+`-pa` adds **PicoAmp 1.3 by Jzzy** to the flash list, alongside any selected Nextor entries and scanned ROMs. Unlike LoadROM's `-p1` SymbOS setup, this is a standalone cartridge player: no Nextor, mapper RAM, SymbOS or player executable on the card is needed.
+
+Select PicoAmp with Enter, choose **Wifi: Yes** if you have an ESP-01 already configured for your network, and Run. Wifi defaults to No; PicoAmp's Wifi and Volume choices are saved in `PicoAmp 1.3 by Jzzy.flash.PVC`. Settings saved under the earlier `PicoAmp 1.0 by Jzzy` entry name are not picked up and must be set again. Explorer's Volume remains a 0-200% DAC gain, separate from the player's own 0-100 volume control. Leave Audio at None and PSG Mirror at No: the player owns core 1 and the DAC, rather than using a cartridge sound-chip profile.
+
+- Play MP3, PCM WAV and M3U playlists from the microSD. The engine mounts the card independently of Explorer's current browsing partition, using FatFs' automatic volume selection.
+- The player provides spectrum/oscilloscope views, equalizer, station search and favourites. With Wifi enabled, the engine also supports MP3 internet radio and its clock, weather and news pages. HTTPS follows the upstream ESP protocol and does **not** validate server certificates.
+- Favourites (`RADIOFAV.M3U`) and settings (`PICOAMP.INI`) are written by the engine, which has exclusive card ownership in this mode. Nextor and Explorer browsing are not running alongside it.
+- The cartridge expands into subslot 0 (four 16 KB ROM banks) and subslot 3 (the `PVAUDIO` register window at `4000h-4FFFh`); subslots 1 and 2 are empty.
+- Q exits to BASIC while playback continues; it does not return to Explorer. Power-cycle the cartridge/MSX to return to the Explorer menu.
+- The bundled openMSX add-on can list the entry but explicitly refuses to launch it: it does not emulate the RP2350 audio engine.
+
+The ROM and engine 0.12 come from [release 1.3 of Jzzy-dev's PicoAmp project](https://github.com/Jzzy-dev/msx-picoplay-picoamp/releases/tag/1.3) (adding the mute key and the playing station's name and http/https mark), under the upstream CC BY-NC-SA 4.0 notices; the engine also carries that project's later news-catalogue update. The ROM is stored in `2350/software/explorer.pio/resources/PICOAMP.ROM`; the tool Makefile generates `tool/src/picoamp_rom.h` with `xxd`, like the other embedded ROMs. The Explorer-owned engine and hardware adapter live in `pico/explorer/picoamp/`.
+
+The adapter keeps the 64 KB ROM and 8 KB core-1 stack in the retired menu-record workspace, borrows the inactive 128 KB OPLL table for the engine arena, and uses 256 KB of PSRAM for streams and auxiliary buffers. The active MSX bus loop/window stays in internal SRAM. It adopts a live Explorer preview audio pool rather than reinitializing the I2S singleton. The menu/WAVEGAME and PicoAmp MP3 paths share an allocator dispatcher; no decoder arena is taken from the menu audio heap.
+
+Validation: `tests/picoamp.ps1` exercises the production register window, ROM banks/subslots, decoder, local playback, settings, simulated ESP/radio/favourites, cold/warm audio setup, UF2 payload bytes and linked SRAM/menu bounds. Physical MSX boot, DAC playback and ESP networking still need hardware testing.
 
 ### Example
 
@@ -115,7 +140,7 @@ This includes the selected Nextor entries and the supported folder ROMs in one E
 explorer.exe -s1 -s3 -o explorer_nextor3.uf2
 ```
 
-This includes Nextor 2.1.4 and the Nextor 3.0.0 Beta 2 microSD entries side by side, so both kernels can be tested on the same card.
+This includes Nextor 2.1.4 and the Nextor 3.0.0 microSD entries side by side, so both kernels can be used on the same card.
 
 ```
 explorer.exe -m1 -m3 -o explorer_nextor3_mapper.uf2
@@ -184,13 +209,13 @@ Explorer can load ROMs from a microSD card in addition to flash. ROMs on SD are 
 - `.DSK` disk images appear in the menu with the "DSK" type label and boot through the embedded Nextor kernel (see [Running .DSK disk images](#running-dsk-disk-images)).
 - MP3 files appear in the menu with the "MP3" type label and open the MP3 player screen.
 - Flash ROMs appear with the source label "FL".
-- File Hunter downloads are saved directly to the root of the microSD card and then appear as normal SD ROM or `.DSK` files in the Explorer root list.
+- File Hunter downloads are saved in the download folder (the root of the microSD card by default) and then appear as normal SD ROM or `.DSK` files in that folder's Explorer list.
 - Folders are displayed in the menu and can be entered to browse their contents.
 - The special ".." entry appears when inside a folder, allowing you to navigate back to the parent directory.
 
 ### Sunrise Nextor SD partitions in Explorer
 
-For Sunrise Nextor SD SYSTEM entries, use Left/Right on the ROM screen's `SD Part` option to choose **WHOLE DISK** or a compatible primary FAT16 partition up to 4 GB. This applies to both Nextor 2.1.4 and Nextor 3 beta entries.
+For Sunrise Nextor SD SYSTEM entries, use Left/Right on the ROM screen's `SD Part` option to choose **WHOLE DISK** or a compatible primary FAT16 partition up to 4 GB. This applies to both Nextor 2.1.4 and Nextor 3.0.0 entries.
 
 - **WHOLE DISK** exposes the microSD card as one raw block device, starting at physical sector zero and reporting the card's sector count. Nextor can read the MBR/extended partition chain and map multiple FAT12/FAT16 partitions to drives using its native tools, including `CALL FDISK` and `MAPDRV`. There is no need to remove primary partitions beforehand. The 4 GB FAT16 limit is per partition, not per card; the existing 28-bit ATA interface does not fully address cards larger than 128 GiB.
 - **A partition label** exposes only that primary FAT16 partition as the device. Existing saved selections and automatic/default selection remain unchanged: the first compatible primary FAT16 partition is used unless another choice was saved. If none exists, the option shows `WHOLE DISK`.
@@ -280,6 +305,24 @@ Press `R` on a ROM or `.DSK` entry to rename it. The bottom line shows `Name:` w
 - `Failed` is shown when the name is not valid, another file or flash entry already uses it (flash names are compared ignoring case), an `ASC16X-FR` ROM would take over another ROM's `.FLA` save with the same name, or the microSD card cannot be written. Folders and MP3/WAV files cannot be renamed.
 - Renaming the ROM that was executed last stops the menu from reopening on it at the next power-up.
 
+### Creating folders
+
+Press `W` in the `F2` microSD screen to create a folder in the folder being listed, on the current browsing partition. The bottom line shows an empty `Folder:` field; type the name and press Enter to create it, or Esc to cancel. The list is reloaded with the cursor on the new folder. `W` works in an empty folder or an empty card too, and does nothing in the `F1` flash screen.
+
+- Names follow the same rules as renaming: up to 70 characters (32 in 40-column mode), leading and trailing spaces and trailing dots are dropped, and the characters `\ / : * ? " < > |` are not allowed.
+- `Failed` is shown when the name is not valid, a file or folder (in any letter case) already uses it, it is a folder name Explorer hides (for example `System Volume Information`), or the microSD card cannot be written.
+
+### Moving files between folders
+
+Press `M` in the `F2` microSD screen to move a ROM, `.DSK` image or MP3/WAV file to another folder of the same partition. It works in two steps, like cut and paste:
+
+1. Select the file and press `M`. The file is marked and line 24 shows `M: move here` while the mark is pending (folders cannot be moved).
+2. Browse to the destination folder with Enter on a folder, and Esc or the `..` entry to go up, then press `M` again. The file is moved there and the list reloads with the cursor on it.
+
+- A ROM's or disk image's `.PVC` options file moves with it. An `ASC16X-FR` ROM keeps its `.FLA` save, which is stored in the root under the ROM's name.
+- Pressing `M` in the folder the file already is in cancels the move. So do `F1`, `F3` and changing the partition with `P`. `Esc` cancels it when you are already in the root folder.
+- `Name exists there` is shown when the destination folder already has a file or folder with that name (in any letter case); the file stays marked so you can try another folder. `Move failed` is shown for any other error, such as a card that cannot be written.
+
 ### Performance note: MSX Response Time
 
 MSX computers have slower processors compared to modern hardware. When navigating to a folder with a large number of ROMs (100+), the Pico will scan the directory contents and you will see a blinking "Loading..." message. This is normal behavior:
@@ -300,11 +343,14 @@ For the best experience with very large ROM collections, consider organizing ROM
 - **F2**: Switch the Explorer list to microSD files and folders.
 - **F3**: Open the integrated File Hunter browser.
 - **F4**: Open WiFi configuration from a list or the Help screen.
-- **F5**: Show the help screen.
+- **F5**: Show the help screen. See [Help screen](#help-screen).
 - **P**: In the `F2` microSD screen, cycle through supported FAT16, FAT32, and exFAT partitions. The selected browsing partition is saved in `/PICOVERSE.PVC`.
 - **D**: Delete the selected entry after a `Y/N` confirmation. In the `F2` microSD screen it deletes the file (folders are protected); in the `F1` flash screen it removes the flash entry. In both cases the entry's `.PVC` options file is removed too.
 - **F**: In the `F2` microSD screen, copy the selected ROM into the cartridge flash after a `Y/N` confirmation. See [Copying microSD ROMs to flash](#copying-microsd-roms-to-flash).
 - **R**: Rename the selected ROM or `.DSK` file on the microSD card, or the selected flash entry. See [Renaming ROMs and disk images](#renaming-roms-and-disk-images).
+- **W**: In the `F2` microSD screen, create a folder in the current folder. See [Creating folders](#creating-folders).
+- **M**: In the `F2` microSD screen, mark the selected file, then press `M` again in another folder to move it there. See [Moving files between folders](#moving-files-between-folders).
+- **A**: In the `F2` microSD screen, make the folder you are browsing the File Hunter download folder. See [File Hunter download folder](#file-hunter-download-folder).
 - **/**: Search ROM names on line 24. Type a partial name and press Enter to jump to the first matching ROM; Esc cancels and restores the current page and source status.
 - **C**: Toggle between 40-column and 80-column layouts when your MSX supports it (auto-detects 80-column capable machines and defaults to 80 columns unless forced otherwise).
 
@@ -328,7 +374,16 @@ Notes:
 - **Line 23** evenly distributes the gaps between list options. In 80 columns every footer label is enclosed in brackets: `[F1 FLASH]`, `[F2 SD CARD]`, `[F3 FILE HUNTER]`, `[F4 WIFI]`, and `[F5 HELP]`; this also applies to Help and detail-screen controls. The 40-column labels remain unbracketed and unchanged. Gaps differ by at most one character. The selected source stays highlighted while navigating, searching, or displaying messages, with exactly one inverted space before and after its complete label (including brackets in 80 columns). The bar reserves the final two screen columns.
 - **Line 24** centers the complete status text, beginning with `Page XX/YY` on every list. `F1` and `F2` add ` | Available: X.X MB`; `F3` adds ` | Listing: ROM` or ` | Listing: DSK`, then ` | Net: Online/Offline` when it fits. The microSD summary remains available after returning from ROM/DSK options. Unavailable capacity is reported as `Available: unknown`, not as zero.
 - ROM/DSK option screens show context-specific controls on line 23: Esc to go back, Left/Right to change a value, Up/Down to choose an option, and F5 for help. In 80 columns the hints expand to `[L/R Change value]`, `[U/D Select option]`, and `[ENTER Run]`. The player includes option selection, Enter action, and (in All/Random modes) `[N Next]` / `[P Previous]`; its six bracketed controls use the shorter `[U/D Options]` hint to fit. The 40-column player retains its existing compact hints. F1-F4 are not active on detail screens.
-- Search and rename input temporarily use line 24, left-aligned for typing. Esc restores the centered basic list status; F5 cancels the input and opens help. Help keeps the full F1-F5 bar on line 23 with F5 highlighted, and shows only the centered chip ID on line 24. F1/F2/F3 switch to their lists, F4 opens WiFi setup, and F5 or Esc returns to the previous screen, including from ROM/DSK details and the player.
+- Search and rename input temporarily use line 24, left-aligned for typing. Esc restores the centered basic list status; F5 cancels the input and opens help. Help keeps the full F1-F5 bar on line 23 with F5 highlighted, and shows `Help N/M - LEFT/RIGHT page, key closes` centered on line 24. See [Help screen](#help-screen).
+
+### Help screen
+
+Press `F5` on any screen (lists, search and rename input, ROM details, the MP3 player and File Hunter) to open the help. It has six pages: browsing the lists, file commands on the microSD card, the ROM screen options, the MP3/WAV player, File Hunter, and an About page with troubleshooting tips plus the firmware version and chip ID of the cartridge. The help opens on the page that matches the screen it was opened from (for example the ROM screen page from a ROM's detail screen).
+
+- **Left/Right**: Previous / next page. Any other key closes the help and returns to the previous screen. `F1`, `F2`, `F3` and `F4` also close it and then switch source or open WiFi setup.
+- Line 24 shows `Help N/M - LEFT/RIGHT page, key closes`.
+- In 80 columns the pages use the full width and give a longer explanation of each key and option; the 40-column pages are a shorter version of the same pages.
+- The text is not stored in the menu ROM: the menu asks the Pico firmware for one page at a time (`CMD_HELP_PAGE`, `CMD_HELP_END`), which keeps the menu ROM small. To change a text, edit `pico/explorer/help_text.h` (both column sets must keep the same pages and fit 19 rows of 39/78 characters, which `tests/large_rom.ps1` checks), then rebuild the firmware and run `make` in the `openmsx` folder to refresh the add-on's `help.txt`.
 
 ### Folder navigation workflow
 
@@ -342,7 +397,7 @@ Notes:
 
 ## File Hunter browser
 
-Explorer includes an integrated File Hunter browser for PicoVerse 2350 cartridges fitted with an ESP-01 / ESP8266 module. The browser talks directly from the Pico firmware to the ESP module, queries the public File Hunter service, and streams the selected ROM or `.DSK` disk image directly into a temporary file in the microSD root. It does not buffer the whole download in PSRAM.
+Explorer includes an integrated File Hunter browser for PicoVerse 2350 cartridges fitted with an ESP-01 / ESP8266 module. The browser talks directly from the Pico firmware to the ESP module, queries the public File Hunter service, and streams the selected ROM or `.DSK` disk image directly into a temporary file in the download folder (the microSD root by default). It does not buffer the whole download in PSRAM.
 
 The File Hunter integration is inspired by NataliaPC's MSX File Hunter Browser project and uses the public File Hunter catalog endpoint. See the external reference section near the end of this document for the upstream project link.
 
@@ -383,6 +438,7 @@ Line 23 uses the same evenly spaced F-key options as the flash and microSD lists
 - **Space**: Quick-run the selected ROM with saved `.PVC` options or default settings. If the ROM is on microSD and its mapper has not been detected yet, Explorer detects it before launching.
 - **/**: Search File Hunter. Type a query and press Enter to load matching results. Press Esc at the search prompt to cancel.
 - **T**: Switch between the ROM and `.DSK` catalogs. The current search is run again in the other catalog; with no search, the latest releases are listed.
+- **A**: Choose the download folder. File Hunter opens the microSD list: browse to the folder and press `A` there; you return to the same File Hunter results. Also works on the detail screen. See [File Hunter download folder](#file-hunter-download-folder).
 - **F1**: Leave File Hunter and return to the flash ROM list.
 - **F2**: Leave File Hunter and return to the microSD list.
 - **F3**: File Hunter is already selected; pressing it again has no effect.
@@ -390,6 +446,15 @@ Line 23 uses the same evenly spaced F-key options as the flash and microSD lists
 - **F5**: Show help, then return to the File Hunter list.
 - **C**: Toggle 40/80-column mode when supported.
 - **Esc**: Exit File Hunter and return to the normal Explorer menu.
+
+### File Hunter download folder
+
+By default File Hunter saves downloads in the root of the microSD card. Press `A` to choose another folder; the choice is saved on the card and used for every later download, also after a power cycle. There are two ways:
+
+- **From the microSD list (`F2`)**: browse to the folder you want and press `A`. Line 24 shows `Download folder saved.` The folder you are browsing becomes the download folder (the root if you are in the root).
+- **From File Hunter**: press `A` in the result list or on a detail screen. Explorer opens the microSD list with `A: set download folder` on line 24. Browse to the folder and press `A` there: you return to File Hunter on the same results (and the same selected entry) without fetching the catalog again. `Esc` in the root folder, `F1` or `F3` cancel the choice.
+
+The File Hunter detail screen shows the current download folder on the `Folder:` line; a long path is shortened to its last part. The folder is stored as text in `/PICOVERSE.PVD` in the root of the browse partition (the partition you are browsing, see `P`), so each partition keeps its own download folder. The path can be at most 96 characters; a deeper folder is refused with `Path too long`. If the saved folder is later deleted or renamed, downloads go to the root of the card, the detail screen shows `/ (folder missing)` and the result message is `Saved in root: folder gone.` Choose a folder again with `A` to fix it.
 
 ### Searching File Hunter
 
@@ -417,8 +482,8 @@ A `.DSK` download is saved only if Explorer can boot it: its size must be a mult
 ### File Hunter limitations and notes
 
 - File Hunter requires a working ESP-01 / ESP8266 module and WiFi connection.
-- A microSD card must be present because downloads are saved directly to the card root.
-- Downloaded files use File Hunter's filename. If a file with the same name already exists in the microSD root, it is replaced.
+- A microSD card must be present because downloads are saved directly to the card.
+- Downloaded files use File Hunter's filename. If a file with the same name already exists in the download folder, it is replaced.
 - Downloads are independent of free cartridge flash space: a ROM can be saved to microSD even when it cannot currently be executed.
 - A `.part` file is published only after a complete transfer and successful close. Failed transfers leave an existing complete ROM untouched. Replacement temporarily preserves the old file as `.bak` and restores it if publication fails. A power interruption or failed cleanup can leave `.part`/`.bak` files; recover or remove those files on a PC before retrying a blocked replacement.
 - Download and save speed depends on WiFi quality, the ESP module firmware, File Hunter response time, and microSD card performance.
@@ -432,7 +497,7 @@ A `.DSK` download is saved only if Explorer can boot it: its size must be a mult
 - ROMs with unknown or unsupported mappers are skipped unless you force a mapper tag.
 - Very deep folder nesting (more than 10+ levels) is supported but may have perception of slowness due to repeated folder scans.
 - File Hunter browsing is unavailable without an ESP-01 / ESP8266 module, compatible ESP firmware, and a configured WiFi network.
-- File Hunter downloads are stored in the root of the microSD card; Explorer does not create a separate File Hunter folder.
+- File Hunter downloads go to the root of the microSD card unless you choose a download folder; Explorer does not create a File Hunter folder by itself.
 - ROMs copied to flash with `F` are lost when a new UF2 is written, because the tool rebuilds the flash list.
 
 ## MP3 player screen

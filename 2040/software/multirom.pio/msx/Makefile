@@ -30,7 +30,7 @@ CCFLAGS += $(DEBUGFLAGS)
 endif
 
 # Project metadata
-VERSION ?= v1.03
+VERSION ?= v2.70
 CCDEFS = -DMULTIROM_VERSION=\"$(VERSION)\"
 
 SOURCES = menu.c

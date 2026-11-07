@@ -26,7 +26,9 @@ int currentIndex;
 unsigned int totalFiles;
 ROMRecord records[FILES_PER_PAGE];
 static unsigned char menu_message_row;
+static void open_file_hunter(unsigned char resume);
 static unsigned char restore_pending; // waiting for the Pico to locate the last executed entry
+static unsigned char menu_in_subfolder; // the listing starts with the ".." entry
 static const char flash_mapper_error[] = "Mapper/audio unsupported";
 static const char flash_progress_label[] = "Copying to flash";
 
@@ -34,7 +36,7 @@ static const char flash_progress_label[] = "Copying to flash";
 static void send_query_to_pico(const char *query);
 static unsigned int read_match_index(void);
 static void readROMData(unsigned int *recordCount);
-static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width);
+static void draw_record_row(unsigned char row, const ROMRecord *record, const char *name_override, unsigned char selected);
 static void enter_directory(int index);
 static void refresh_menu_state(const char *loading_text);
 static void wait_command_with_blinking_status(const char *text, unsigned int wait_limit);
@@ -42,7 +44,6 @@ static void draw_menu_row(unsigned char row, ROMRecord *record, int selected);
 static void redefine_function_keys(void);
 static void switch_browse_source(unsigned char source_mode, const char *loading_text);
 static void switch_menu_source(unsigned char source_mode);
-static void print_chip_id_line(void);
 void msx_wait(uint16_t times_jiffy);
 static void disk_led_poll(void);
 
@@ -159,46 +160,51 @@ int record_needs_flash(const ROMRecord *record) {
            record->Size > SD_ROM_MAX_SIZE_KB * 1024UL;
 }
 
-static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width) {
+// build_record_size_text - Size column text: "<n>KB" up to 1024 KB, else "<n>MB"
+// rounded up. Works on 16-bit pieces of the byte size: no 32-bit division.
+static void build_record_size_text(unsigned long size, char *out) {
+    unsigned int high = (unsigned int)(size >> 16);
+    unsigned int kb_in_mb = (((unsigned int)(size & 0xFFFFu) >> 10) | ((high & 15u) << 6)); // KB left over in the MB
+    unsigned int mb = high >> 4;
+
+    if (mb > 1 || (mb == 1 && kb_in_mb)) {
+        menu_ui_size_text(out, mb + (kb_in_mb != 0), 'M');
+    } else {
+        menu_ui_size_text(out, (mb << 10) | kb_in_mb, 'K');
+    }
+}
+
+// build_record_row - Build the screen row of a list record in `out`.
+static void build_record_row(const ROMRecord *record, const char *name_override, char *out, unsigned char selected) {
     const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
     const char *type_label = " ROM";
-    char size_text[8] = "";
-    const char *name = name_override ? name_override : record->Name;
-    unsigned long size_kb = record->Size / 1024u;
+    char size_text[8];
 
+    size_text[0] = '\0';
     if (record_is_folder(record)) {
         type_label = "<DIR>";
         source = "SD";
-    } else if (record_is_mp3(record) && ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV)) {
-        type_label = " WAV";
-        source = "SD";
-    } else if (record_is_mp3(record)) {
-        type_label = " MP3";
-        source = "SD";
-    } else if (record_mapper_code(record->Mapper) == 23) {
-        type_label = " DSK";
-    }
-
-    if (!record_is_folder(record)) {
-        if (size_kb <= 1024u) {
-            sprintf(size_text, "%luKB", size_kb);
-        } else {
-            unsigned long size_mb = (size_kb + 1023u) / 1024u;
-            sprintf(size_text, "%luMB", size_mb);
-        }
-    }
-
-    if (use_80_columns) {
-        sprintf(out, MENU_ROW_FORMAT_80, name, size_text, source, type_label);
     } else {
-        sprintf(out, MENU_ROW_FORMAT_40, name, size_text, source, type_label);
+        if (record_is_mp3(record) && ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV)) {
+            type_label = " WAV";
+            source = "SD";
+        } else if (record_is_mp3(record)) {
+            type_label = " MP3";
+            source = "SD";
+        } else if (record_mapper_code(record->Mapper) == 23) {
+            type_label = " DSK";
+        }
+        build_record_size_text(record->Size, size_text);
     }
+    menu_ui_build_row(out, name_override ? name_override : record->Name, size_text, source, type_label, selected);
+}
 
-    int len = (int)strlen(out);
-    for (int i = len; i < (int)width; i++) {
-        out[i] = ' ';
-    }
-    out[width] = '\0';
+// draw_record_row - Rebuild one list row in its slot of the page buffer and write it to the screen.
+static void draw_record_row(unsigned char row, const ROMRecord *record, const char *name_override, unsigned char selected) {
+    char *slot = menu_ui_list_rows + (unsigned int)(row - 2) * menu_ui_row_width();
+
+    build_record_row(record, name_override, slot, selected);
+    menu_ui_blit_rows(row, slot, 1);
 }
 
 int build_sliding_name_window(const char *str, int startPos, char *out, unsigned char width)
@@ -322,6 +328,8 @@ static void refresh_menu_state(const char *loading_text) {
         menu_ui_blink_last_line(message, &blink_state, &blink_tick, 8);
     }
     readROMData(&totalFiles);
+    menu_in_subfolder = totalFiles && record_is_folder(&records[0]) && records[0].Name[0] == '.' &&
+                        records[0].Name[1] == '.' && records[0].Name[2] <= ' ';
     totalPages = (int)((totalFiles + FILES_PER_PAGE - 1) / FILES_PER_PAGE);
     if (totalPages == 0) {
         totalPages = 1;
@@ -386,12 +394,13 @@ static unsigned char wait_flash_copy(void) {
 
 // run_record_command - Run a Pico command on the selected entry: delete or copy
 // to flash (prompt asks for Y/N confirmation; the copy shows a progress
-// percentage), or rename (prompt is 0: the new name is edited first).
+// percentage), or rename (prompt is 0: the new name is edited first). Creating
+// a folder (prompt 0) edits an empty name and needs no selected entry.
 static void run_record_command(const char *prompt, unsigned char cmd) {
     ROMRecord *record = &records[currentIndex % FILES_PER_PAGE];
     char name[MAX_FILE_NAME_LENGTH + 1];
 
-    if (menu_message_row || record_is_folder(record)) {
+    if (cmd != CMD_CREATE_FOLDER && (menu_message_row || record_is_folder(record))) {
         return;
     }
     if (prompt) {
@@ -401,13 +410,13 @@ static void run_record_command(const char *prompt, unsigned char cmd) {
             return;
         }
     } else {
-        strcpy(name, record->Name);
+        strcpy(name, cmd == CMD_CREATE_FOLDER ? "" : record->Name);
         // Only an edited name is sent: the field may have shortened a long one.
-        int edit_result = menu_ui_read_line("Name: ", name, MAX_FILE_NAME_LENGTH - 1);
+        int edit_result = menu_ui_read_line(cmd == CMD_CREATE_FOLDER ? "Folder: " : "Name: ", name, MAX_FILE_NAME_LENGTH - 1);
         if (edit_result == -1) {
             launch_wifi_config();
         } else if (edit_result == -2) {
-            helpMenu();
+            helpMenu(HELP_PAGE_LIST);
             displayMenu();
         }
         if (edit_result != 1 || !name[0]) {
@@ -433,6 +442,83 @@ static void run_record_command(const char *prompt, unsigned char cmd) {
         }
     }
     refresh_menu_state(0);
+}
+
+// move_file - M marks the selected microSD file; M in another folder moves it
+// there. The Pico keeps the marked path; the menu only remembers that one is
+// pending so the line-24 hint shows and the destination can be browsed.
+static void move_file(void) {
+    ROMRecord *record = &records[currentIndex % FILES_PER_PAGE];
+    const char *error = "Move failed. Press key.";
+
+    if (!menu_move_pending) {
+        if (!totalFiles || menu_message_row || record_is_folder(record)) {
+            return;
+        }
+        POKE_U16(CTRL_QUERY_BASE, currentIndex);
+        menu_move_pending = run_ctrl_cmd(CMD_MOVE_MARK);
+        if (!menu_move_pending) {
+            menu_ui_wait_key_with_blinking_status("Only files can move.");
+        }
+        menu_ui_clear_last_line();
+        return;
+    }
+    menu_ui_print_last_line_text("Wait");
+    Poke(CTRL_CMD, CMD_MOVE_PASTE);
+    wait_ctrl_cmd();
+    if (Peek(CTRL_ACK)) {
+        menu_move_pending = 0;
+        restore_pending = 1;
+        refresh_menu_state(0);
+        return;
+    }
+    if (Peek(CTRL_MAPPER) == MOVE_ERR_SAME) {
+        menu_move_pending = 0;
+        error = 0;
+    } else if (Peek(CTRL_MAPPER) == MOVE_ERR_EXISTS) {
+        error = "Name exists there. Press key.";
+    }
+    if (error) {
+        menu_ui_wait_key_with_blinking_status(error);
+    }
+    menu_ui_clear_last_line();
+}
+
+// open_file_hunter - Run File Hunter and show the list it hands back to. File
+// Hunter can ask for the download folder to be picked (A there): it returns the
+// microSD list with menu_pick_download set.
+static void open_file_hunter(unsigned char resume) {
+    unsigned char return_shortcut = menu_shortcut_selection;
+    unsigned char next_source;
+
+    menu_move_pending = 0;
+    menu_pick_download = 0;
+    next_source = explorer_fh_run(resume);
+    if (next_source == SOURCE_MODE_ALL) {
+        next_source = return_shortcut == MENU_SHORTCUT_MICROSD ? SOURCE_MODE_SD : SOURCE_MODE_FLASH;
+    }
+    switch_menu_source(next_source);
+}
+
+// set_download_folder - A in the microSD list: the folder being browsed becomes
+// the File Hunter download folder. When File Hunter asked for it, go back there.
+static void set_download_folder(void) {
+    const char *error = "Could not save. Press key.";
+
+    menu_ui_print_last_line_text("Wait");
+    Poke(CTRL_CMD, CMD_SET_DOWNLOAD_DIR);
+    wait_ctrl_cmd();
+    if (Peek(CTRL_ACK)) {
+        if (menu_pick_download) {
+            open_file_hunter(1);
+            return;
+        }
+        error = "Download folder saved. Press key.";
+    } else if (Peek(CTRL_MAPPER) == DOWNLOAD_DIR_ERR_LONG) {
+        error = "Path too long (96 max). Press key.";
+    }
+    menu_ui_wait_key_with_blinking_status(error);
+    menu_ui_clear_last_line();
 }
 
 // PVEX pages contain a record table, TLV fields and a shared name pool.
@@ -617,7 +703,7 @@ static void readROMData(unsigned int *recordCount) {
 
 // --- BIOS wrappers and timing ---
 
-// printf's linked library calls this symbol even without direct C callers.
+// mini_printf.c prints through this symbol.
 // Use CHPUT through CALSLT so output works while the cartridge occupies page 1.
 int putchar (int character)
 {
@@ -679,6 +765,10 @@ static void switch_browse_source(unsigned char source_mode, const char *loading_
 
     Poke(MP3_CTRL_CMD, MP3_CMD_STOP);
     menu_shortcut_selection = (source_mode == SOURCE_MODE_SD) ? MENU_SHORTCUT_MICROSD : MENU_SHORTCUT_FLASH;
+    if (source_mode != SOURCE_MODE_SD) {
+        menu_move_pending = 0;
+        menu_pick_download = 0;
+    }
     menu_ui_update_list_footer();
     payload[0] = source_mode;
     payload[1] = 0;
@@ -732,15 +822,10 @@ static void restore_last_selection(void) {
 
 static void cycle_sd_partition(void) {
     if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+        menu_move_pending = 0;
         Poke(CTRL_CMD, CMD_CYCLE_SD_PARTITION);
         refresh_menu_state(menu_ui_status_text("Load SD", "Loading from microSD..."));
     }
-}
-
-static void print_chip_id_line(void) {
-    char text[26];
-    sprintf(text, "Chip ID: %.16s", (const char *)CTRL_CHIP_ID_BASE);
-    menu_ui_print_last_line_text(text);
 }
 
 void launch_wifi_config(void) {
@@ -852,7 +937,6 @@ static int wait_for_key_with_scroll(void)
     unsigned int lastTick = *jiffyPtr;
     int startPos = 0;
     const unsigned int scrollDelay = 30U; // 0.5 seconds at 60 Hz
-    char row_text[81];
     char name_window[MAX_FILE_NAME_LENGTH + 1];
 
     while (1) {
@@ -883,8 +967,7 @@ static int wait_for_key_with_scroll(void)
                     while (attempts < lenInt && !printed) {
                         printed = build_sliding_name_window(record->Name, startPos, name_window, name_col_width);
                         if (printed) {
-                            build_menu_row_text(record, name_window, row_text, menu_ui_row_width());
-                            menu_ui_render_selectable_line((unsigned char)((currentIndex % FILES_PER_PAGE) + 2), row_text + 1, 1);
+                            draw_record_row((unsigned char)((currentIndex % FILES_PER_PAGE) + 2), record, name_window, 1);
                         }
                         startPos++;
                         if (startPos >= lenInt + 1) {
@@ -905,28 +988,26 @@ const char *mapper_description(int number) {
     // Array of strings for the descriptions. Static so SDCC keeps it in ROM
     // instead of rebuilding the pointer table on the stack at every call.
     static const char *const descriptions[] = {"PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08", "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC16X", "PLN-64", "MANBW2"};
-    number = record_mapper_code((unsigned char)number);
-    if (number >= 15 && number <= 21) {
+    unsigned char code = record_mapper_code((unsigned char)number);
+    if ((code >= 15 && code <= 21) || code == MAPPER_PICOAMP) {
         return "SYSTEM";
     }
-    if (number == 22) {
+    if (code == 22) {
         return "ASC16X-FR";
     }
-    if (number == 23) {
+    if (code == 23) {
         return "DSK";
     }
-    if (number <= 0 || number > 14) {
+    if (code == 0 || code > 14) {
         return "Unknown";
     }
-    return descriptions[number - 1];
+    return descriptions[code - 1];
 }
 
 // --- Menu rendering ---
 
 static void draw_menu_row(unsigned char row, ROMRecord *record, int selected) {
-    char row_text[81];
-    build_menu_row_text(record, NULL, row_text, menu_ui_row_width());
-    menu_ui_render_selectable_line(row, row_text + 1, selected);
+    draw_record_row(row, record, NULL, (unsigned char)selected);
 }
 
 void displayMenu() {
@@ -944,63 +1025,74 @@ void displayMenu() {
         endIndex = totalFiles;
     }
 
+    // Build the whole page (rows 2 to 20, empty ones blank) and paint it in one transfer.
+    unsigned char width = menu_ui_row_width();
+    char *out = menu_ui_list_rows;
     unsigned int line = 0;
     for (unsigned int idx = startIndex; idx < endIndex; idx++, line++) {
-        draw_menu_row((unsigned char)(2 + line), &records[line], !menu_message_row && idx == (unsigned int)currentIndex);
+        build_record_row(&records[line], NULL, out, !menu_message_row && idx == (unsigned int)currentIndex);
+        out += width;
     }
-
-    {
-        unsigned char start_row = (unsigned char)(2 + line);
-        menu_ui_clear_rows(start_row, 21);
-    }
+    memset(out, ' ', (FILES_PER_PAGE - line) * width);
+    menu_ui_blit_rows(2, menu_ui_list_rows, FILES_PER_PAGE);
 
     menu_ui_update_list_footer();
 }
 
 // --- Menu screens ---
 
-void helpMenu()
+// helpMenu - F5 help. The pages are kept in the Pico firmware (help_text.h) so
+// they can be long and differ between 40 and 80 columns: each page is asked for
+// with CMD_HELP_PAGE and its lines are read from the data window. LEFT/RIGHT
+// change the page, any other key closes the help.
+void helpMenu(unsigned char page)
 {
-    static const char help_text[] =
-        "\1Navigation\0"
-        "UP/DOWN - Move selection\0"
-        "LEFT/RIGHT - Change page or option\0"
-        "ENTER - Detail  /  SPACE or FIRE - Run\0"
-        "ESC - Back or leave folder\0"
-        "\1Sources\0"
-        "F1 - Flash  F2 - SD  F3 - FileHunter\0"
-        "F4 - Wi-Fi setup\0"
-        "\1List Commands\0"
-        "/ - Search / P - Cycle SD partition\0"
-        "F5 - Help / D - Delete / R - Rename\0"
-        "C - 40/80 columns / F - Copy to flash\0"
-        "\1ROM Detail\0"
-        "UP/DOWN Select Mapper/Audio/PSG/Action\0"
-        "LEFT/RIGHT Change mapper/audio/PSG\0"
-        "ENTER/SPACE Configure/Run selected ROM\0"
-        "\1File Hunter\0"
-        "ENTER/SPACE Open detail/Download\0"
-        "T - ROM/DSK list  ESC - Explorer menu";
-    const char *text = help_text;
+    unsigned char count;
+    unsigned char key;
+    char status[48];
 
-    menu_ui_render_detail_frame();
-    for (unsigned char row = 2; row <= 20; row++) {
-        unsigned char heading = *text == '\1';
-        if (heading) {
-            text++;
+    while (1) {
+        const char *text = (const char *)MEMORY_START + 1;
+
+        menu_ui_render_detail_frame();
+        Poke(CTRL_QUERY_BASE, page);
+        Poke(CTRL_QUERY_BASE + 1, use_80_columns);
+        // CTRL_ACK means something else while File Hunter is open, so the Pico
+        // puts the page count in the first byte of the data window.
+        (void)run_ctrl_cmd(CMD_HELP_PAGE);
+        count = *(const unsigned char *)MEMORY_START;
+        if (count > 16) {
+            count = 0;
         }
-        unsigned char len = (unsigned char)strlen(text);
-        Locate(0, row);
-        if (heading) {
-            menu_ui_print_str_inverted_width(text, len);
-        } else {
-            printf("%s", text);
+        // Like the other screens: separator, footer and status first, then the content.
+        menu_ui_print_footer_line(MENU_SHORTCUT_HELP);
+        sprintf(status, "Help %u/%u - LEFT/RIGHT page, key closes", (unsigned int)(unsigned char)(page + 1), (unsigned int)count);
+        menu_ui_print_last_line_text(status);
+        for (unsigned char row = 2; count && row <= 20 && *text; row++) {
+            unsigned char heading = *text == '\1';
+            if (heading) {
+                text++;
+            }
+            unsigned char len = (unsigned char)strlen(text);
+            Locate(0, row);
+            if (heading) {
+                menu_ui_print_str_inverted_width(text, len);
+            } else {
+                printf("%s", text);
+            }
+            text += len + 1;
         }
-        text += len + 1;
+        key = bios_chget_quiet();
+        if (key == 28 && page + 1 < count) {
+            page++;
+        } else if (key == 29 && page) {
+            page--;
+        } else if (key != 28 && key != 29) {
+            break;
+        }
     }
-    menu_ui_print_footer_line(MENU_SHORTCUT_HELP);
-    print_chip_id_line();
-    unsigned char key = bios_chget_quiet();
+    // The Pico rebuilds the list page the help text replaced in the data window.
+    (void)run_ctrl_cmd(CMD_HELP_END);
     if (key == '1' || key == '2' || key == '3' || key == MENU_KEY_F4_CONFIG) {
         menu_pending_key = key;
     }
@@ -1093,20 +1185,13 @@ void navigateMenu()
                 switch_menu_source(SOURCE_MODE_SD);
                 continue;
             case '3':
-            {
-                unsigned char return_shortcut = menu_shortcut_selection;
-                unsigned char next_source = explorer_fh_run();
-                if (next_source == SOURCE_MODE_ALL) {
-                    next_source = return_shortcut == MENU_SHORTCUT_MICROSD ? SOURCE_MODE_SD : SOURCE_MODE_FLASH;
-                }
-                switch_menu_source(next_source);
-            }
+                open_file_hunter(0);
                 continue;
             case MENU_KEY_F4_CONFIG:
                 launch_wifi_config();
                 continue;
             case MENU_KEY_F5_HELP:
-                helpMenu();
+                helpMenu(HELP_PAGE_LIST);
                 displayMenu();
                 continue;
             case 'c':
@@ -1123,7 +1208,32 @@ void navigateMenu()
             case 'P':
                 cycle_sd_partition();
                 continue;
+            case 'w':
+            case 'W':
+                if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+                    run_record_command(0, CMD_CREATE_FOLDER);
+                }
+                continue;
+            case 'm':
+            case 'M':
+                if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+                    move_file();
+                }
+                continue;
+            case 'a':
+            case 'A':
+                if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
+                    set_download_folder();
+                }
+                continue;
             case 27:
+                if ((menu_move_pending || menu_pick_download) && !menu_in_subfolder) {
+                    // Nothing above the root: Esc drops the pending move or folder pick instead.
+                    menu_move_pending = 0;
+                    menu_pick_download = 0;
+                    menu_ui_clear_last_line();
+                    continue;
+                }
                 enter_directory(-1);
                 refresh_menu_state(0);
                 continue;
@@ -1195,7 +1305,7 @@ void navigateMenu()
                 if (search_result == -1) {
                     launch_wifi_config();
                 } else if (search_result == -2) {
-                    helpMenu();
+                    helpMenu(HELP_PAGE_LIST);
                 } else if (search_result) {
                     const char *message = menu_ui_status_text("Searching...", "Searching the ROM list...");
                     send_query_to_pico(search_query);
@@ -1257,6 +1367,8 @@ void main() {
     menu_message_row = 0;
     menu_shortcut_selection = MENU_SHORTCUT_FLASH;
     menu_pending_key = 0;
+    menu_move_pending = 0;
+    menu_pick_download = 0;
     joy_last_dir = 0;
     joy_fire_down = 1; // a fire button held during boot must be released before it runs a ROM
     joy_repeat_at = 0;

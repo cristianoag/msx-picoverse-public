@@ -48,6 +48,8 @@
 #include "storage/sunrise_dsk.h"
 #include "storage/sd_activity.h"
 #include "debug/audio_trace.h"
+#include "picoamp/picoamp.h"
+#include "help_text.h"
 
 // config area and buffer for the ROM data
 #define ROM_NAME_MAX    71          // Maximum size of the ROM name on the 80-column detail screen
@@ -115,6 +117,16 @@
 #define CMD_COPY_TO_FLASH 0x0E // Command: copy the selected microSD ROM into the flash ROM area
 #define CMD_RENAME_ENTRY 0x0F // Command: rename the selected microSD ROM/DSK or flash entry
 #define CMD_PREPARE_FLASH_ROM 0x10 // Command: copy/reuse a microSD ROM and select its flash entry
+#define CMD_CREATE_FOLDER 0x11 // Command: create a folder in the current microSD directory
+#define CMD_MOVE_MARK 0x12 // Command: remember the selected microSD file as the one to move
+#define CMD_MOVE_PASTE 0x13 // Command: move the marked file into the current microSD directory
+#define MOVE_ERR_EXISTS 1u // CTRL_MAPPER after a failed CMD_MOVE_PASTE: the destination name is taken
+#define MOVE_ERR_SAME 2u // CTRL_MAPPER after CMD_MOVE_PASTE: the file already is in this directory
+#define CMD_HELP_PAGE 0x14 // Command: put one help page in the data window (query: page, 1 = 80 columns)
+#define CMD_HELP_END 0x15 // Command: the menu has read the help; rebuild the list page the window held
+#define CMD_SET_DOWNLOAD_DIR 0x16 // Command: use the folder being browsed for File Hunter downloads
+#define DOWNLOAD_DIR_ERR_LONG 1u // CTRL_MAPPER after a failed CMD_SET_DOWNLOAD_DIR: path too long
+#define DOWNLOAD_DIR_ERR_IO 2u // CTRL_MAPPER after a failed CMD_SET_DOWNLOAD_DIR: could not save
 #define FLASH_COPY_DETECTING 0x7Fu
 #define FLASH_COPY_NO_SPACE  0x80u
 #define FLASH_COPY_TOO_LARGE 0x81u
@@ -126,6 +138,7 @@
 #define CMD_FH_SEARCH      0x42 // Command: File Hunter search from menu ROM
 #define CMD_FH_WIFI_STATUS 0x43 // Command: File Hunter WiFi status from menu ROM
 #define CMD_FH_WIFI_CONFIG 0x44 // Command: File Hunter WiFi setup from menu ROM
+#define CMD_FH_DOWNLOAD_DIR 0x45 // Command: put the File Hunter download folder in the status text
 
 #define FH_CTRL_BASE    0xBFF0
 #define FH_COUNT_L      (FH_CTRL_BASE + 0)
@@ -352,6 +365,8 @@
 #define PV_CONFIG_MAGIC_3 'F'
 #define PV_CONFIG_SIZE 5u
 #define PV_CONFIG_PATH "/PICOVERSE.PVC"
+#define PV_DOWNLOAD_DIR_PATH "/PICOVERSE.PVD" // File Hunter download folder (path text), in the root of the browse partition
+#define FH_DOWNLOAD_DIR_MAX 96u // Longest download folder path, so the whole save path stays small
 
 // Last executed Flash/microSD entry, remembered across power cycles.
 #define PV_LAST_MAGIC_0 'P'
@@ -806,7 +821,8 @@ typedef struct {
     unsigned long Offset;
 } ROMRecord;
 
-ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
+ROMRecord records[MAX_ROM_RECORDS] __attribute__((aligned(8))); // Retired as PicoAmp ROM/stack storage after launch
+_Static_assert(sizeof(records) >= PICOAMP_ROM_SIZE + PICOAMP_STACK_SIZE, "PicoAmp launch workspace");
 
 #define SD_PATH_MAX        256
 #define SD_PATH_BUFFER_SIZE 19000
@@ -826,6 +842,7 @@ ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 #define MAPPER_MEGARAM_USB        20
 #define MAPPER_MEGARAM            21
 #define MAPPER_ASCII16X_FR        22
+#define MAPPER_PICOAMP           24
 // SD-only .DSK disk image, booted through the hidden Nextor kernel. It sits
 // past MAPPER_DESCRIPTIONS on purpose: it is never a filename tag or override.
 #define MAPPER_DSK                23
@@ -889,6 +906,14 @@ static uint16_t flash_slots_used = 0;
 static uint16_t flash_free_kb = 0;
 static uint16_t flash_largest_kb = 0;
 static char sd_current_path[SD_PATH_MAX] = "/";
+// File marked with M, waiting to be moved into the directory being browsed.
+// It is only valid on the browse partition it was marked on.
+static char move_src_path[SD_PATH_MAX];
+static bool move_src_valid = false;
+// Folder File Hunter saves downloads in (PV_DOWNLOAD_DIR_PATH, read lazily once
+// the card is mounted); "/" is the root of the browse partition.
+static char fh_download_dir[FH_DOWNLOAD_DIR_MAX + 1u] = "/";
+static bool fh_download_dir_loaded = false;
 static uint8_t browse_source_mode = SOURCE_MODE_FLASH;
 // Last executed entry: source, full microSD path (or flash display name) and the
 // folder it lives in, so the menu can reopen on it after a power cycle.
@@ -1281,7 +1306,8 @@ static bool is_system_mapper(uint8_t mapper) {
            mapper == MAPPER_C2_USB ||
            mapper == MAPPER_MEGARAM_SD ||
            mapper == MAPPER_MEGARAM_USB ||
-           mapper == MAPPER_MEGARAM;
+           mapper == MAPPER_MEGARAM ||
+           mapper == MAPPER_PICOAMP;
 }
 
 static bool is_sunrise_sd_mapper(uint8_t mapper) {
@@ -1314,6 +1340,8 @@ static bool dsk_audio_mode_supported(audio_mode_t mode) {
 }
 
 static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile) {
+    if (mapper == MAPPER_PICOAMP)
+        return AUDIO_MODE_NONE;
     if (requested_profile == AUDIO_PROFILE_SN76489_FRANKY &&
         ((mapper > 0u && mapper <= MAPPER_C2_USB) || mapper == MAPPER_ASCII16X_FR || mapper == MAPPER_DSK))
         return AUDIO_MODE_SN76489_FRANKY;
@@ -2259,7 +2287,8 @@ static void process_load_options_request(void) {
     if (ctrl_wavegame_rom) {
         ctrl_audio_selection = AUDIO_PROFILE_NONE;
     }
-    if (br >= PVC_OPTIONS_MAPPER_SIZE && data[6] != 0 && !is_system_mapper(data[6]) && data[6] <= MAPPER_DESCRIPTION_COUNT && !is_dsk_record(rec)) {
+    if (br >= PVC_OPTIONS_MAPPER_SIZE && data[6] != 0 && !is_system_mapper(data[6]) && data[6] <= MAPPER_DESCRIPTION_COUNT && !is_dsk_record(rec) &&
+        mapper_code_from_record_byte(rec->Mapper) != MAPPER_PICOAMP) {
         uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
         if ((flags & (FOLDER_FLAG | MP3_FLAG)) == 0) {
             rec->Mapper = (uint8_t)(flags | data[6]);
@@ -2280,7 +2309,7 @@ static void process_load_options_request(void) {
     }
     // .DSK entries reuse the menu's on/off option row (CTRL_WIFI_SUPPORT) for
     // their "1MB Mapper" memory choice; no DSK entry offers WiFi.
-    if (br >= PVC_OPTIONS_SIZE && is_dsk_record(rec)) {
+    if (br >= PVC_OPTIONS_SIZE && (is_dsk_record(rec) || mapper_code_from_record_byte(rec->Mapper) == MAPPER_PICOAMP)) {
         ctrl_wifi_support = data[11] ? 1u : 0u;
     }
     ctrl_ack_value = 1;
@@ -2661,6 +2690,7 @@ static void sd_unmount_card(void) {
     }
     sd_mounted = false;
     sd_mounted_partition = 0;
+    fh_download_dir_loaded = false; // The folder belongs to the partition that was mounted
     disk_set_partition_window(0, 0);
 }
 
@@ -2758,6 +2788,7 @@ static void process_cycle_sd_partition_request(void) {
     if ((uint8_t)index >= count) index = 0;
 
     sd_browse_partition = parts[index].number;
+    move_src_valid = false;
     sd_save_browse_partition(sd_browse_partition);
     sd_unmount_card();
     (void)sd_mount_card();
@@ -3527,6 +3558,7 @@ static void __noinline flash_job_background_work(void) {
 static char rename_buf[ROM_NAME_MAX];
 static bool rename_select_pending = false;
 static bool rename_select_sd = false;
+static bool rename_select_folder = false;
 static uint32_t rename_select_size = 0;
 
 static void flash_store_build_path(const char *rom_name);
@@ -3761,6 +3793,7 @@ static void __noinline process_rename_request(void) {
                     : flash_store_rename_entry(record_index, rename_buf);
             if (ok) {
                 rename_select_sd = sd;
+                rename_select_folder = false;
                 rename_select_size = size;
                 rename_select_pending = true;
             }
@@ -3777,7 +3810,215 @@ static void __noinline process_rename_request(void) {
     }
 }
 
-// Point match_index at the renamed entry once the list has been rebuilt.
+// Called from the RAM-resident menu write handler like process_rename_request().
+// The menu writes the folder name to the data window; the folder is created in
+// the directory currently listed on the browse partition.
+static void __noinline process_create_folder_request(void) {
+    ctrl_ack_value = 0;
+    cancel_refresh_work();
+
+    bool ok = false;
+    if (browse_source_mode != SOURCE_MODE_FLASH && rename_clean_name(rename_buf) &&
+        !is_excluded_folder(rename_buf)) {
+        quiesce_mp3_core1_before_sd_work();
+        char path[SD_PATH_MAX];
+        int written = snprintf(path, sizeof(path), "%s/%s", is_root_path(sd_current_path) ? "" : sd_current_path,
+                               rename_buf);
+        if (sd_mount_card() && written > 0 && (size_t)written < sizeof(path)) {
+            sd_activity_note();
+            FRESULT fr = f_mkdir(path);
+            if (fr == FR_OK) {
+                printf("MKDIR: %s\n", path);
+                ok = true;
+            } else {
+                printf("MKDIR: %s failed fr=%d\n", path, (int)fr);
+            }
+        }
+    }
+
+    if (ok) {
+        rename_select_folder = true;
+        rename_select_pending = true;
+        refresh_requested = true;
+        ctrl_ack_value = 1;
+    } else {
+        ctrl_cmd_state = 0;
+    }
+}
+
+// M, step 1: remember the selected microSD file. Only files can be marked.
+static void __noinline process_move_mark_request(void) {
+    uint16_t index = query_filtered_index();
+
+    ctrl_ack_value = 0;
+    move_src_valid = false;
+    if (index < total_record_count) {
+        move_src_valid = build_rom_source_path(filtered_indices[index], move_src_path, sizeof(move_src_path));
+        ctrl_ack_value = move_src_valid;
+    }
+}
+
+// M, step 2: move the marked file into the directory being browsed. Its .PVC
+// options file follows a ROM/DSK. On failure CTRL_MAPPER tells the menu why
+// (MOVE_ERR_*) and the file stays marked, except when it already is here.
+static void __noinline process_move_paste_request(void) {
+    char dest[SD_PATH_MAX];
+    const char *name = basename_from_path(move_src_path);
+    bool ok = false;
+
+    ctrl_ack_value = 0;
+    ctrl_mapper_value = 0;
+    cancel_refresh_work();
+    if (move_src_valid && browse_source_mode != SOURCE_MODE_FLASH) {
+        int written = snprintf(dest, sizeof(dest), "%s/%s", is_root_path(sd_current_path) ? "" : sd_current_path, name);
+        if (written <= 0 || (size_t)written >= sizeof(dest)) {
+            written = 0;
+        }
+        if (written && equals_ignore_case(dest, move_src_path)) {
+            move_src_valid = false;
+            ctrl_mapper_value = MOVE_ERR_SAME;
+        } else if (written) {
+            FILINFO info;
+            quiesce_mp3_core1_before_sd_work();
+            if (!sd_mount_card()) {
+                // Reported as a plain failure.
+            } else if (f_stat(dest, &info) == FR_OK) {
+                ctrl_mapper_value = MOVE_ERR_EXISTS;
+            } else if (f_stat(move_src_path, &info) == FR_OK) {
+                sd_activity_note();
+                FRESULT fr = f_rename(move_src_path, dest);
+                if (fr == FR_OK) {
+                    printf("MOVE: %s -> %s\n", move_src_path, dest);
+                    ok = true;
+                } else {
+                    printf("MOVE: %s -> %s failed fr=%d\n", move_src_path, dest, (int)fr);
+                }
+            }
+            if (ok) {
+                char from_pvc[SD_PATH_MAX];
+                char to_pvc[SD_PATH_MAX];
+                bool is_dsk = has_dsk_extension(name);
+                // Audio files have no options file, and "<name>.PVC" may belong to a ROM there.
+                if (!has_mp3_extension(name) && !has_wav_extension(name) &&
+                    sd_pvc_path_from_rom(move_src_path, is_dsk, from_pvc, sizeof(from_pvc)) &&
+                    sd_pvc_path_from_rom(dest, is_dsk, to_pvc, sizeof(to_pvc))) {
+                    sd_rename_sidecar(from_pvc, to_pvc, true);
+                }
+                build_display_name(name, rename_buf, ROM_NAME_MAX);
+                rename_select_sd = true;
+                rename_select_folder = false;
+                rename_select_size = (uint32_t)info.fsize;
+                rename_select_pending = true;
+                move_src_valid = false;
+            }
+        }
+    }
+
+    if (ok) {
+        refresh_requested = true;
+        ctrl_ack_value = 1;
+    } else {
+        ctrl_cmd_state = 0;
+    }
+}
+
+// File Hunter download folder. It is kept as plain text in PV_DOWNLOAD_DIR_PATH
+// on the browse partition ("/" or absent: the root). A folder that was deleted
+// or renamed since falls back to the root, which the menu reports.
+static void __noinline fh_download_dir_load(void) {
+    FIL fil;
+    UINT br = 0;
+    char text[FH_DOWNLOAD_DIR_MAX + 2u];
+
+    fh_download_dir_loaded = true;
+    strcpy(fh_download_dir, "/");
+    if (f_open(&fil, PV_DOWNLOAD_DIR_PATH, FA_READ) != FR_OK) {
+        return;
+    }
+    if (f_read(&fil, text, sizeof(text) - 1u, &br) == FR_OK && br > 0u) {
+        text[br] = '\0';
+        while (br > 1u && (text[br - 1u] == '\r' || text[br - 1u] == '\n' || text[br - 1u] == ' ')) {
+            text[--br] = '\0';
+        }
+        if (text[0] == '/' && br <= FH_DOWNLOAD_DIR_MAX) {
+            strcpy(fh_download_dir, text);
+        }
+    }
+    f_close(&fil);
+}
+
+// The folder to save in now (card mounted): the saved one while it exists, else
+// the root, with *missing set. out holds FH_DOWNLOAD_DIR_MAX + 1 bytes.
+static void __noinline fh_download_dir_resolve(char *out, bool *missing) {
+    FILINFO info;
+
+    if (!fh_download_dir_loaded) {
+        fh_download_dir_load();
+    }
+    strcpy(out, fh_download_dir);
+    *missing = false;
+    if (strcmp(out, "/") != 0 && !(f_stat(out, &info) == FR_OK && (info.fattrib & AM_DIR) != 0)) {
+        strcpy(out, "/");
+        *missing = true;
+    }
+}
+
+// A: make the folder being browsed the File Hunter download folder.
+static void __noinline process_set_download_dir_request(void) {
+    ctrl_ack_value = 0;
+    ctrl_mapper_value = 0;
+    if (browse_source_mode == SOURCE_MODE_SD && sd_mount_card()) {
+        size_t length = strlen(sd_current_path);
+        if (length > FH_DOWNLOAD_DIR_MAX) {
+            ctrl_mapper_value = DOWNLOAD_DIR_ERR_LONG;
+            return;
+        }
+        FIL fil;
+        UINT written = 0;
+        sd_activity_note();
+        fatfs_set_fattime_override(file_write_fattime(0u));
+        FRESULT fr = f_open(&fil, PV_DOWNLOAD_DIR_PATH, FA_CREATE_ALWAYS | FA_WRITE);
+        if (fr == FR_OK) {
+            fr = f_write(&fil, sd_current_path, length, &written);
+            if (f_close(&fil) != FR_OK) {
+                fr = FR_DISK_ERR;
+            }
+        }
+        fatfs_set_fattime_override(0u);
+        if (fr == FR_OK && written == length) {
+            strcpy(fh_download_dir, sd_current_path);
+            fh_download_dir_loaded = true;
+            ctrl_ack_value = 1;
+            printf("DOWNLOADDIR: %s\n", fh_download_dir);
+        } else {
+            ctrl_mapper_value = DOWNLOAD_DIR_ERR_IO;
+        }
+    }
+}
+
+// File Hunter detail screen: the current download folder, ready to print after
+// "Folder: " (at most 30 characters; a long path keeps its end).
+static void __noinline fh_update_download_dir_text(void) {
+    char dir[FH_DOWNLOAD_DIR_MAX + 1u];
+    bool missing = false;
+    size_t length;
+
+    if (!sd_mount_card()) {
+        snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "No microSD card");
+        return;
+    }
+    fh_download_dir_resolve(dir, &missing);
+    length = strlen(dir);
+    if (missing) {
+        snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "/ (folder missing)");
+    } else if (length > 30u) {
+        snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "...%s", dir + length - 27u);
+    } else {
+        snprintf(fh_wifi_status_text, sizeof(fh_wifi_status_text), "%s", dir);
+    }
+}
+
+// Point match_index at the renamed or new entry once the list has been rebuilt.
 static void resolve_rename_match(void) {
     if (!rename_select_pending) {
         return;
@@ -3790,8 +4031,18 @@ static void resolve_rename_match(void) {
             continue;
         }
         ROMRecord const *rec = &records[record_index];
-        if ((rec->Mapper & FOLDER_FLAG) != 0 || ((rec->Mapper & SOURCE_SD_FLAG) != 0) != rename_select_sd ||
-            (uint32_t)rec->Size != rename_select_size) {
+        bool is_folder = (rec->Mapper & FOLDER_FLAG) != 0;
+        if (is_folder != rename_select_folder) {
+            continue;
+        }
+        if (is_folder) {
+            if (equals_ignore_case(rec->Name, rename_buf)) {
+                match_index = i;
+                break;
+            }
+            continue;
+        }
+        if (((rec->Mapper & SOURCE_SD_FLAG) != 0) != rename_select_sd || (uint32_t)rec->Size != rename_select_size) {
             continue;
         }
         if (strncmp(rec->Name, rename_buf, ROM_NAME_MAX) == 0) {
@@ -7758,6 +8009,11 @@ static void __not_in_flash_func(handle_menu_fh_command)(uint8_t data, explorer_m
         fh_update_wifi_status_text();
         fh_result = 1u;
     }
+    else if (data == CMD_FH_DOWNLOAD_DIR)
+    {
+        fh_update_download_dir_text();
+        fh_result = 1u;
+    }
     else if (data == CMD_FH_WIFI_CONFIG)
     {
         wifi_f2_state = WIFI_F2_FORCE_SETUP;
@@ -7771,6 +8027,38 @@ static void __not_in_flash_func(handle_menu_fh_command)(uint8_t data, explorer_m
 
     fh_status = FH_STATUS_READY;
     fh_service_menu_window = false;
+}
+
+// F5 help: the pages live in help_text.h. The window starts with the number of
+// pages (CTRL_ACK cannot carry it: File Hunter maps another value there),
+// followed by the lines. The page replaces the window the menu reads its list
+// from, so the menu sends CMD_HELP_END once it has drawn the page (or the user
+// left the help) and the window is rebuilt from the list state.
+static void __noinline process_help_page_request(void) {
+    uint8_t page = (uint8_t)filter_query[0];
+    const help_page_t *pages = filter_query[1] ? help_pages_80 : help_pages_40;
+
+    if (page >= HELP_PAGE_COUNT) {
+        page = HELP_PAGE_COUNT - 1u;
+    }
+    memset(page_buffer, 0, DATA_BUFFER_SIZE);
+    page_buffer[0] = HELP_PAGE_COUNT;
+    memcpy(page_buffer + 1, pages[page].text, pages[page].size);
+    if (page == HELP_PAGE_ABOUT) {
+        char *end = (char *)page_buffer + 1 + pages[page].size;
+        // snprintf leaves its NUL in place; the zeroed buffer ends the page.
+        end += snprintf(end, 80, "\1This cartridge") + 1;
+        end += snprintf(end, 80, "Firmware   %s", EXPLORER_VERSION) + 1;
+        (void)snprintf(end, 80, "Chip ID    %s", pico_chip_id);
+    }
+}
+
+static void __noinline process_help_end_request(void) {
+    if (fh_menu_window_active) {
+        fh_build_page_buffer();
+    } else {
+        build_page_buffer(current_page);
+    }
 }
 
 static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr, uint8_t data, void *ctx)
@@ -7852,6 +8140,9 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
             cancel_refresh_work();
             fh_menu_window_active = false;
             browse_source_mode = mode;
+            if (mode != SOURCE_MODE_SD) {
+                move_src_valid = false;
+            }
             sd_current_path[0] = '/';
             sd_current_path[1] = '\0';
             if (last_selection_restore_pending && mode == last_selection_source) {
@@ -7892,6 +8183,30 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         {
             process_rename_request();
         }
+        else if (data == CMD_CREATE_FOLDER)
+        {
+            process_create_folder_request();
+        }
+        else if (data == CMD_MOVE_MARK)
+        {
+            process_move_mark_request();
+        }
+        else if (data == CMD_MOVE_PASTE)
+        {
+            process_move_paste_request();
+        }
+        else if (data == CMD_HELP_PAGE)
+        {
+            process_help_page_request();
+        }
+        else if (data == CMD_HELP_END)
+        {
+            process_help_end_request();
+        }
+        else if (data == CMD_SET_DOWNLOAD_DIR)
+        {
+            process_set_download_dir_request();
+        }
         else if (data == CMD_LOAD_LAST_SELECTION)
         {
             process_load_last_selection_request();
@@ -7902,14 +8217,15 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         }
         else if (data == CMD_FH_LIST_PAGE || data == CMD_FH_SEARCH ||
                  data == CMD_FH_DOWNLOAD || data == CMD_FH_WIFI_STATUS ||
-                 data == CMD_FH_WIFI_CONFIG)
+                 data == CMD_FH_WIFI_CONFIG || data == CMD_FH_DOWNLOAD_DIR)
         {
             cancel_refresh_work();
             handle_menu_fh_command(data, menu_ctx);
         }
         
            if (data != CMD_ENTER_DIR && data != CMD_DETECT_MAPPER && data != CMD_DELETE_SD_FILE &&
-               data != CMD_COPY_TO_FLASH && data != CMD_RENAME_ENTRY && data != CMD_PREPARE_FLASH_ROM) {
+               data != CMD_COPY_TO_FLASH && data != CMD_RENAME_ENTRY && data != CMD_PREPARE_FLASH_ROM &&
+               data != CMD_CREATE_FOLDER && data != CMD_MOVE_PASTE) {
              ctrl_cmd_state = 0;
         }
         return;
@@ -9257,7 +9573,7 @@ static bool fh_fetch_catalog(const char *query)
     return fh_parse_catalog(download.data, download.len);
 }
 
-#define FH_DOWNLOAD_PATH_SIZE (ROM_NAME_MAX + 6u)
+#define FH_DOWNLOAD_PATH_SIZE (FH_DOWNLOAD_DIR_MAX + ROM_NAME_MAX + 6u)
 
 typedef struct {
     bool metadata_done;
@@ -9402,7 +9718,7 @@ static bool fh_filename_has_extension(const char *filename, const char *ext3)
 }
 
 // Kept out of line to avoid growing the RAM-resident command handler.
-static bool __noinline fh_build_download_path(const char *name, uint8_t type, char *path, size_t path_size)
+static bool __noinline fh_build_download_path(const char *name, uint8_t type, const char *dir, char *path, size_t path_size)
 {
     char filename[ROM_NAME_MAX + 5u];
     size_t out = 0;
@@ -9437,7 +9753,7 @@ static bool __noinline fh_build_download_path(const char *name, uint8_t type, ch
         memcpy(filename + out, dsk ? ".DSK" : ".ROM", 5u);
     }
 
-    int length = snprintf(path, path_size, "/%s", filename);
+    int length = snprintf(path, path_size, "%s/%s", strcmp(dir, "/") == 0 ? "" : dir, filename);
     return length > 0 && (size_t)length < path_size;
 }
 
@@ -9477,6 +9793,8 @@ static bool fh_publish_download(const fh_sd_download_t *download)
 static bool fh_download_selected(void)
 {
     char path[192];
+    char save_dir[FH_DOWNLOAD_DIR_MAX + 1u];
+    bool dir_missing = false;
     fh_sd_download_t download;
     fh_wifi_status_text[0] = '\0';
     if (fh_selected_index >= fh_catalog_count) {
@@ -9494,7 +9812,8 @@ static bool fh_download_selected(void)
     fh_build_http_path(path, sizeof(path), fh_active_query, fh_active_type, (int)fh_selected_index);
     memset(&download, 0, sizeof(download));
     memset(&fh_download_timestamp, 0, sizeof(fh_download_timestamp));
-    if (!fh_build_download_path(fh_catalog[fh_selected_index].name, fh_active_type,
+    fh_download_dir_resolve(save_dir, &dir_missing);
+    if (!fh_build_download_path(fh_catalog[fh_selected_index].name, fh_active_type, save_dir,
                                 download.path, sizeof(download.path))) {
         fh_copy_status_prefix("Invalid download filename");
         printf("[fh] download path does not fit\n");
@@ -9542,8 +9861,16 @@ static bool fh_download_selected(void)
     if (ok) {
         fh_progress_percent = 100;
         fh_result = 1;
-        set_root_path();
+        // Open the microSD list in the folder the file went to.
+        if (strcmp(save_dir, "/") == 0) {
+            set_root_path();
+        } else {
+            strcpy(sd_current_path, save_dir);
+        }
         refresh_requested = true;
+        if (dir_missing) {
+            fh_copy_status_prefix("Saved in root: folder gone. Press key.");
+        }
     } else {
         FRESULT fr = f_unlink(download.temp_path);
         if (fr != FR_OK && fr != FR_NO_FILE && fr != FR_NO_PATH) {
@@ -15245,6 +15572,31 @@ void __no_inline_not_in_flash_func(loadrom_wifi_config_setup)(uint32_t offset)
 }
 
 
+static void loadrom_picoamp(uint32_t offset, bool wifi)
+{
+    msx_pio_bus_init();
+    picoamp_bootstrap(msx_bus.pio, msx_bus.sm_read, msx_bus.sm_write);
+    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_read, false);
+    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, false);
+    hold_msx_wait();
+
+    if (!psram_bring_up_once())
+        panic("PicoAmp: PSRAM unavailable");
+    if (wifi_uart_ready)
+    {
+        uart_set_irq_enables(WIFI_UART_INSTANCE, false, false);
+        irq_set_enabled(UART1_IRQ, false);
+        irq_remove_handler(UART1_IRQ, wifi_uart_rx_irq);
+    }
+    if (!picoamp_prepare(flash_rom + offset, active_rom_size,
+                         records, sizeof(records), sd_rom_region.ptr, sd_rom_region.size,
+                         rom_audio_handoff_pool, wifi, ctrl_audio_volume))
+        panic("PicoAmp: engine setup failed");
+    rom_audio_handoff_pool = NULL;
+    msx_pio_bus_init();
+    picoamp_run(msx_bus.pio, msx_bus.sm_read, msx_bus.sm_write);
+}
+
 // Main function running on core 0
 int __no_inline_not_in_flash_func(main)()
 {
@@ -15278,6 +15630,13 @@ int __no_inline_not_in_flash_func(main)()
     active_rom_size = selected->Size;
 
     uint8_t mapper = mapper_code_from_record_byte(selected->Mapper);
+    if (mapper == MAPPER_PICOAMP) {
+        uint32_t offset = selected->Offset;
+        shutdown_mp3_core1_before_rom_launch();
+        cancel_refresh_work();
+        sd_unmount_card();
+        loadrom_picoamp(offset, ctrl_wifi_support != 0u);
+    }
     audio_mode_t audio_mode = resolve_audio_mode(mapper, ctrl_audio_selection);
     if (sn_audio_selected() && audio_mode == AUDIO_MODE_NONE) {
         printf("SN76489: unsupported mapper %u\n", mapper);

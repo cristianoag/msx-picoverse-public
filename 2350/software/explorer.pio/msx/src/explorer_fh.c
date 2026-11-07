@@ -189,58 +189,52 @@ static void fh_read_status_text(void)
 static void fh_size_text(unsigned int size_kb, char *out)
 {
     if (size_kb < 1024U) {
-        sprintf(out, "%uKB", size_kb);
+        menu_ui_size_text(out, size_kb, 'K');
     } else {
-        sprintf(out, "%uMB", (size_kb + 1023U) / 1024U);
+        menu_ui_size_text(out, (size_kb + 1023U) / 1024U, 'M');
     }
 }
 
-static void fh_build_row_text_with_name(const ExplorerFHRecord *record, const char *name, char *out, unsigned char width)
+// fh_build_row - Build the screen row of a catalog record in `out`.
+static void fh_build_row(const ExplorerFHRecord *record, const char *name, char *out, unsigned char selected)
 {
     char size_text[8];
-    unsigned char i;
-    unsigned char len;
-    fh_size_text(record->size_kb, size_text);
-    if (use_80_columns) {
-        sprintf(out, MENU_ROW_FORMAT_80, name, size_text, "FH", menu_ui_fh_type_label());
-    } else {
-        sprintf(out, MENU_ROW_FORMAT_40, name, size_text, "FH", menu_ui_fh_type_label());
-    }
 
-    len = (unsigned char)strlen(out);
-    for (i = len; i < width; i++) {
-        out[i] = ' ';
-    }
-    out[width] = '\0';
+    fh_size_text(record->size_kb, size_text);
+    menu_ui_build_row(out, name, size_text, "FH", menu_ui_fh_type_label(), selected);
 }
 
-static void fh_build_row_text(const ExplorerFHRecord *record, char *out, unsigned char width)
+// fh_draw_row - Rebuild one catalog row in its slot of the page buffer and write it to the screen.
+static void fh_draw_row(unsigned char row, const ExplorerFHRecord *record, const char *name, unsigned char selected)
 {
-    fh_build_row_text_with_name(record, record->name, out, width);
+    char *slot = menu_ui_list_rows + (unsigned int)row * menu_ui_row_width();
+
+    fh_build_row(record, name, slot, selected);
+    menu_ui_blit_rows((unsigned char)(row + 2), slot, 1);
 }
 
 static void fh_draw_list(void)
 {
     unsigned int row;
-    char row_text[81];
     unsigned char width = menu_ui_row_width();
+    char *out = menu_ui_list_rows;
 
     fh_update_message_row_text();
-    menu_ui_clear_rows(2, 21);
-    for (row = 0; row < FILES_PER_PAGE; row++) {
+    // Whole page in one transfer; rows without a record stay blank.
+    for (row = 0; row < FILES_PER_PAGE; row++, out += width) {
         unsigned int index = (fh_current_page * FILES_PER_PAGE) + row;
         if (index >= fh_total_files || fh_records[row].name[0] == '\0') {
+            memset(out, ' ', width);
             continue;
         }
-        fh_build_row_text(&fh_records[row], row_text, width);
-        menu_ui_render_selectable_line((unsigned char)(row + 2), row_text + 1, !fh_message_row && index == fh_current_index);
+        fh_build_row(&fh_records[row], fh_records[row].name, out, !fh_message_row && index == fh_current_index);
     }
+    menu_ui_blit_rows(2, menu_ui_list_rows, FILES_PER_PAGE);
 }
 
 static void fh_draw_row_for_index(unsigned int index)
 {
     unsigned int row;
-    char row_text[81];
 
     if (index >= fh_total_files) {
         return;
@@ -254,8 +248,7 @@ static void fh_draw_row_for_index(unsigned int index)
         return;
     }
 
-    fh_build_row_text(&fh_records[row], row_text, menu_ui_row_width());
-    menu_ui_render_selectable_line((unsigned char)(row + 2), row_text + 1, index == fh_current_index);
+    fh_draw_row((unsigned char)row, &fh_records[row], fh_records[row].name, index == fh_current_index);
 }
 
 static void fh_position_cursor_on_selection(void)
@@ -307,7 +300,6 @@ static char fh_wait_key_with_scroll(void)
     unsigned int lastNetTick = *jiffyPtr;
     int startPos = 0;
     const unsigned int scrollDelay = 30U;
-    char row_text[81];
     char name_window[MAX_FILE_NAME_LENGTH + 1];
 
     while (1) {
@@ -333,10 +325,7 @@ static char fh_wait_key_with_scroll(void)
                 while (attempts < lenInt && !printed) {
                     printed = build_sliding_name_window(record->name, startPos, name_window, name_col_width);
                     if (printed) {
-                        fh_build_row_text_with_name(record, name_window, row_text, menu_ui_row_width());
-                        Locate(0, (unsigned char)(row + 2));
-                        PrintChar('>');
-                        menu_ui_print_str_inverted_width(row_text + 1, (unsigned char)(menu_ui_row_width() - 3));
+                        fh_draw_row((unsigned char)row, record, name_window, 1);
                     }
                     startPos++;
                     if (startPos >= lenInt + 1) {
@@ -366,8 +355,8 @@ static void fh_redraw(void)
 
 static void fh_render_detail_footer(void)
 {
-    static const char options[] = "ESC Back\0ENTER Save\0F5 Help";
-    menu_ui_render_footer(options, 3, MENU_SHORTCUT_NONE);
+    static const char options[] = "ESC Back\0ENTER Save\0A Folder\0F5 Help";
+    menu_ui_render_footer(options, 4, MENU_SHORTCUT_NONE);
 }
 
 static void fh_render_detail_screen(const ExplorerFHRecord *record)
@@ -391,6 +380,12 @@ static void fh_render_detail_screen(const ExplorerFHRecord *record)
     printf("   Size: %-8.8s", size_text);
     Locate(0, 5);
     printf(" Source: FH");
+    // The Pico puts the download folder (end of the path when long) in the status text.
+    Poke(CTRL_CMD, CMD_FH_DOWNLOAD_DIR);
+    fh_wait_ready();
+    fh_read_status_text();
+    Locate(0, 6);
+    printf(" Folder: %s", fh_status_text);
 
     menu_ui_render_selectable_line(9, "Action: Download", 1);
     menu_ui_print_last_line_text("");
@@ -420,8 +415,13 @@ static void fh_show_detail(unsigned int index)
             fh_redraw();
             return;
         }
+        if (key == 'a' || key == 'A') {
+            // Leave File Hunter for the microSD list to pick the download folder.
+            menu_pick_download = 1;
+            return;
+        }
         if (key == MENU_KEY_F5_HELP) {
-            helpMenu();
+            helpMenu(HELP_PAGE_FILEHUNTER);
             if (menu_pending_key) {
                 return;
             }
@@ -447,7 +447,15 @@ static void fh_show_detail(unsigned int index)
     }
 }
 
-unsigned char explorer_fh_run(void)
+// Where File Hunter was when the user left it to pick the download folder, so
+// it can open on the same results instead of fetching the catalog again.
+static char fh_resume_query[EXPLORER_FH_MAX_QUERY + 1];
+static unsigned int fh_resume_page;
+static unsigned int fh_resume_index;
+
+// explorer_fh_run - File Hunter. resume is set when coming back from picking the
+// download folder: the Pico still holds the catalog, so only the page is reloaded.
+unsigned char explorer_fh_run(unsigned char resume)
 {
     char key;
     char search_query[EXPLORER_FH_MAX_QUERY + 1];
@@ -467,10 +475,17 @@ unsigned char explorer_fh_run(void)
     memset(fh_status_text, 0, sizeof(fh_status_text));
 
     fh_render_frame();
-    // Empty query = File Hunter latest releases. Issued as a search so the Pico
-    // always refetches, instead of reusing a catalog left over from a previous
-    // visit (which would otherwise still hold the last search results).
-    fh_search(active_query, retrieving_status);
+    if (resume) {
+        strcpy(active_query, fh_resume_query);
+        fh_current_page = fh_resume_page;
+        fh_current_index = fh_resume_index;
+        fh_load_page(fh_current_page, retrieving_status);
+    } else {
+        // Empty query = File Hunter latest releases. Issued as a search so the Pico
+        // always refetches, instead of reusing a catalog left over from a previous
+        // visit (which would otherwise still hold the last search results).
+        fh_search(active_query, retrieving_status);
+    }
     fh_redraw();
 
     while (1) {
@@ -495,7 +510,7 @@ unsigned char explorer_fh_run(void)
                 launch_wifi_config();
                 break;
             case MENU_KEY_F5_HELP:
-                helpMenu();
+                helpMenu(HELP_PAGE_FILEHUNTER);
                 fh_redraw();
                 break;
             case 30:
@@ -532,7 +547,7 @@ unsigned char explorer_fh_run(void)
                 if (search_result == -1) {
                     launch_wifi_config();
                 } else if (search_result == -2) {
-                    helpMenu();
+                    helpMenu(HELP_PAGE_FILEHUNTER);
                 } else if (search_result > 0 && search_query[0]) {
                     strcpy(active_query, search_query);
                     fh_search(active_query, search_status);
@@ -548,10 +563,26 @@ unsigned char explorer_fh_run(void)
                 fh_search(active_query, retrieving_status);
                 fh_redraw();
                 break;
+            case 'a':
+            case 'A':
+                strcpy(fh_resume_query, active_query);
+                fh_resume_page = fh_current_page;
+                fh_resume_index = fh_current_index;
+                menu_pick_download = 1;
+                frame_rendered = 0;
+                return SOURCE_MODE_SD;
             case 13:
             case ' ':
                 if (!fh_message_row) {
                     fh_show_detail(fh_current_index);
+                    if (menu_pick_download) {
+                        // A on the detail screen: pick the download folder, then come back here.
+                        strcpy(fh_resume_query, active_query);
+                        fh_resume_page = fh_current_page;
+                        fh_resume_index = fh_current_index;
+                        frame_rendered = 0;
+                        return SOURCE_MODE_SD;
+                    }
                 }
                 break;
             case 'c':

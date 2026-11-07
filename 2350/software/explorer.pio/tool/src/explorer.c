@@ -29,6 +29,7 @@
 #include "esp8266p_rom.h"
 #include "fmpac_bios.h"
 #include "sfg_bios.h"
+#include "picoamp_rom.h"
 #include "mapper_detect.h"
 
 #ifndef APP_VERSION
@@ -65,14 +66,18 @@
 #define ROM_TYPE_MEGARAM_USB       20
 #define ROM_TYPE_MEGARAM           21
 #define ROM_TYPE_ASCII16X_FR       22
+#define ROM_TYPE_PICOAMP           24
 
 // Menu label for every embedded Nextor entry. The version is always shown so
 // entries stay unambiguous once other Nextor releases (e.g. 3.x) are added.
 #define NEXTOR_SUNRISE_LABEL       "Nextor Sunrise 2.1.4"
-#define NEXTOR3_SUNRISE_LABEL      "Nextor Sunrise 3.0.0 Beta 2"
+#define NEXTOR3_SUNRISE_LABEL      "Nextor Sunrise 3.0.0"
 
 #define NEXTOR_ROM                 ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_ROM                ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_ROM                ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
+
+// Menu label of the embedded PicoAmp player; it carries the upstream release.
+#define PICOAMP_LABEL              "PicoAmp 1.3 by Jzzy"
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
@@ -153,6 +158,7 @@ const char* mapper_description(int number) {
         case ROM_TYPE_MEGARAM_SD:
         case ROM_TYPE_MEGARAM_USB:
         case ROM_TYPE_MEGARAM:
+        case ROM_TYPE_PICOAMP:
             return "SYSTEM";
         default:
             break;
@@ -202,12 +208,13 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 // Print usage information
 static void print_usage(const char *prog_name) {
 
-    printf("Usage: %s [-h] [-a] [-r] [-s1] [-m1] [-c1] [-r1] [-s2] [-m2] [-c2] [-r2] [-s3] [-m3] [-o <filename>]\n", prog_name);
+    printf("Usage: %s [-h] [-a] [-r] [-pa] [-s1] [-m1] [-c1] [-r1] [-s2] [-m2] [-c2] [-r2] [-s3] [-m3] [-o <filename>]\n", prog_name);
     printf("  without options, the tool scans the current directory for .ROM files to include in the Explorer image\n");
     printf("Options:\n");
     printf("  -h   Show this help message\n");
     printf("  -a, --allnextor  Include all embedded Nextor system ROM options (-s1 to -r2, -s3 and -m3)\n");
     printf("  -r, --megaram    Include standalone 1MB MegaRAM without Nextor or memory mapper\n");
+    printf("  -pa, --picoamp   Include PicoAmp player ROM and Audio Engine (MSX2, microSD; no Nextor)\n");
     printf("  -s1, --sunrise-sd  Include " NEXTOR_SUNRISE_LABEL " (microSD card)\n");
     printf("  -m1, --mapper-sd   Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (microSD card)\n");
     printf("  -c1, --carnivore2-sd  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + Carnivore2 RAM (microSD card)\n");
@@ -216,8 +223,8 @@ static void print_usage(const char *prog_name) {
     printf("  -m2, --mapper-usb  Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper (USB pendrive)\n");
     printf("  -c2, --carnivore2-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + Carnivore2 RAM (USB pendrive)\n");
     printf("  -r2, --megaram-usb Include " NEXTOR_SUNRISE_LABEL " + 1MB mapper + 1MB MegaRAM (USB pendrive)\n");
-    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card) for testing\n");
-    printf("  -m3, --mapper3-sd  Include " NEXTOR3_SUNRISE_LABEL " + 1MB mapper (microSD card) for testing\n");
+    printf("  -s3, --sunrise3-sd Include " NEXTOR3_SUNRISE_LABEL " (microSD card)\n");
+    printf("  -m3, --mapper3-sd  Include " NEXTOR3_SUNRISE_LABEL " + 1MB mapper (microSD card)\n");
     printf("  Options -s1, -m1, -c1, -r1, -s2, -m2, -c2, -r2, -s3, -m3 can be combined to add multiple Nextor entries\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
@@ -324,6 +331,7 @@ int main(int argc, char *argv[])
     bool use_megaram_usb = false;
     bool use_sunrise3_sd = false;
     bool use_mapper3_sd = false;
+    bool use_picoamp = false;
     const char *bad_option = NULL;
     const char *missing_output_option = NULL;
     char uf2_output_filename[MAX_UF2_FILENAME_LENGTH];
@@ -368,6 +376,8 @@ int main(int argc, char *argv[])
             use_sunrise3_sd = true;
         } else if ((strcmp(argv[i], "-m3") == 0) || (strcmp(argv[i], "--mapper3-sd") == 0)) {
             use_mapper3_sd = true;
+        } else if ((strcmp(argv[i], "-pa") == 0) || (strcmp(argv[i], "--picoamp") == 0)) {
+            use_picoamp = true;
         } else if ((strcmp(argv[i], "-o") == 0) || (strcmp(argv[i], "--output") == 0)) {
             if (i + 1 >= argc) {
                 missing_output_option = argv[i];
@@ -401,7 +411,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    bool include_nextor = use_sunrise_sd || use_mapper_sd || use_c2_sd || use_megaram_sd ||
+    bool include_embedded = use_picoamp || use_sunrise_sd || use_mapper_sd || use_c2_sd || use_megaram_sd ||
                           use_sunrise_usb || use_mapper_usb || use_c2_usb || use_megaram_usb ||
                           use_sunrise3_sd || use_mapper3_sd;
     struct {
@@ -410,7 +420,7 @@ int main(int argc, char *argv[])
         const char *name;
         const uint8_t *rom;
         uint32_t rom_size;
-    } nextor_entries[] = {
+    } embedded_entries[] = {
         { use_sunrise_sd,  ROM_TYPE_SUNRISE_SD,        NEXTOR_SUNRISE_LABEL " (SD)",                          NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
         { use_mapper_sd,   ROM_TYPE_SUNRISE_MAPPER_SD, NEXTOR_SUNRISE_LABEL " + 1MB Mapper (SD)",             NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
         { use_c2_sd,       ROM_TYPE_C2_SD,             NEXTOR_SUNRISE_LABEL " + 1MB Mapper + C2 RAM (SD)",    NEXTOR_ROM,  sizeof(NEXTOR_ROM) },
@@ -421,6 +431,7 @@ int main(int argc, char *argv[])
         { use_megaram_usb, ROM_TYPE_MEGARAM_USB,       NEXTOR_SUNRISE_LABEL " + 1MB Mapper + 1MB MegaRAM (USB)", NEXTOR_ROM, sizeof(NEXTOR_ROM) },
         { use_sunrise3_sd, ROM_TYPE_SUNRISE_SD,        NEXTOR3_SUNRISE_LABEL " (SD)",                         NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
         { use_mapper3_sd,  ROM_TYPE_SUNRISE_MAPPER_SD, NEXTOR3_SUNRISE_LABEL " + 1MB Mapper (SD)",            NEXTOR3_ROM, sizeof(NEXTOR3_ROM) },
+        { use_picoamp,     ROM_TYPE_PICOAMP,           PICOAMP_LABEL,                                         ___resources_PICOAMP_ROM, sizeof(___resources_PICOAMP_ROM) },
     };
 
     // Standard Explorer build mode
@@ -440,14 +451,14 @@ int main(int argc, char *argv[])
     }
     memset(config_buffer, 0xFF, CONFIG_AREA_SIZE); // Initialize config area to 0xFF
 
-    // Include embedded Nextor ROM entries, one per selected option.
-    if (include_nextor) {
-        for (int ne = 0; ne < (int)(sizeof(nextor_entries) / sizeof(nextor_entries[0])); ++ne) {
+    // Include embedded ROM entries, one per selected option.
+    if (include_embedded) {
+        for (int ne = 0; ne < (int)(sizeof(embedded_entries) / sizeof(embedded_entries[0])); ++ne) {
             char nextor_rom_name[MAX_FILE_NAME_LENGTH] = {0};
             uint32_t nextor_offset;
-            uint32_t nextor_size = nextor_entries[ne].rom_size;
+            uint32_t nextor_size = embedded_entries[ne].rom_size;
 
-            if (!nextor_entries[ne].enabled) {
+            if (!embedded_entries[ne].enabled) {
                 continue;
             }
 
@@ -457,10 +468,10 @@ int main(int argc, char *argv[])
                 return 1;
             }
 
-            strncpy(nextor_rom_name, nextor_entries[ne].name, MAX_FILE_NAME_LENGTH);
+            strncpy(nextor_rom_name, embedded_entries[ne].name, MAX_FILE_NAME_LENGTH);
             memcpy(config_buffer + config_offset, nextor_rom_name, MAX_FILE_NAME_LENGTH);
             config_offset += MAX_FILE_NAME_LENGTH;
-            config_buffer[config_offset++] = nextor_entries[ne].mapper;
+            config_buffer[config_offset++] = embedded_entries[ne].mapper;
             memcpy(config_buffer + config_offset, &nextor_size, sizeof(nextor_size));
             config_offset += sizeof(nextor_size);
             nextor_offset = base_offset;
@@ -468,8 +479,8 @@ int main(int argc, char *argv[])
             config_offset += sizeof(nextor_offset);
 
             printf("File %02d: Name = %-60s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s\n",
-                   file_index, nextor_entries[ne].name, nextor_size, nextor_offset,
-                   mapper_description(nextor_entries[ne].mapper));
+                   file_index, embedded_entries[ne].name, nextor_size, nextor_offset,
+                   mapper_description(embedded_entries[ne].mapper));
 
             total_rom_size += nextor_size;
             if (total_rom_size > MAX_TOTAL_ROM_SIZE) {
@@ -649,10 +660,10 @@ int main(int argc, char *argv[])
 
     // Handle case of no ROM files found
     if (file_count == 0) {
-        if (include_nextor && use_megaram) {
-            printf("No external ROM files found; generating image with embedded Nextor and MegaRAM entries only.\n");
-        } else if (include_nextor) {
-            printf("No external ROM files found; generating image with embedded Nextor entries only.\n");
+        if (include_embedded && use_megaram) {
+            printf("No external ROM files found; generating image with embedded ROM and MegaRAM entries only.\n");
+        } else if (include_embedded) {
+            printf("No external ROM files found; generating image with embedded ROM entries only.\n");
         } else if (use_megaram) {
             printf("No external ROM files found; generating image with standalone MegaRAM entry only.\n");
         } else {
@@ -729,6 +740,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (sizeof(___resources_PICOAMP_ROM) != 65536u ||
+        ___resources_PICOAMP_ROM[0] != 'A' || ___resources_PICOAMP_ROM[1] != 'B') {
+        printf("Embedded PicoAmp ROM must be a 64 KB cartridge with an AB header\n");
+        free(config_buffer);
+        return 1;
+    }
+
     // Final flash image layout: [firmware][0xFF pad to 4 KB][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][Nextor ROM + scanned ROM payloads]
     // The menu ROM starts on a flash sector boundary, so the config area owns its
     // four sectors and the firmware can rewrite it without erasing the menu ROM or
@@ -797,13 +815,13 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    if (include_nextor) {
-        for (int ne = 0; ne < (int)(sizeof(nextor_entries) / sizeof(nextor_entries[0])); ++ne) {
-            if (!nextor_entries[ne].enabled) {
+    if (include_embedded) {
+        for (int ne = 0; ne < (int)(sizeof(embedded_entries) / sizeof(embedded_entries[0])); ++ne) {
+            if (!embedded_entries[ne].enabled) {
                 continue;
             }
-            memcpy(combined_buffer + offset, nextor_entries[ne].rom, nextor_entries[ne].rom_size);
-            offset += nextor_entries[ne].rom_size;
+            memcpy(combined_buffer + offset, embedded_entries[ne].rom, embedded_entries[ne].rom_size);
+            offset += embedded_entries[ne].rom_size;
         }
     }
 

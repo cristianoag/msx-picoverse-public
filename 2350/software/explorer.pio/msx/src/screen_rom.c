@@ -107,12 +107,12 @@ static void clear_query_tail(unsigned char start) {
 
 static unsigned char record_is_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 9 || (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 21) || mapper_code == 23;
+    return (mapper_code >= 9 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 21) || (mapper_code >= 23 && mapper_code <= MAPPER_PICOAMP);
 }
 
 static unsigned char record_is_wifi_capable_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 16);
+    return (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 16) || mapper_code == MAPPER_PICOAMP;
 }
 
 static unsigned char record_is_sunrise_system_rom(const ROMRecord *record) {
@@ -125,9 +125,10 @@ static unsigned char record_is_sunrise_sd_system_rom(const ROMRecord *record) {
     return mapper_code >= 15 && mapper_code <= 19 && mapper_code != 18;
 }
 
-/* Standalone MegaRAM (no Nextor) has no PSG Mirror path in the firmware. */
-static unsigned char record_is_standalone_megaram(const ROMRecord *record) {
-    return record_mapper_code(record->Mapper) == 21;
+/* These standalone modes own core 1 and cannot mirror the PSG. */
+static unsigned char record_disables_psg(const ROMRecord *record) {
+    unsigned char mapper = record_mapper_code(record->Mapper);
+    return mapper == 21 || mapper == MAPPER_PICOAMP;
 }
 
 static unsigned char record_supports_scc_audio(const ROMRecord *record) {
@@ -356,7 +357,7 @@ void show_rom_screen(unsigned int index) {
     unsigned char options_loaded = 0;
     unsigned char allow_mapper_override = !record_is_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
-    unsigned char allow_psg = !record_is_standalone_megaram(record);
+    unsigned char allow_psg = !record_disables_psg(record);
     /* VDP R9 (50/60Hz) exists only on the V9938/V9958 (MSX2+). The MSX version
        byte at main-ROM 0x002D is 0 on MSX1, so the frequency option is offered
        only when it is non-zero. */
@@ -434,7 +435,7 @@ void show_rom_screen(unsigned int index) {
         if (bios_chsns()) {
             char key = (char)bios_chget();
             if (key == MENU_KEY_F5_HELP) {
-                helpMenu();
+                helpMenu(HELP_PAGE_ROM);
                 if (menu_pending_key) {
                     break;
                 }
@@ -831,7 +832,7 @@ static void show_mp3_screen(unsigned int index) {
         if (bios_chsns()) {
             char key = (char)bios_chget();
             if (key == MENU_KEY_F5_HELP) {
-                helpMenu();
+                helpMenu(HELP_PAGE_MP3);
                 if (menu_pending_key) {
                     Poke(MP3_CTRL_CMD, MP3_CMD_STOP);
                     break;

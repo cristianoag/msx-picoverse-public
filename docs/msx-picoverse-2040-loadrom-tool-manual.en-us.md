@@ -8,7 +8,7 @@ Alternatively, the `-s` (Sunrise) option can be used to flash the cartridge with
 
 The `-m` option flashes Sunrise IDE Nextor with an additional 192KB memory mapper implementation. In the firmware internals this is mapper mode (type `11`), while on-screen mapper text is still presented as `SYSTEM` for end users.
 
-The `-s3` and `-m3` options are the same as `-s` and `-m`, but embed Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release) instead of Nextor 2.1.4, for testing the upcoming Nextor 3. It is a beta kernel, so keep backups of the USB drive.
+The `-s3` and `-m3` options are the same as `-s` and `-m`, but embed Konamiman's released Nextor 3.0.0 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0) release) instead of Nextor 2.1.4. PicoVerse hardware boot validation of this kernel is still pending; keep backups of the USB drive.
 
 The standalone firmware options `-k`, `-i`, `-p`, and `-j` generate dedicated USB keyboard, MSX-MIDI, MIDI-PAC PSG-to-MIDI converter, and USB joystick cartridges without embedding a ROM payload.
 
@@ -18,8 +18,8 @@ The standalone firmware options `-k`, `-i`, `-p`, and `-j` generate dedicated US
 | --- | --- | --- | --- |
 | `-s` | Sunrise IDE Nextor 2.1.4 | No | Standard Nextor USB mass-storage mode |
 | `-m` | Sunrise IDE Nextor 2.1.4 | Yes, 192KB | Nextor workflows that need mapper-capable behavior |
-| `-s3` | Sunrise IDE Nextor 3.0.0 Beta 2 | No | Nextor 3 testing, USB mass-storage mode |
-| `-m3` | Sunrise IDE Nextor 3.0.0 Beta 2 | Yes, 192KB | Nextor 3 testing with mapper-capable behavior |
+| `-s3` | Sunrise IDE Nextor 3.0.0 | No | Nextor 3 USB mass-storage mode |
+| `-m3` | Sunrise IDE Nextor 3.0.0 | Yes, 192KB | Nextor 3 with mapper-capable behavior |
 | `-k` | — | — | Standalone USB keyboard cartridge mode |
 | `-i` | — | — | Standalone MSX-MIDI cartridge mode (USB MIDI interface) |
 | `-p` | — | — | Standalone MIDI-PAC cartridge mode (passive PSG-to-MIDI converter) |
@@ -53,8 +53,8 @@ loadrom.exe [options] [romfile]
 - `-h`, `--help` : Print usage information and exit.
 - `-s`, `--sunrise` : Embed the Sunrise IDE Nextor 2.1.4 ROM instead of a regular MSX ROM. When this option is used, the cartridge boots into Nextor firmware, and the USB-C port exposes a block device for use with Nextor loaders. No ROM file argument is needed with this option.
 - `-m`, `--mapper` : Embed Sunrise IDE Nextor 2.1.4 with 192KB memory mapper support. This is intended for Nextor workflows that require mapper-capable behavior. No ROM file argument is needed with this option.
-- `-s3`, `--sunrise3` : Same as `-s`, but embeds the Nextor 3.0.0 Beta 2 Sunrise IDE kernel for testing. No ROM file argument is needed with this option.
-- `-m3`, `--mapper3` : Same as `-m` (192KB memory mapper), but embeds the Nextor 3.0.0 Beta 2 Sunrise IDE kernel for testing. No ROM file argument is needed with this option.
+- `-s3`, `--sunrise3` : Same as `-s`, but embeds the released Nextor 3.0.0 Sunrise IDE kernel. No ROM file argument is needed with this option.
+- `-m3`, `--mapper3` : Same as `-m` (192KB memory mapper), but embeds the released Nextor 3.0.0 Sunrise IDE kernel. No ROM file argument is needed with this option.
 - `-s`, `-m`, `-s3`, and `-m3` are mutually exclusive; use only one Nextor mode per UF2.
 - `-k`, `--keyboard` : Build a UF2 with the standalone USB keyboard firmware. The cartridge becomes a dedicated USB-to-MSX keyboard interface. This option is standalone and cannot be combined with `-s`, `-m`, `-s3`, `-m3`, `-i`, `-p`, `-j`, or a ROM file.
 - `-i`, `--midi` : Build a UF2 with the standalone MSX-MIDI firmware. The cartridge becomes a dedicated MSX-MIDI interface that bridges MSX-MIDI I/O ports (`0xE8`–`0xE9`) to a USB MIDI device connected to the USB-C port. This option is standalone and cannot be combined with `-s`, `-m`, `-s3`, `-m3`, `-k`, `-p`, `-j`, or a ROM file.
@@ -136,7 +136,7 @@ Supported mapper tags:
 7. Power on the MSX to boot into Nextor with the mapper-capable mode enabled. UI mapper text is shown as `SYSTEM`.
 8. In this mode, the additional memory mapper capacity is 192KB (12 x 16KB pages).
 
-### Loading Nextor 3.0.0 Beta 2 (testing)
+### Loading Nextor 3.0.0
 
 Follow the same steps as above, using `-s3` instead of `-s`, or `-m3` instead of `-m` for the 192KB mapper:
 
@@ -145,7 +145,7 @@ loadrom.exe -s3 -o nextor3_sunrise.uf2
 loadrom.exe -m3 -o nextor3_sunrise_mapper.uf2
 ```
 
-These options embed the Nextor 3.0.0 Beta 2 Sunrise IDE kernel on the same Sunrise IDE (USB) firmware modes as `-s` and `-m`. It is a beta kernel, so keep backups of the USB drive.
+These options embed the released Nextor 3.0.0 Sunrise IDE kernel on the same Sunrise IDE (USB) firmware modes as `-s` and `-m`. Keep backups of the USB drive before changing cartridge images.
 
 ### Loading USB Keyboard Firmware
 
@@ -230,7 +230,7 @@ See [MSX PicoVerse 2040 USB Joystick](/docs/msx-picoverse-2040-joystick.md) for 
 - With a regular ROM: only one ROM can be embedded per UF2; use the MultiROM tool for menus and multiple titles.
 - With Sunrise Nextor: requires a compatible USB thumb drive and appropriate Nextor loaders on the MSX side.
 - In mapper mode (`-m` / `-m3`), mapper register handling is global (ports `FC`-`FF`) and the mapper capacity is 192KB.
-- `-s3` and `-m3` embed a Nextor 3.0.0 beta kernel intended for testing; booting it on hardware has not yet been validated.
+- `-s3` and `-m3` embed released Nextor 3.0.0; booting it on PicoVerse hardware has not yet been validated.
 - Linux/macOS binaries are not yet provided; use Wine or build from source with GCC.
 - The tool does not verify ROM integrity beyond size checks and simple header heuristics.
 - The keyboard firmware (`-k`) does not work with FPGA-based MSX implementations or MSX computers whose PPI is integrated into a custom chip (e.g. Panasonic models with the T9769 MSX-ENGINE). The internal PPI unconditionally drives keyboard port data onto the cartridge slot bus, which conflicts with the PicoVerse's bus response. See [USB Keyboard — FPGA Incompatibility Details](/docs/msx-picoverse-2040-keyboard.md#fpga-incompatibility-details) for the full analysis.

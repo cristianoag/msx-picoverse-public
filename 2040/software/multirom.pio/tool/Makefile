@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.69
+VERSION ?= v2.70
 
 # Project files
 SOURCES := multirom.c
@@ -46,7 +46,7 @@ MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
 NEXTOR_SUNRISE := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_SUNRISE_H := $(SRCDIR)/nextor_sunrise.h
-NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
+NEXTOR3 := ../resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM
 NEXTOR3_H := $(SRCDIR)/nextor3.h
 # ESPPROM = ../wireless/dist/ESP8266P.ROM
 
@@ -79,7 +79,7 @@ $(NEXTOR_SUNRISE_H): $(NEXTOR_SUNRISE)
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(NEXTOR3_H): $(NEXTOR3)
-	@echo "Embedding Sunrise IDE Nextor 3 ROM into header"
+	@echo "Embedding Sunrise IDE Nextor 3.0.0 ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(BINDIR):

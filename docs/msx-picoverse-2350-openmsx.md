@@ -8,7 +8,7 @@ The openMSX support is part of the Explorer project and lives in [2350/software/
 
 You point openMSX at the same `.uf2` file you would flash to the PicoVerse 2350. The emulated MSX then boots the real Explorer menu of that UF2 and behaves like the cartridge:
 
-- **Flash list (F1):** the ROMs and SYSTEM entries in the UF2 (Nextor Sunrise 2.1.4 and 3.0.0 Beta 2, Nextor + 1MB mapper, Nextor + MegaRAM, standalone MegaRAM).
+- **Flash list (F1):** the ROMs and SYSTEM entries in the UF2 (Nextor Sunrise 2.1.4 and 3.0.0, Nextor + 1MB mapper, Nextor + MegaRAM, standalone MegaRAM).
 - **microSD list (F2):** a folder on your PC plays the microSD card. Its folders, `.ROM`, `.DSK`, `.MP3` and `.WAV` files are listed like on the cartridge.
 - **Search, paging, 40/80 columns, help and the ROM detail screen** with mapper detection and the per-ROM options (mapper, audio profile, PSG mirror, volume, 1MB mapper for `.DSK`), saved to `.PVC` files on the emulated microSD card.
 - **Copy to flash (F), rename (R) and delete (D)**, including the `Wait NN%` progress of the copy. Flash changes are kept in an editable copy of the flash image, so they survive openMSX restarts, like the real flash.
@@ -17,6 +17,8 @@ You point openMSX at the same `.uf2` file you would flash to the PicoVerse 2350.
 - **Starting entries** with the matching openMSX hardware: the game mappers, the audio profiles (SCC/SCC+ in the game, external SCC/SCC+, MSX-MUSIC, Yamaha SFG-05/SFG-01, Dual PSG), the Nextor entries with a hard disk image, and `.DSK` images through the hidden Nextor 2.1.4 kernel of the UF2.
 
 The Raspberry Pi Pico 2 is not emulated. An openMSX Tcl script does the Explorer firmware's job instead: it serves the menu ROM and answers the menu's commands in the same memory window the Pico uses. A normal openMSX extension makes the cartridge appear in the openMSX menus. You don't need to change or rebuild openMSX.
+
+Explorer v2.61's optional **PicoAmp** (`-pa`) entry can be listed, including in a PicoAmp-only UF2, but cannot run in this add-on. Launching it reports that the RP2350 audio engine is not emulated; the add-on does not substitute a plain ROM mapper or Nextor device.
 
 Typical uses:
 
@@ -41,7 +43,9 @@ Typical uses:
 | [openmsx/share/extensions/PicoVerse_2350/hardwareconfig.xml](../2350/software/explorer.pio/openmsx/share/extensions/PicoVerse_2350/hardwareconfig.xml) | The **PicoVerse 2350 Explorer** extension shown in the openMSX extension lists: the 32KB cartridge window the script serves. |
 | [openmsx/share/extensions/PicoVerse_2350/romdb.txt](../2350/software/explorer.pio/openmsx/share/extensions/PicoVerse_2350/romdb.txt) | SHA1 → mapper table used to detect microSD ROMs, generated from the firmware's `pico/explorer/romdb.h`. |
 | [openmsx/gen_romdb.py](../2350/software/explorer.pio/openmsx/gen_romdb.py) | Generates `romdb.txt`. |
-| [openmsx/Makefile](../2350/software/explorer.pio/openmsx/Makefile) | Regenerates `romdb.txt` and checks the script version. Called by the Explorer aggregate Makefile. |
+| [openmsx/share/extensions/PicoVerse_2350/help.txt](../2350/software/explorer.pio/openmsx/share/extensions/PicoVerse_2350/help.txt) | The F5 help pages served to the menu, generated from the firmware's `pico/explorer/help_text.h`. |
+| [openmsx/gen_help.py](../2350/software/explorer.pio/openmsx/gen_help.py) | Generates `help.txt`. |
+| [openmsx/Makefile](../2350/software/explorer.pio/openmsx/Makefile) | Regenerates `romdb.txt` and `help.txt` and checks the script version. Called by the Explorer aggregate Makefile. |
 | [openmsx/install.ps1](../2350/software/explorer.pio/openmsx/install.ps1) / [openmsx/install.sh](../2350/software/explorer.pio/openmsx/install.sh) | Install the script and the extension for the current user. |
 
 The `openmsx/share` folder uses the same layout as the openMSX `share` folder. openMSX loads every `*.tcl` file in `share/scripts` at startup and lists every extension in `share/extensions`.
@@ -60,7 +64,7 @@ make openmsx    # only the openMSX add-on
 
 The `openmsx` stage regenerates `share/extensions/PicoVerse_2350/romdb.txt` with `gen_romdb.py` when `pico/explorer/romdb.h` is newer (set `PYTHON` if `python` is not your Python 3). The aggregate Makefile passes `VERSION`, and the stage fails if the `variable version` line in `picoverse2350.tcl` doesn't match it. Bump both when the Explorer version changes. Running `make` inside `openmsx/` without `VERSION` skips the check.
 
-`romdb.txt` is committed, so you only need Python when the ROM database changes.
+`romdb.txt` and `help.txt` are committed, so you only need Python when the ROM database or the help text changes.
 
 ## 5. Installation
 
@@ -183,7 +187,7 @@ These v2.57 features work as on the cartridge:
 | Game ROM + YM2151 SFG-05 / SFG-01 | Expanded slot: the ROM in subslot 0, a Yamaha SFG (YM2164 or YM2151) with the SFG BIOS of the UF2 in subslot 2. |
 | Game ROM + Dual PSG | A second PSG on ports 0x10-0x13, next to the ROM. |
 | Game ROM or supported Nextor/DSK + SN76489 Franky | A native openMSX Franky device on sound/counter ports 0x48/0x49 and video ports 0x88/0x89. The hardware firmware exposes only the limited counter/control behavior needed by sound drivers, not a full Sega VDP. |
-| Nextor Sunrise 2.1.4 / 3.0.0 Beta 2 (SD or USB) | Sunrise IDE with the entry's own Nextor kernel and the hard disk image (section 11). |
+| Nextor Sunrise 2.1.4 / 3.0.0 (SD or USB) | Sunrise IDE with the entry's own Nextor kernel and the hard disk image (section 11). |
 | Nextor + 1MB Mapper | Expanded slot: Sunrise IDE in subslot 0, a 1MB memory mapper in subslot 1. |
 | Nextor + 1MB Mapper + 1MB MegaRAM | As above, plus a 1MB MegaRAM (port 0x8E) in subslot 3. |
 | Nextor + 1MB Mapper + C2 RAM | Started as Nextor + 1MB mapper; the Carnivore2 RAM registers are not emulated. |

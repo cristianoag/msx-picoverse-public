@@ -54,7 +54,7 @@ loadrom.exe [options] [romfile]
 - `-c2`, `--carnivore2-usb` : Same as `-c1`, but uses USB mass storage on the cartridge's USB-C port as the Nextor backend.
 - `-r1`, `--megaram-sd` : Build a UF2 with Sunrise IDE Nextor on microSD, a 1MB MSX memory mapper, and a separate 1MB PSRAM-backed MegaRAM subslot using 128 × 8KB banks. No external ROM file is needed.
 - `-r2`, `--megaram-usb` : Same as `-r1`, but uses USB mass storage on the cartridge's USB-C port as the Nextor backend.
-- `-s3`, `--sunrise3-sd` : Same as `-s1`, but embeds Konamiman's Nextor 3.0.0 Beta 2 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0-beta.2) release) instead of Nextor 2.1.4, for testing the upcoming Nextor 3. microSD only for now. It is a beta kernel, so keep backups of the microSD card.
+- `-s3`, `--sunrise3-sd` : Same as `-s1`, but embeds Konamiman's released Nextor 3.0.0 Sunrise IDE MasterOnly kernel (from the [SunriseIDE Nextor driver](https://github.com/Konamiman/SunriseIDE-Nextor-driver/releases/tag/v0.1.8-blueMSX-v0.1.5-Nextor-3.0) release) instead of Nextor 2.1.4. microSD only for now. PicoVerse hardware boot validation of this kernel is still pending; keep backups of the microSD card.
 - `-w`, `--wifi` : Enable ESP-01 WiFi support for `-s1`, `-m1`, `-s2`, `-m2`, or `-s3`. This adds the ESP8266P system ROM plus a memory-mapped UART backend expected by the WiFi ROM/software stack.
 - `-scc`, `--scc` : Enable SCC (standard) sound emulation. For embedded ROM builds, this applies to Konami SCC or Manbow2 mapper ROMs. With `-c1` or `-c2`, it enables SCC playback for Konami SCC ROMs uploaded later through `SROM.COM /D15`.
 - `-sccplus`, `--sccplus` : Enable SCC+ (enhanced) sound emulation. For embedded ROM builds, this applies to Konami SCC or Manbow2 mapper ROMs. With `-c1` or `-c2`, it enables SCC+ playback for compatible ROMs uploaded later through `SROM.COM /D15`.
@@ -229,7 +229,7 @@ Notes:
    loadrom.exe -s1 -w
    loadrom.exe -s1 -w -o nextor_sd_wifi.uf2
    ```
-   Nextor 3.0.0 Beta 2 for testing (microSD):
+   Nextor 3.0.0 (microSD):
    ```
    loadrom.exe -s3
    loadrom.exe -s3 -o nextor3_sd.uf2
@@ -352,7 +352,7 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 | --- | --- | --- |
 | "Invalid ROM size" | ROM < 8 KB or > 16 MB | Use a valid ROM size. |
 | "Failed to detect the ROM type" | Mapper heuristics failed | Add a mapper tag (e.g., `.Konami.ROM`). |
-| "Sunrise options are mutually exclusive" | More than one of `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3` passed | Use only one firmware mode at a time. The `-m` variants add mapper RAM; the `-c` variants add Carnivore2 RAM-mode loading; the `-r` variants add a separate MegaRAM subslot; `-s3` swaps in the Nextor 3 beta kernel. |
+| "Sunrise options are mutually exclusive" | More than one of `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3` passed | Use only one firmware mode at a time. The `-m` variants add mapper RAM; the `-c` variants add Carnivore2 RAM-mode loading; the `-r` variants add a separate MegaRAM subslot; `-s3` swaps in the released Nextor 3.0.0 kernel. |
 | "Sunrise options do not accept an external ROM file" | ROM file passed with a Sunrise/Carnivore2/MegaRAM option | Remove the ROM file argument when using `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`/`-s3`. |
 | "Error: -w/--wifi is supported only with -s1, -m1, -s2 or -m2" | `-w` was used without a supported Sunrise mode | Pair `-w` only with `-s1`, `-m1`, `-s2`, or `-m2`. |
 | USB pendrive not detected with `-s2`/`-m2`/`-r2` | VBUS not connected or no OTG adapter | Ensure the USB-C port has VBUS power (use an OTG adapter that supplies VBUS). |

@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2040 LoadROM v2.66
+
+- Refreshed the ROM mapper SHA1 database (3363 entries, from the latest Vampier softwaredb) by re-running `gen_romdb.py`: `tool/src/romdb.h`.
+
+- Bumped the aggregate and PC tool versions to v2.66.
+- Replaced the Nextor 3 beta 2 resource with the official 128 KB `resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM` from release `v0.1.8-blueMSX-v0.1.5-Nextor-3.0`, and updated the generated header symbol.
+- Updated `-s3` / `--sunrise3` and `-m3` / `--mapper3` help, SYSTEM names and related manuals for released Nextor 3.0.0. Kept Nextor 2.1.4, USB loaders, mapper types and UF2 layouts unchanged.
+- Validation: packaged tool build, official ROM size/SHA-256, released help/version, all four Nextor modes and new aliases pass. Verified exact record names/padding, types, sizes, offsets and firmware/kernel payloads. 
+
 ## PicoVerse 2040 Loadrom v2.65
 
 - Version bumped to v2.65 (top-level and tool Makefiles).

@@ -25,6 +25,10 @@ extern int frame_rendered;
 extern unsigned char menu_shortcut_selection;
 // Help queues a source/configuration key so nested detail screens unwind first.
 extern unsigned char menu_pending_key;
+// A file is marked with M and waits for a destination folder.
+extern unsigned char menu_move_pending;
+// File Hunter asked for its download folder: the microSD list is open to pick one with A.
+extern unsigned char menu_pick_download;
 extern unsigned char fh_catalog_type; // File Hunter catalog: CTRL_FH_TYPE_ROM or CTRL_FH_TYPE_DSK
 
 #endif

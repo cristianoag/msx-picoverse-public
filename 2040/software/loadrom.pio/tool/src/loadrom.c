@@ -86,8 +86,8 @@ static const char *rom_types[] = {
 #define ROM_TYPE_MANBOW2 14
 
 #define NEXTOR_ROM               ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_ROM              ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
-#define NEXTOR3_SUNRISE_LABEL    "Nextor Sunrise 3.0.0 Beta 2"
+#define NEXTOR3_ROM              ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_SUNRISE_LABEL    "Nextor Sunrise 3.0.0"
 #define NEXTOR_KERNEL_ROM_SIZE   (128u * 1024u)
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
@@ -404,8 +404,8 @@ static void print_usage(const char *prog_name) {
     printf("  -h, --help     Show this help message\n");
     printf("  -s, --sunrise  Build UF2 with embedded Sunrise IDE Nextor 2.1.4 ROM\n");
     printf("  -m, --mapper   Build UF2 with Sunrise IDE Nextor 2.1.4 ROM + 192KB memory mapper\n");
-    printf("  -s3, --sunrise3 Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM for testing\n");
-    printf("  -m3, --mapper3 Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM + 192KB memory mapper for testing\n");
+    printf("  -s3, --sunrise3 Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM\n");
+    printf("  -m3, --mapper3 Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM + 192KB memory mapper\n");
     printf("                 Options -s, -m, -s3 and -m3 are mutually exclusive\n");
     printf("  -k, --keyboard Build UF2 with USB keyboard firmware (dedicated keyboard cartridge)\n");
     printf("  -i, --midi     Build UF2 with USB MIDI firmware (MSX-MIDI interface via USB cable)\n");
@@ -851,7 +851,7 @@ int main(int argc, char *argv[])
         uint32_t base_offset = CONFIG_RECORD_SIZE;
         const char *sunrise_name;
         if (nextor3) {
-            // Nextor 3 beta kernel on the same Sunrise IDE (USB) loaders as -s/-m.
+            // Nextor 3.0.0 kernel on the same Sunrise IDE (USB) loaders as -s/-m.
             sunrise_name = with_mapper ? NEXTOR3_SUNRISE_LABEL "+Mapper" : NEXTOR3_SUNRISE_LABEL;
         } else {
             sunrise_name = with_mapper ? "Nextor Sunrise+Mapper" : "Nextor Sunrise IDE";

@@ -22,7 +22,8 @@
 #  3. A host folder plays the microSD card: folders, ROM, DSK, MP3 and WAV
 #     files are listed like on the cartridge, .PVC options files and the
 #     PICOVERSE.PVL last selection are written to it, and microSD ROMs can be
-#     copied to flash (F), renamed (R) and deleted (D).
+#     copied to flash (F), renamed (R), deleted (D), folders created (W) and
+#     files moved (M).
 #  4. The selected entry is started with the matching openMSX hardware: game
 #     ROMs with the openMSX mapper of the PicoVerse mapper code, plus the
 #     audio profile chosen in the menu (external SCC/SCC+, MSX-MUSIC with the
@@ -44,7 +45,7 @@
 
 namespace eval picoverse2350 {
 
-variable version "v2.60"
+variable version "v2.61"
 
 # Flash layout, must match pico/explorer/explorer.c and tool/src/explorer.c.
 # Offsets are relative to the menu ROM (the firmware's flash_rom pointer).
@@ -82,7 +83,7 @@ variable files_per_page 19
 variable source_flag 0x80
 variable folder_flag 0x40
 variable mp3_flag    0x20
-variable system_mappers {10 11 15 16 17 18 19 20 21}
+variable system_mappers {10 11 15 16 17 18 19 20 21 24}
 variable mapper_dsk  23
 
 # Filename tags, indexed by mapper code - 1 (MAPPER_DESCRIPTIONS)
@@ -160,6 +161,8 @@ variable last_dir   "/"
 variable last_index 0xFFFF
 variable restore_pending 0
 variable rename_pending  ""
+variable move_src   ""      ;# microSD path of the file marked with M
+variable help_db    ""      ;# F5 help pages (help.txt), loaded on first use
 variable job        ""      ;# copy to flash job
 variable flash_copy_pending ""
 variable fh_active  0       ;# File Hunter window active
@@ -370,7 +373,7 @@ proc is_menu_at {flash len pos} {
 	set first [u8 $flash $rec]
 	if {$first < 0x20 || $first > 0x7E} {return 0}
 	set mapper [expr {[u8 $flash [expr {$rec + $name_max}]] & 0x1F}]
-	if {$mapper < 1 || $mapper > 23} {return 0}
+	if {$mapper < 1 || $mapper > 24} {return 0}
 	set size   [u32 $flash [expr {$rec + $name_max + 1}]]
 	set offset [u32 $flash [expr {$rec + $name_max + 5}]]
 	expr {$size > 0 && $offset >= $config_offset + $config_size && $pos + $offset + $size <= $len}
@@ -1249,14 +1252,15 @@ proc resolve_rename_match {} {
 	variable match
 	variable magic
 	if {$rename_pending eq ""} return
-	lassign $rename_pending sd size name
+	lassign $rename_pending sd size name folder
 	set rename_pending ""
 	set match 0xFFFF
 	set i 0
 	foreach idx $filtered {
 		set rec [lindex $recs $idx]
-		if {![rec_is_folder $rec] && ([rec_is_sd $rec] != 0) == $sd && [lindex $rec 2] == $size &&
-		    [lindex $rec 0] eq $name} {
+		if {$folder ? ([rec_is_folder $rec] && [string equal -nocase [lindex $rec 0] $name]) :
+		    (![rec_is_folder $rec] && ([rec_is_sd $rec] != 0) == $sd && [lindex $rec 2] == $size &&
+		    [lindex $rec 0] eq $name)} {
 			set match $i
 			break
 		}
@@ -1701,9 +1705,180 @@ proc rename_entry {} {
 	if {$name eq "" || $rec eq "" || [rec_is_folder $rec] || [rec_is_mp3 $rec]} return
 	set sd [expr {[rec_is_sd $rec] != 0}]
 	if {$sd ? ![sd_rename $rec $name] : ![flash_rename $rec $name]} return
-	set rename_pending [list $sd [lindex $rec 2] $name]
+	set rename_pending [list $sd [lindex $rec 2] $name 0]
 	ctrl_set ack 1
 	refresh
+}
+
+# CMD_CREATE_FOLDER: create the folder named in the data window in the current
+# microSD directory (the F1 flash list has none).
+proc create_folder {} {
+	variable rename_buf
+	variable rename_pending
+	variable browse
+	variable sd_path
+	ctrl_set ack 0
+	set name [clean_rename $rename_buf]
+	if {$name eq "" || $browse == 1 || [string tolower $name] eq "system volume information"} return
+	set dir [sd_host $sd_path]
+	if {![file isdirectory $dir]} return
+	foreach entry [glob -nocomplain -tails -directory $dir *] {
+		if {[string equal -nocase $entry $name]} return
+	}
+	if {[catch {file mkdir [file join $dir $name]}]} return
+	sd_note
+	free_cache_reset
+	set rename_pending [list 1 0 $name 1]
+	ctrl_set ack 1
+	refresh
+}
+
+# CMD_MOVE_MARK / CMD_MOVE_PASTE: move a microSD file into another folder.
+# A failed paste reports why in the mapper register (1 name taken, 2 already
+# in this folder) and keeps the file marked, except when it already is here.
+proc move_mark {} {
+	variable move_src
+	ctrl_set ack 0
+	set move_src ""
+	set rec [filtered_rec [query_index]]
+	if {$rec eq "" || [rec_is_folder $rec] || ![rec_is_sd $rec] || [lindex $rec 3] eq ""} return
+	set move_src [lindex $rec 3]
+	ctrl_set ack 1
+}
+
+proc move_paste {} {
+	variable move_src
+	variable browse
+	variable sd_path
+	variable name_max
+	variable rename_pending
+	ctrl_set ack 0
+	ctrl_set mapper 0
+	if {$move_src eq "" || $browse == 1} return
+	set name [string range $move_src [expr {[string last "/" $move_src] + 1}] end]
+	set dest [sd_join $sd_path $name]
+	if {[string equal -nocase $dest $move_src]} {
+		set move_src ""
+		ctrl_set mapper 2
+		return
+	}
+	set hsrc [sd_host $move_src]
+	set hdest [sd_host $dest]
+	if {![file isfile $hsrc]} return
+	if {[file exists $hdest]} {
+		ctrl_set mapper 1
+		return
+	}
+	if {[catch {file rename $hsrc $hdest}]} return
+	sd_note
+	set ext [string toupper [file extension $name]]
+	if {$ext ni {.MP3 .WAV}} {
+		set is_dsk [expr {$ext eq ".DSK"}]
+		rename_sidecar [pvc_from_rom $move_src $is_dsk] [pvc_from_rom $dest $is_dsk]
+	}
+	free_cache_reset
+	set rename_pending [list 1 [file size $hdest] [string range [display_name $name] 0 [expr {$name_max - 1}]] 0]
+	set move_src ""
+	ctrl_set ack 1
+	refresh
+}
+
+# File Hunter download folder (key A). It is kept as plain text in
+# PICOVERSE.PVD in the root of the microSD folder, like the firmware. A folder
+# that is gone falls back to the root (missing = 1).
+proc download_dir_resolve {} {
+	set dir "/"
+	set host [sd_host "/PICOVERSE.PVD"]
+	if {[file isfile $host] && ![catch {set text [string trim [read_binary $host]]}] &&
+	    [string index $text 0] eq "/" && [string length $text] <= 96} {
+		set dir $text
+	}
+	set missing 0
+	if {$dir ne "/" && ![file isdirectory [sd_host $dir]]} {
+		set dir "/"
+		set missing 1
+	}
+	return [list $dir $missing]
+}
+
+# CMD_SET_DOWNLOAD_DIR: the folder being browsed becomes the download folder
+# (mapper register: 1 path too long, 2 could not save).
+proc set_download_dir {} {
+	variable browse
+	variable sd_path
+	ctrl_set ack 0
+	ctrl_set mapper 0
+	if {$browse != 2 || ![sd_available]} return
+	if {[string length $sd_path] > 96} {
+		ctrl_set mapper 1
+		return
+	}
+	if {[catch {
+		set f [open [sd_host "/PICOVERSE.PVD"] wb]
+		puts -nonewline $f $sd_path
+		close $f
+	}]} {
+		ctrl_set mapper 2
+		return
+	}
+	sd_note
+	ctrl_set ack 1
+}
+
+# F5 help (CMD_HELP_PAGE / CMD_HELP_END): the pages are read from help.txt,
+# which gen_help.py builds from the firmware's help_text.h. A page replaces the
+# list page in the data window until the menu sends CMD_HELP_END.
+proc load_help {} {
+	variable help_db
+	if {$help_db ne ""} return
+	set help_db [dict create]
+	set file ""
+	catch {set file [data_file extensions/PicoVerse_2350/help.txt]}
+	if {$file eq "" || ![file isfile $file]} {
+		set file [file join $::env(OPENMSX_USER_DATA) extensions PicoVerse_2350 help.txt]
+	}
+	if {[catch {set text [read_binary $file]}]} {
+		dict set help_db missing {}
+		return
+	}
+	foreach line [split $text "\n"] {
+		if {![regexp {^(\d+) (\d+) ([HL]) (.*)$} $line -> cols page kind body]} continue
+		dict lappend help_db "$cols $page" [expr {$kind eq "H" ? "\x01$body" : $body}]
+	}
+}
+
+proc help_page_cmd {} {
+	variable help_db
+	variable query
+	variable data_base
+	variable data_size
+	variable version
+	load_help
+	set cols [expr {[lindex $query 1] ? 80 : 40}]
+	set count 0
+	dict for {key lines} $help_db {
+		if {[lindex $key 0] == $cols && [lindex $key 1] >= $count} {set count [expr {[lindex $key 1] + 1}]}
+	}
+	if {$count == 0} return
+	set page [lindex $query 0]
+	if {$page >= $count} {set page [expr {$count - 1}]}
+	set lines [dict get $help_db "$cols $page"]
+	if {$page == $count - 1} {
+		lappend lines "\x01This cartridge" "Firmware   $version" "Chip ID    OPENMSX EMULATED"
+	}
+	set buf "[binary format c $count][join $lines "\x00"]\x00"
+	append buf [string repeat "\x00" [expr {$data_size - [string length $buf]}]]
+	put $data_base [string range $buf 0 [expr {$data_size - 1}]]
+}
+
+proc help_end_cmd {} {
+	variable fh_active
+	variable current_page
+	if {$fh_active} {
+		fh_build_page
+	} elseif {[info exists current_page]} {
+		build_page $current_page
+	}
 }
 
 # ---------------------------------------------------------------------------
@@ -1773,8 +1948,10 @@ proc set_source {} {
 	variable restore_pending
 	variable last_source
 	variable last_dir
+	variable move_src
 	set mode [lindex $query 0]
 	if {$mode > 2} {set mode 0}
+	if {$mode != 2} {set move_src ""}
 	set browse $mode
 	set sd_path "/"
 	if {$restore_pending && $mode == $last_source && [file isdirectory [sd_host $last_dir]]} {
@@ -1787,6 +1964,7 @@ proc command {cmd} {
 	variable query
 	variable browse
 	variable sd_path
+	variable move_src
 	ctrl_set cmd $cmd
 	set async 0
 	switch -- $cmd {
@@ -1806,6 +1984,7 @@ proc command {cmd} {
 		10 {
 			set browse 2
 			set sd_path "/"
+			set move_src ""
 			refresh
 			ctrl_set ack 1
 		}
@@ -1815,7 +1994,13 @@ proc command {cmd} {
 		14 {copy_to_flash}
 		15 {rename_entry}
 		16 {copy_to_flash 1}
-		64 - 65 - 66 - 67 {set async [fh_command $cmd]}
+		17 {create_folder}
+		18 {move_mark}
+		19 {move_paste}
+		20 {help_page_cmd}
+		21 {help_end_cmd}
+		22 {set_download_dir}
+		64 - 65 - 66 - 67 - 69 {set async [fh_command $cmd]}
 	}
 	if {!$async && $cmd != 14 && $cmd != 16} {ctrl_set cmd 0}
 }
@@ -2232,6 +2417,18 @@ proc fh_command {cmd} {
 			ctrl_set net $fh_net
 			ctrl_set audio 1
 		}
+		69 {
+			# The download folder, for the detail screen (at most 30 characters).
+			lassign [download_dir_resolve] dir missing
+			if {$missing} {
+				fh_text "/ (folder missing)"
+			} elseif {[string length $dir] > 30} {
+				fh_text "...[string range $dir end-26 end]"
+			} else {
+				fh_text $dir
+			}
+			ctrl_set audio 1
+		}
 	}
 	if {!$async} {ctrl_set status $magic}
 	return $async
@@ -2334,9 +2531,10 @@ proc fh_start_download {} {
 		return 0
 	}
 	lassign [lindex $fh_catalog $index] name kb
-	set dest [sd_host "/[fh_download_name $name $fh_type]"]
+	lassign [download_dir_resolve] dir dir_missing
+	set dest [sd_host [sd_join $dir [fh_download_name $name $fh_type]]]
 	set fh_dl [dict create dest $dest tmp "$dest.part" chan "" meta 0 line "" exact 0 \
-		expected 0 written 0 fallback [expr {$kb * 1024}] percent 0 error "" time ""]
+		expected 0 written 0 fallback [expr {$kb * 1024}] percent 0 error "" time "" missing $dir_missing]
 	http_get "$fh_base[fh_path $fh_query $fh_type $index]" 20000 picoverse2350::fh_dl_headers \
 		picoverse2350::fh_dl_data picoverse2350::fh_dl_done
 	return 1
@@ -2462,7 +2660,7 @@ proc fh_dl_done {ok msg} {
 	free_cache_reset
 	if {$good} {
 		ctrl_set mapper 100
-		fh_text "Saved to microSD. Press key."
+		fh_text [expr {[dict get $dl missing] ? "Saved in root: folder gone. Press key." : "Saved to microSD. Press key."}]
 	} else {
 		fh_text $error
 	}
@@ -2825,6 +3023,10 @@ proc start_record {rec opts} {
 	lassign $rec name mapper size path
 	set code [code_of $mapper]
 	if {$code == 0 && [rec_is_sd $rec]} {set code [detect_rom [sd_host $path]]}
+	if {$code == 24} {
+		notify "PicoAmp requires the RP2350 audio engine; this openMSX add-on does not emulate it" warning
+		return
+	}
 	set audio [audio_mode $code [dict get $opts audio]]
 	set slots [dict create]
 	set io ""
@@ -2966,6 +3168,7 @@ proc reset_pico {} {
 	variable job
 	variable restore_pending
 	variable rename_pending
+	variable move_src
 	variable last_index
 	variable last_source
 	variable last_path
@@ -2983,6 +3186,7 @@ proc reset_pico {} {
 	set flash_copy_pending ""
 	set restore_pending 0
 	set rename_pending ""
+	set move_src ""
 	set last_index 0xFFFF
 	set last_source 0
 	set last_path ""
@@ -3200,6 +3404,7 @@ proc mapper_name {mapper} {
 		19 - 20 {return "Nextor+MegaRAM"}
 		21 {return "MegaRAM"}
 		23 {return "DSK"}
+		24 {return "PicoAmp"}
 	}
 	if {$code >= 1 && $code <= [llength $tags]} {return [lindex $tags [expr {$code - 1}]]}
 	return "?"

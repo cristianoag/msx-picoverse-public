@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.60
+VERSION ?= v2.61
 
 # Project files
 SOURCES := explorer.c
@@ -46,7 +46,7 @@ MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
 NEXTOR := ../resources/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
 NEXTOR_H := $(SRCDIR)/nextor.h
-NEXTOR3 := ../resources/Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM
+NEXTOR3 := ../resources/Nextor-3.0.0.SunriseIDE.MasterOnly.ROM
 NEXTOR3_H := $(SRCDIR)/nextor3.h
 WIFICONFIG := ../../wifi/config/ESP8266_config.rom
 WIFICONFIG_H := $(SRCDIR)/wifibios.h
@@ -56,6 +56,8 @@ FMPAC_BIOS := ../../loadrom.pio/fmpac/FMPCCMFC.BIN
 FMPAC_BIOS_H := $(SRCDIR)/fmpac_bios.h
 SFG_BIOS := ../resources/SFG_64K.ROM
 SFG_BIOS_H := $(SRCDIR)/sfg_bios.h
+PICOAMP := ../resources/PICOAMP.ROM
+PICOAMP_H := $(SRCDIR)/picoamp_rom.h
 
 # Helpers
 RM := rm -f
@@ -68,7 +70,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/explorer.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(NEXTOR3_H) $(NEXTOR3) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(NEXTOR3_H) $(NEXTOR3) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS) $(PICOAMP_H) $(PICOAMP)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -85,7 +87,7 @@ $(NEXTOR_H): $(NEXTOR)
 	$(UTLDIR)/$(XXD) -i "$<" $@
 
 $(NEXTOR3_H): $(NEXTOR3)
-	@echo "Embedding Nextor 3 beta ROM into header"
+	@echo "Embedding Nextor 3.0.0 ROM into header"
 	$(UTLDIR)/$(XXD) -i "$<" $@
 
 $(WIFICONFIG_H): $(WIFICONFIG)
@@ -104,6 +106,10 @@ $(SFG_BIOS_H): $(SFG_BIOS)
 	@echo "Embedding SFG BIOS into header"
 	$(UTLDIR)/$(XXD) -i "$<" $@
 
+$(PICOAMP_H): $(PICOAMP)
+	@echo "Embedding PicoAmp ROM into header"
+	$(UTLDIR)/$(XXD) -i "$<" $@
+
 $(BINDIR):
 	@mkdir $@
 
@@ -117,4 +123,5 @@ $(DISDIR)/explorer.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 clean:
 	@echo "Cleaning ...."
 	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/nextor3.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/sfg_bios.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
+	$(RM) $(PICOAMP_H)
 	$(RM) $(DISDIR)/*

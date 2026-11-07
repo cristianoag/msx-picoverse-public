@@ -25,10 +25,10 @@ CCFLAGS += $(DEBUGFLAGS)
 endif
 
 # Project metadata
-VERSION ?= v2.60
+VERSION ?= v2.61
 CCDEFS = -DEXPLORER_VERSION=\"$(VERSION)\"
 
-SOURCES = menu.c menu_state.c menu_ui.c menu_input.c screen_rom.c explorer_fh.c
+SOURCES = menu.c menu_state.c menu_ui.c menu_input.c screen_rom.c explorer_fh.c mini_printf.c
 RELS = $(SOURCES:%.c=$(BINDIR)/%.rel)
 OUTFILE = menu.rom
 

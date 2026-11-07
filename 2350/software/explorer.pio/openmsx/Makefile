@@ -12,6 +12,8 @@ PYTHON ?= python
 EXTDIR = share/extensions/PicoVerse_2350
 ROMDB  = $(EXTDIR)/romdb.txt
 ROMDB_SRC = ../pico/explorer/romdb.h
+HELP   = $(EXTDIR)/help.txt
+HELP_SRC = ../pico/explorer/help_text.h
 SCRIPT = share/scripts/picoverse2350.tcl
 
 # Expected script version; empty skips the check (standalone builds)
@@ -19,7 +21,7 @@ VERSION ?=
 
 .PHONY: all check-version clean
 
-all: check-version $(ROMDB)
+all: check-version $(ROMDB) $(HELP)
 
 # The Tcl script is not generated, so make sure its version string follows
 # the explorer.pio version.
@@ -32,5 +34,8 @@ endif
 $(ROMDB): $(ROMDB_SRC) gen_romdb.py
 	$(PYTHON) gen_romdb.py $(ROMDB_SRC) $@
 
-# romdb.txt is kept in the repository (installers copy it as is).
+$(HELP): $(HELP_SRC) gen_help.py
+	$(PYTHON) gen_help.py $(HELP_SRC) $@
+
+# romdb.txt and help.txt are kept in the repository (installers copy them as is).
 clean:

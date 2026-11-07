@@ -54,7 +54,7 @@ foreach ($name in @("handle_konamiscc_write", "handle_konami_write", "handle_asc
     "loadrom_fmpac")) {
     $code += (Get-CFunction $firmware $name) + "`n"
 }
-foreach ($name in @("record_is_system_rom", "record_is_sunrise_system_rom", "record_is_standalone_megaram",
+foreach ($name in @("record_is_system_rom", "record_is_sunrise_system_rom", "record_disables_psg",
     "record_supports_scc_audio", "record_supports_external_scc_audio",
     "record_supports_dual_psg", "record_supports_msx_music", "audio_profile_is_supported",
     "default_audio_profile", "sanitize_audio_profile", "next_audio_profile", "build_audio_text")) {
@@ -111,7 +111,7 @@ try {
     if (!(Test-Path $creator)) { throw "Build and package the Explorer utility before running this test" }
     $help = & $creator --help
     if ($LASTEXITCODE -ne 0) { throw "Explorer help failed" }
-    if (($help -join "`n") -notmatch '-m3, --mapper3-sd\s+Include Nextor Sunrise 3\.0\.0 Beta 2 \+ 1MB mapper') {
+    if (($help -join "`n") -notmatch '-m3, --mapper3-sd\s+Include Nextor Sunrise 3\.0\.0 \+ 1MB mapper') {
         throw "Explorer help does not describe the Nextor 3 mapper option"
     }
     $embedded = Get-Content (Join-Path $root "tool\src\explorer.h") -Raw
@@ -122,9 +122,9 @@ try {
         @{ Name = "all"; Options = @("-a"); Entries = $allEntries },
         @{ Name = "all-alias"; Options = @("--allnextor"); Entries = $allEntries },
         @{ Name = "mapper"; Options = @("-m1"); Entries = @("1") },
-        @{ Name = "beta"; Options = @("-s3"); Entries = @("8") },
-        @{ Name = "beta-mapper"; Options = @("-m3"); Entries = @("9") },
-        @{ Name = "beta-mapper-alias"; Options = @("--mapper3-sd"); Entries = @("9") },
+        @{ Name = "nextor3"; Options = @("-s3"); Entries = @("8") },
+        @{ Name = "nextor3-mapper"; Options = @("-m3"); Entries = @("9") },
+        @{ Name = "nextor3-mapper-alias"; Options = @("--mapper3-sd"); Entries = @("9") },
         @{ Name = "mixed"; Options = @("-m3", "-s3", "-m1"); Entries = @("1", "8", "9") },
         @{ Name = "deduplicated"; Options = @("-a", "-m3", "--mapper3-sd"); Entries = $allEntries }
     )
@@ -139,7 +139,7 @@ try {
             $entries = $case.Entries
             & $exe (Join-Path $root "..\loadrom.pio\fmpac\FMPCCMFC.BIN") $uf2 $length.Groups[1].Value `
                 (Join-Path $root "resources\Nextor-2.1.4.SunriseIDE.MasterOnly.ROM") `
-                (Join-Path $root "resources\Nextor-3.0.0-beta2.SunriseIDE.MasterOnly.ROM") @entries
+                (Join-Path $root "resources\Nextor-3.0.0.SunriseIDE.MasterOnly.ROM") @entries
             if ($LASTEXITCODE -ne 0) { throw "FMPAC/Nextor host tests failed: $($case.Name)" }
         }
     } finally {

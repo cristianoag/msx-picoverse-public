@@ -227,13 +227,19 @@ static void test_profiles(void) {
         assert(resolve_audio_mode(variants[i], AUDIO_PROFILE_NONE) == AUDIO_MODE_NONE);
     }
     ROMRecord record = {21};
-    assert(record_is_standalone_megaram(&record));
+    assert(record_disables_psg(&record));
     assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
     assert(resolve_audio_mode(21, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_NONE);
     assert(resolve_audio_mode(19, AUDIO_PROFILE_MEGARAM_SCC) == AUDIO_MODE_MEGARAM_SCC);
     assert(resolve_audio_mode(20, AUDIO_PROFILE_MEGARAM_SCC_PLUS) == AUDIO_MODE_MEGARAM_SCC_PLUS);
     assert(resolve_audio_mode(11, AUDIO_PROFILE_SCC_EXTERNAL) == AUDIO_MODE_SCC_EXTERNAL);
     assert(resolve_audio_mode(17, AUDIO_PROFILE_YM2151_SFG05) == AUDIO_MODE_YM2151_SFG05);
+    record.Mapper = MAPPER_PICOAMP;
+    assert(record_is_system_rom(&record) && record_disables_psg(&record));
+    for (uint8_t profile = 0; profile <= 14; profile++) {
+        assert(audio_profile_is_supported(&record, profile) == (profile == AUDIO_PROFILE_NONE));
+        assert(resolve_audio_mode(MAPPER_PICOAMP, profile) == AUDIO_MODE_NONE);
+    }
     record.Mapper = 1;
     assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
     assert(resolve_audio_mode(1, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
@@ -504,8 +510,8 @@ static const struct {
     {11, "Nextor Sunrise 2.1.4 + 1MB Mapper (USB)", 0},
     {18, "Nextor Sunrise 2.1.4 + 1MB Mapper + C2 RAM (USB)", 0},
     {20, "Nextor Sunrise 2.1.4 + 1MB Mapper + 1MB MegaRAM (USB)", 0},
-    {15, "Nextor Sunrise 3.0.0 Beta 2 (SD)", 1},
-    {16, "Nextor Sunrise 3.0.0 Beta 2 + 1MB Mapper (SD)", 1},
+    {15, "Nextor Sunrise 3.0.0 (SD)", 1},
+    {16, "Nextor Sunrise 3.0.0 + 1MB Mapper (SD)", 1},
 };
 
 #define NEXTOR_VARIANT_COUNT (sizeof(nextor_variants) / sizeof(nextor_variants[0]))

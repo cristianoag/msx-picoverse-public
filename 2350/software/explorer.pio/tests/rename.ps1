@@ -35,6 +35,40 @@ if ([Convert]::ToInt32((Get-Define $menuHeader "CMD_RENAME_ENTRY"), 16) -ne [Con
 if ([Convert]::ToInt32((Get-Define $menuHeader "MEMORY_START"), 16) -ne [Convert]::ToInt32((Get-Define $firmware "DATA_BASE_ADDR"), 16)) {
     throw "The menu writes the new name outside the firmware's capture window"
 }
+# Folder creation (W) shares the name window and the busy-until-refresh handling.
+if ([Convert]::ToInt32((Get-Define $menuHeader "CMD_CREATE_FOLDER"), 16) -ne [Convert]::ToInt32((Get-Define $firmware "CMD_CREATE_FOLDER"), 16)) {
+    throw "CMD_CREATE_FOLDER differs between the menu and the firmware"
+}
+$handlerText = [regex]::Match($firmware, "(?s)static inline void __not_in_flash_func\(handle_menu_write_explorer\)\(.*?\n\}").Value
+if ($handlerText -notmatch "data == CMD_CREATE_FOLDER\)\s*\{\s*process_create_folder_request\(\);" -or
+    $handlerText -notmatch "data != CMD_PREPARE_FLASH_ROM &&\s*data != CMD_CREATE_FOLDER\b") {
+    throw "handle_menu_write_explorer no longer dispatches CMD_CREATE_FOLDER or keeps it busy until the refresh"
+}
+# Move (M): mark, then paste into the browsed folder; paste stays busy until the refresh.
+foreach ($name in @("CMD_MOVE_MARK", "CMD_MOVE_PASTE", "MOVE_ERR_EXISTS", "MOVE_ERR_SAME")) {
+    if ((Get-Define $menuHeader $name) -ne (Get-Define $firmware $name).TrimEnd("u")) {
+        throw "$name differs between the menu and the firmware"
+    }
+}
+if ($handlerText -notmatch "data == CMD_MOVE_MARK\)\s*\{\s*process_move_mark_request\(\);" -or
+    $handlerText -notmatch "data == CMD_MOVE_PASTE\)\s*\{\s*process_move_paste_request\(\);" -or
+    $handlerText -notmatch "data != CMD_CREATE_FOLDER && data != CMD_MOVE_PASTE\)") {
+    throw "handle_menu_write_explorer no longer dispatches the move commands or keeps the paste busy until the refresh"
+}
+if ($firmware -notmatch "static void __noinline process_move_mark_request\(void\)" -or
+    $firmware -notmatch "static void __noinline process_move_paste_request\(void\)") {
+    throw "The move handlers must stay __noinline (out of the SRAM-resident write handler)"
+}
+if ((Get-CFunction $firmware "process_move_paste_request") -notmatch "(?s)f_stat\(dest, &info\) == FR_OK.*MOVE_ERR_EXISTS.*f_rename\(move_src_path, dest\)") {
+    throw "process_move_paste_request must refuse an existing destination before f_rename"
+}
+if ($firmware -notmatch "(?s)process_cycle_sd_partition_request\(void\) \{.*move_src_valid = false;.*sd_save_browse_partition") {
+    throw "A marked file must be forgotten when the browse partition changes"
+}
+if ($firmware -notmatch "static void __noinline process_create_folder_request\(void\)" -or
+    (Get-CFunction $firmware "process_create_folder_request") -notmatch "(?s)rename_clean_name\(rename_buf\).*is_excluded_folder\(rename_buf\).*f_mkdir\(path\)") {
+    throw "process_create_folder_request must clean and check the name before f_mkdir, out of the SRAM-resident handler"
+}
 if ($menu -notmatch "memcpy\(\(void \*\)MEMORY_START, name, strlen\(name\) \+ 1\);") {
     throw "The menu no longer writes the NUL terminated name to MEMORY_START"
 }
@@ -67,7 +101,7 @@ if ((Get-CFunction $firmware "flash_store_rename_entry") -notmatch "(?s)flash_na
 }
 # Enter without an edit must not rename: the field can shorten a long name.
 $renameCommand = Get-CFunction $menu "run_record_command"
-if ($renameCommand -notmatch 'edit_result = menu_ui_read_line\("Name: ", name, MAX_FILE_NAME_LENGTH - 1\);' -or
+if ($renameCommand -notmatch 'menu_ui_read_line\(cmd == CMD_CREATE_FOLDER \? "Folder: " : "Name: ", name, MAX_FILE_NAME_LENGTH - 1\)' -or
     $renameCommand -notmatch 'if \(edit_result != 1 \|\| !name\[0\]\)') {
     throw "The menu sends a rename for an unedited (possibly shortened) name"
 }

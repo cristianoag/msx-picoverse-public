@@ -102,8 +102,8 @@ static const char *rom_types[] = {
 #define ROM_TYPE_MEGARAM_SD 19
 #define ROM_TYPE_MEGARAM_USB 20
 
-#define NEXTOR3_SUNRISE_LABEL "Nextor Sunrise 3.0.0 Beta 2"
-#define NEXTOR3_ROM           ___resources_Nextor_3_0_0_beta2_SunriseIDE_MasterOnly_ROM
+#define NEXTOR3_SUNRISE_LABEL "Nextor Sunrise 3.0.0"
+#define NEXTOR3_ROM           ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
 
 #define ROM_TYPE_DUAL_PSG_FLAG 0x10
 #define ROM_TYPE_MSX_MUSIC_FLAG 0x20
@@ -458,7 +458,7 @@ static void print_usage(const char *prog_name) {
     printf("  -r2, --megaram-usb Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + 1MB MegaRAM (USB pendrive)\n");
     printf("  -c1, --carnivore2-sd  Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (microSD card)\n");
     printf("  -c2, --carnivore2-usb Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (USB pendrive)\n");
-    printf("  -s3, --sunrise3-sd Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM (microSD card) for testing\n");
+    printf("  -s3, --sunrise3-sd Build UF2 with " NEXTOR3_SUNRISE_LABEL " Sunrise IDE ROM (microSD card)\n");
     printf("  -4, --opl4         Build UF2 with the standalone OPL4 / YMF278B / MoonSound cartridge firmware (2MB YRW801-M ROM + 2MB PCM sample RAM)\n");
     printf("      --22khz        (with -4) Build an OPL4 image that renders at 22050 Hz instead of 44100 Hz: halves the CPU cost so\n");
     printf("                     very dense songs play without dropouts, at the cost of a duller high end\n");
@@ -518,7 +518,8 @@ void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint
     uint8_t config_record[CONFIG_RECORD_SIZE] = {0};
 
     size_t cursor = 0;
-    memcpy(config_record + cursor, rom_name, MAX_FILE_NAME_LENGTH);
+    size_t name_length = strnlen(rom_name, MAX_FILE_NAME_LENGTH - 1);
+    memcpy(config_record + cursor, rom_name, name_length);
     cursor += MAX_FILE_NAME_LENGTH;
     memcpy(config_record + cursor, &rom_type, sizeof(rom_type));
     cursor += sizeof(rom_type);
@@ -988,7 +989,7 @@ int main(int argc, char *argv[])
             rom_type = ROM_TYPE_SUNRISE_SD;
             sunrise_name = "Nextor Sunrise IDE (SD)";
         } else if (use_sunrise3_sd) {
-            // Nextor 3 beta kernel on the same microSD Sunrise loader as -s1.
+            // Nextor 3.0.0 kernel on the same microSD Sunrise loader as -s1.
             rom_type = ROM_TYPE_SUNRISE_SD;
             sunrise_name = NEXTOR3_SUNRISE_LABEL " (SD)";
             sunrise_rom = NEXTOR3_ROM;
