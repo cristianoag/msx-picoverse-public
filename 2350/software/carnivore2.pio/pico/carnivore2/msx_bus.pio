@@ -1,0 +1,136 @@
+; MSX PICOVERSE PROJECT
+; (c) 2026 Cristiano Goncalves
+; The Retro Hacker
+;
+; msx_bus.pio - PIO programs for MSX bus interface
+;
+; This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+; License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+;
+; -----------------------------------------------------------------------
+; Pin mapping (directly from loadrom.h):
+;   GPIO  0-15  = A0..A15   (address bus, always input)
+;   GPIO 16-23  = D0..D7    (data bus, bidirectional)
+;   GPIO 24     = /RD       (active-low read strobe)
+;   GPIO 25     = /WR       (active-low write strobe)
+;   GPIO 26     = /IORQ     (active-low I/O request)
+;   GPIO 27     = /SLTSL    (active-low slot select)
+;   GPIO 28     = /WAIT     (active-low, directly driven by PIO side-set)
+;   GPIO 37     = BUSSDIR
+;   GPIO 47     = PSRAM select
+;
+; -----------------------------------------------------------------------
+; Architecture:
+;
+;   SM0 = msx_read_responder   (handles memory reads)
+;   SM1 = msx_write_captor     (handles memory writes / bank switching)
+;
+; Read flow:
+;   1. Wait for /SLTSL=0 and /RD=0
+;   2. Assert /WAIT=0 (freeze Z80)
+;   3. Capture A0..A15 and push to RX FIFO
+;   4. Wait for token from CPU in TX FIFO
+;   5. Output data and pin directions
+;   6. Release /WAIT=1, then wait for /RD high
+;   7. Tri-state data bus and loop
+;
+; Write flow:
+;   1. Wait for /SLTSL=0 and /WR=0
+;   2. Snapshot GPIO 0..23 (A0..A15 + D0..D7)
+;   3. Push sample to RX FIFO
+;   4. Wait for /WR high and loop
+;
+
+.program msx_read_responder
+.side_set 1 opt
+
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 27     side 1     ; Wait for /SLTSL=0
+    jmp pin wait_sltsl side 1     ; If /RD=1, re-check /SLTSL
+    nop                side 0     ; Assert /WAIT=0 immediately
+    in pins, 16        side 0     ; Capture A0..A15 into ISR
+    push block         side 0     ; Send address to CPU via RX FIFO
+    pull block         side 0     ; Wait for CPU response in TX FIFO
+    out pins, 8        side 0     ; Drive D0..D7 with data byte
+    out pindirs, 8     side 0     ; Set pindirs (0xFF=out, 0x00=in)
+    nop                side 1 [1] ; Release /WAIT=1
+    wait 1 gpio 24     side 1     ; Wait for /RD=1
+    set x, 0           side 1
+    mov osr, x         side 1
+    out pindirs, 8     side 1     ; Tri-state D0..D7
+.wrap
+
+.program msx_write_captor
+
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 27            ; Wait for /SLTSL=0
+    jmp pin wait_sltsl        ; If /WR=1, re-check /SLTSL
+    nop              [2]      ; Let address/data settle
+    mov isr, pins             ; Snapshot GPIOs
+    push block                ; Send (addr+data) to CPU
+    wait 1 gpio 25            ; Wait for /WR=1
+.wrap
+
+; ===================================================================
+; msx_io_write_captor
+; ===================================================================
+; Captures address + data during MSX I/O write cycles (/IORQ + /WR).
+; Used for intercepting writes to mapper ports (FC-FF) and sub-slot
+; register at FFFF.
+;
+; RX FIFO word format:
+;   bits[15:0]  = A0..A15
+;   bits[23:16] = D0..D7
+;
+; No side-set, no out pins needed.
+; FIFO join RX for deep buffering (8 entries).
+
+.program msx_io_write_captor
+
+; jmp_pin must be configured to /WR (GPIO 25) from C code.
+;   /WR=1 (inactive) → jump taken  → re-check /IORQ
+;   /WR=0 (active)   → fall through → capture the write
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26           ; Wait for /IORQ=0 (I/O request)
+    jmp pin wait_iorq         ; If /WR=1 (no write), re-check /IORQ
+    nop              [10]    ; Let I/O address + data settle inside /WR low
+    mov isr, pins            ; Snapshot all GPIOs into ISR
+    push block               ; Send (addr+data) to CPU via RX FIFO
+    wait 1 gpio 25           ; Wait for /WR=1 (write cycle ends)
+.wrap
+
+; ===================================================================
+; msx_io_read_responder
+; ===================================================================
+; Responds to MSX I/O read cycles (/IORQ + /RD).
+; Used for reading mapper port registers (FC-FF).
+;
+; in_base     = GPIO 0  (A0), 16 pins
+; out_base    = GPIO 16 (D0), 8 pins
+
+.program msx_io_read_responder
+
+; jmp_pin must be configured to /RD (GPIO 24) from C code.
+;   /RD=1 (inactive) → jump taken  → re-check /IORQ
+;   /RD=0 (active)   → fall through → handle the read
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26                ; Wait for /IORQ=0 (I/O request)
+    jmp pin wait_iorq             ; If /RD=1 (no read), re-check /IORQ
+    nop                           ; timing spacer
+    in pins, 16                   ; Capture A0..A15 into ISR
+    push block                    ; Send address to CPU via RX FIFO
+    pull block                    ; Wait for CPU response in TX FIFO (data token)
+    out pins, 8                   ; Drive D0..D7 with data byte
+    out pindirs, 8                ; Set pindirs (0xFF=output, 0x00=tristate)
+    nop                    [1]    ; Data hold before /RD rises
+    wait 1 gpio 24                ; Wait for /RD=1 (bus cycle ends)
+    set x, 0                      ; Prepare zero for tri-state
+    mov osr, x                    ; Load zero into OSR
+    out pindirs, 8                ; Tri-state D0..D7 (pindirs=0x00)
+.wrap
