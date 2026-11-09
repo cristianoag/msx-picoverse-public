@@ -345,12 +345,12 @@ For the best experience with very large ROM collections, consider organizing ROM
 - **F4**: Open WiFi configuration from a list or the Help screen.
 - **F5**: Show the help screen. See [Help screen](#help-screen).
 - **P**: In the `F2` microSD screen, cycle through supported FAT16, FAT32, and exFAT partitions. The selected browsing partition is saved in `/PICOVERSE.PVC`.
-- **D**: Delete the selected entry after a `Y/N` confirmation. In the `F2` microSD screen it deletes the file (folders are protected); in the `F1` flash screen it removes the flash entry. In both cases the entry's `.PVC` options file is removed too.
+- **D**: Delete the selected entry after a `Y/N` confirmation. In the `F2` microSD screen it deletes the file, or an **empty** folder (`Delete folder? Y/N`); a folder that still has anything in it is refused with `Folder not empty.` and `..` cannot be deleted. In the `F1` flash screen it removes the flash entry. A deleted ROM or DSK also loses its `.PVC` options file.
 - **F**: In the `F2` microSD screen, copy the selected ROM into the cartridge flash after a `Y/N` confirmation. See [Copying microSD ROMs to flash](#copying-microsd-roms-to-flash).
 - **R**: Rename the selected ROM or `.DSK` file on the microSD card, or the selected flash entry. See [Renaming ROMs and disk images](#renaming-roms-and-disk-images).
 - **W**: In the `F2` microSD screen, create a folder in the current folder. See [Creating folders](#creating-folders).
 - **M**: In the `F2` microSD screen, mark the selected file, then press `M` again in another folder to move it there. See [Moving files between folders](#moving-files-between-folders).
-- **A**: In the `F2` microSD screen, make the folder you are browsing the File Hunter download folder. See [File Hunter download folder](#file-hunter-download-folder).
+- **A**: In the `F2` microSD screen, make the folder you have opened (the one being listed, not the highlighted entry) the File Hunter download folder. Press `ENTER` on a folder to open it first. See [File Hunter download folder](#file-hunter-download-folder).
 - **/**: Search ROM names on line 24. Type a partial name and press Enter to jump to the first matching ROM; Esc cancels and restores the current page and source status.
 - **C**: Toggle between 40-column and 80-column layouts when your MSX supports it (auto-detects 80-column capable machines and defaults to 80 columns unless forced otherwise).
 
@@ -438,7 +438,7 @@ Line 23 uses the same evenly spaced F-key options as the flash and microSD lists
 - **Space**: Quick-run the selected ROM with saved `.PVC` options or default settings. If the ROM is on microSD and its mapper has not been detected yet, Explorer detects it before launching.
 - **/**: Search File Hunter. Type a query and press Enter to load matching results. Press Esc at the search prompt to cancel.
 - **T**: Switch between the ROM and `.DSK` catalogs. The current search is run again in the other catalog; with no search, the latest releases are listed.
-- **A**: Choose the download folder. File Hunter opens the microSD list: browse to the folder and press `A` there; you return to the same File Hunter results. Also works on the detail screen. See [File Hunter download folder](#file-hunter-download-folder).
+- **A**: Choose the download folder. File Hunter opens the microSD list: open the folder with `ENTER` and press `A` there (the highlighted entry is not used, only the folder you have opened); you return to the same File Hunter results. Also works on the detail screen. See [File Hunter download folder](#file-hunter-download-folder).
 - **F1**: Leave File Hunter and return to the flash ROM list.
 - **F2**: Leave File Hunter and return to the microSD list.
 - **F3**: File Hunter is already selected; pressing it again has no effect.
@@ -451,8 +451,8 @@ Line 23 uses the same evenly spaced F-key options as the flash and microSD lists
 
 By default File Hunter saves downloads in the root of the microSD card. Press `A` to choose another folder; the choice is saved on the card and used for every later download, also after a power cycle. There are two ways:
 
-- **From the microSD list (`F2`)**: browse to the folder you want and press `A`. Line 24 shows `Download folder saved.` The folder you are browsing becomes the download folder (the root if you are in the root).
-- **From File Hunter**: press `A` in the result list or on a detail screen. Explorer opens the microSD list with `A: set download folder` on line 24. Browse to the folder and press `A` there: you return to File Hunter on the same results (and the same selected entry) without fetching the catalog again. `Esc` in the root folder, `F1` or `F3` cancel the choice.
+- **From the microSD list (`F2`)**: press `ENTER` on the folder to open it, so its files are listed, and then press `A`. Highlighting a folder is not enough: `A` uses the folder that is open, never the highlighted entry. Line 24 shows `Download folder saved.` The open folder becomes the download folder (the root if you are in the root).
+- **From File Hunter**: press `A` in the result list or on a detail screen. Explorer opens the microSD list with `A: use the open folder` on line 24. Open the folder with `ENTER` and press `A` there: you return to File Hunter on the same results (and the same selected entry) without fetching the catalog again. `Esc` in the root folder, `F1` or `F3` cancel the choice.
 
 The File Hunter detail screen shows the current download folder on the `Folder:` line; a long path is shortened to its last part. The folder is stored as text in `/PICOVERSE.PVD` in the root of the browse partition (the partition you are browsing, see `P`), so each partition keeps its own download folder. The path can be at most 96 characters; a deeper folder is refused with `Path too long`. If the saved folder is later deleted or renamed, downloads go to the root of the card, the detail screen shows `/ (folder missing)` and the result message is `Saved in root: folder gone.` Choose a folder again with `A` to fix it.
 

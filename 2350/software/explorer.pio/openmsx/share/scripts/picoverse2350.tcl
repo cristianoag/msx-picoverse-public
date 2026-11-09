@@ -45,7 +45,7 @@
 
 namespace eval picoverse2350 {
 
-variable version "v2.61"
+variable version "v2.62"
 
 # Flash layout, must match pico/explorer/explorer.c and tool/src/explorer.c.
 # Offsets are relative to the menu ROM (the firmware's flash_rom pointer).
@@ -1390,8 +1390,26 @@ proc rename_sidecar {from to} {
 proc delete_entry {} {
 	variable flash_recs
 	ctrl_set ack 0
+	ctrl_set mapper 0
 	set rec [filtered_rec [query_index]]
-	if {$rec eq "" || [rec_is_folder $rec]} return
+	if {$rec eq ""} return
+	if {[rec_is_folder $rec]} {
+		# Only an empty folder goes, like the Pico's f_unlink.
+		variable sd_path
+		set name [lindex $rec 0]
+		set dir [file join [sd_host $sd_path] $name]
+		if {$name eq ".." || ![file isdirectory $dir]} return
+		set content [lsearch -all -inline -not -regexp [glob -nocomplain -directory $dir -tails * .*] {^\.\.?$}]
+		if {[llength $content] > 0 || [catch {file delete $dir}]} {
+			ctrl_set mapper 2
+			return
+		}
+		sd_note
+		free_cache_reset
+		refresh
+		ctrl_set ack 1
+		return
+	}
 	if {![rec_is_sd $rec]} {
 		set f [lindex $flash_recs [lindex $rec 4]]
 		if {$f eq ""} return

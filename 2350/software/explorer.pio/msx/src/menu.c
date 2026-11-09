@@ -400,8 +400,15 @@ static void run_record_command(const char *prompt, unsigned char cmd) {
     ROMRecord *record = &records[currentIndex % FILES_PER_PAGE];
     char name[MAX_FILE_NAME_LENGTH + 1];
 
-    if (cmd != CMD_CREATE_FOLDER && (menu_message_row || record_is_folder(record))) {
+    if (cmd != CMD_CREATE_FOLDER && menu_message_row) {
         return;
+    }
+    if (cmd != CMD_CREATE_FOLDER && record_is_folder(record)) {
+        // Only D works on a folder (not "..") and removes it when it is empty.
+        if (cmd != CMD_DELETE_SD_FILE || (record->Name[0] == '.' && record->Name[1] == '.' && !record->Name[2])) {
+            return;
+        }
+        prompt = "Delete folder? Y/N";
     }
     if (prompt) {
         menu_ui_print_last_line_text(prompt);
@@ -436,7 +443,8 @@ static void run_record_command(const char *prompt, unsigned char cmd) {
             delay_ms(100);
         }
         if (!Peek(CTRL_ACK)) {
-            menu_ui_wait_key_with_blinking_status("Failed");
+            menu_ui_wait_key_with_blinking_status(
+                cmd == CMD_DELETE_SD_FILE && Peek(CTRL_MAPPER) == DELETE_ERR_NOT_EMPTY ? "Folder not empty. Press key." : "Failed");
         } else if (!prompt) {
             restore_pending = 1;
         }

@@ -22,7 +22,7 @@
 #include "carnivore2.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "v1.1"
+#define APP_VERSION "v1.01"
 #endif
 
 #define UF2FILENAME               "carnivore2.uf2"

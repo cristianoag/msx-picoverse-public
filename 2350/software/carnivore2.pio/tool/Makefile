@@ -23,7 +23,7 @@ UTLDIR  := utils
 CCFLAGS := -g
 
 # Application metadata
-VERSION ?= v1.1
+VERSION ?= v1.01
 
 # Project files
 SOURCES := carnivore2.c

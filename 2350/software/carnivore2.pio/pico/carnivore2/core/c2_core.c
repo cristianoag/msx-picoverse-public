@@ -61,7 +61,11 @@ static C2_FUNC void c2_apply(c2_t *c)
 {
     c->addrfr = c->a_addrfr;
     memcpy(c->bank, c->a_bank, sizeof(c->bank));
-    c->mconf = c->a_mconf;
+    // Starting a ROM from the boot menu's Dual-Slot setup screen hangs the MSX
+    // unless all devices are present in the expanded slot, so that start always
+    // uses the full device set (the device selection on that screen is ignored).
+    c->mconf = c->dual_slot_start ? 0xFFu : c->a_mconf;
+    c->dual_slot_start = false;
     c->nsreg = c->a_nsreg;
     c->slm_cfg = c->a_slm_cfg;
     c->scart_cfg = c->a_scart_cfg;
@@ -351,7 +355,7 @@ static C2_FUNC void mdr_write(c2_t *c, uint8_t idx, uint8_t d)
         break;
     case 0x28: c->a_slm_cfg = d; c2_shadow_written(c); break;
     case 0x29: c->a_scart_cfg = d; c2_shadow_written(c); break;
-    case 0x2A: c->a_scart_slt = d; c2_shadow_written(c); break;
+    case 0x2A: c->a_scart_slt = d; c->dual_slot_start = (d != 0u); c2_shadow_written(c); break;
     case 0x2B: c->a_scart_stbl = d; c2_shadow_written(c); break;
     case 0x2F: c->scrt_mrr = (uint8_t)(d & 7u); break;
     case 0x30: c->psgalt = (uint8_t)(d & 3u); break;

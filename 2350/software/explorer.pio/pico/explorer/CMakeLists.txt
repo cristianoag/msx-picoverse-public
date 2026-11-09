@@ -118,6 +118,7 @@ target_link_libraries(explorer
         no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
         pico_multicore
     hardware_flash
+    hardware_watchdog
     pico_audio_i2s
     picomp3lib
     hardware_dma
@@ -128,6 +129,9 @@ target_link_libraries(explorer
 if (NOT EXPLORER_USB_STDIO_DEBUG)
     target_link_libraries(explorer tinyusb_host)
 endif()
+
+# FatFs' buffer allocations must fail with NULL, not panic (see __wrap_ff_memalloc in explorer.c).
+target_link_options(explorer PRIVATE -Wl,--wrap=ff_memalloc)
 
 target_compile_definitions(explorer PRIVATE
     # MP3: 6*1152*4 producer PCM + 2*256*4 I2S PCM + 13KB allocation reserve.

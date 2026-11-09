@@ -19,7 +19,7 @@
 80 0 L in the flash and microSD lists: everything else needs the keyboard.
 80 1 H File commands (F2 microSD list)
 80 1 L D   Delete the selected file after a Y/N question; its .PVC options go too.
-80 1 L     In the F1 list it removes the selected flash entry. Folders are protected.
+80 1 L     An empty folder is removed too. In the F1 list it removes the flash entry.
 80 1 L R   Rename a ROM, DSK image or flash entry. The mapper tag and extension stay.
 80 1 L     ENTER confirms, ESC cancels. Long names are limited by the screen width.
 80 1 L W   Create a folder in the folder you are browsing, on the current partition.
@@ -28,7 +28,7 @@
 80 1 L F   Copy the selected ROM into the cartridge flash after a Y/N question.
 80 1 L     Flash ROMs run without the card; their options are kept on the card.
 80 1 L P   Cycle through the FAT16, FAT32 and exFAT partitions of the card.
-80 1 L A   Make the folder you are browsing the File Hunter download folder.
+80 1 L A   File Hunter download folder = the OPEN folder, not the highlighted one.
 80 1 H Good to know
 80 1 L - A ROM larger than 4 MB has to be copied to flash before it can run.
 80 1 L - A ROM's options (mapper, audio, PSG...) are saved next to it as NAME.PVC.
@@ -74,7 +74,7 @@
 80 4 L ENTER / SPACE   Open the detail screen of the selected ROM or disk.
 80 4 L /               Search the catalog; ENTER runs the search, ESC cancels it.
 80 4 L T               Switch between the ROM and the DSK catalog (keeps the search).
-80 4 L A               Choose the download folder: browse the card, press A there.
+80 4 L A               Pick the download folder: open it in the list, then press A.
 80 4 L C               Switch between 40 and 80 columns.
 80 4 L ESC             Back to the Explorer list.   F1 / F2   Flash / microSD list.
 80 4 H Detail screen
@@ -111,7 +111,7 @@
 40 0 L Directions move, fire runs (lists only)
 40 1 H File commands (F2 list)
 40 1 L D  Delete (Y/N), also its .PVC
-40 1 L    In F1 it removes the flash entry
+40 1 L    Empty folders too; F1: flash entry
 40 1 L R  Rename; tag and extension stay
 40 1 L W  New folder here
 40 1 L M  Move: press M on a file, open the
@@ -119,7 +119,7 @@
 40 1 L    (ESC in root, F1, F3 cancel)
 40 1 L F  Copy the ROM to flash (Y/N)
 40 1 L P  Next partition (FAT16/32/exFAT)
-40 1 L A  Make this the File Hunter folder
+40 1 L A  Download folder = the open folder
 40 1 H Good to know
 40 1 L ROMs over 4 MB must go to flash.
 40 1 L Options are saved as NAME.PVC
@@ -166,7 +166,7 @@
 40 4 L ENTER       Open the detail screen
 40 4 L /           Search the catalog
 40 4 L T           Switch ROM / DSK list
-40 4 L A           Choose the download folder
+40 4 L A           Open the folder, press A
 40 4 L ESC         Back to Explorer
 40 4 L F1/F2       Go to flash / SD list
 40 4 H Detail screen

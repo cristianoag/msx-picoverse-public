@@ -109,7 +109,7 @@ Core 0 services the memory cycles (PIO0) and I/O cycles (PIO1). Core 1 runs the 
 
 ## Known limitations
 
-- **Slave slot / "dual slot" modes.** The original FPGA also watches `/MERQ`, `/M1` and the slot registers of other slots. The PicoVerse cartridge edge only provides `/SLTSL`, so the `SCART_*` registers are stored and read back but do not change decoding, and the second cartridge ("Slave Slot as Master's Subslot") features are not available.
+- **Slave slot / "dual slot" modes.** The original FPGA also watches `/MERQ`, `/M1` and the slot registers of other slots. The PicoVerse cartridge edge only provides `/SLTSL`, so the `SCART_*` registers are stored and read back but do not change decoding, and the second cartridge ("Slave Slot as Master's Subslot") features are not available. A ROM started with ENTER from the boot menu's Dual-Slot setup screen always boots with the expanded slot and all devices (IDE, RAM, FM-PAC); the Expand and device choices on that screen are ignored.
 - **Delayed reconfiguration** triggered by the opcode fetch from address `0x0000` is detected by sampling the address bus, which can miss a very short access.
 - **IDE** uses a microSD card (SD back-end of the Sunrise IDE emulation), so the CF card compatibility list does not apply. Only the master device is emulated.
 - **FlashROM timing.** Program/erase finish immediately; toggle-bit and busy timing are not reproduced. Erase suspend/resume is accepted but has no effect.

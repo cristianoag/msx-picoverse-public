@@ -1,6 +1,11 @@
 # Change Log
 
-## PicoVerse 2350 Carnivore2 v1.0
+## PicoVerse 2350 Carnivore2 v1.01
+
+- Bumped the Carnivore2 version to v1.01 (top-level `Makefile` and `tool/Makefile`, `carnivore2.exe` banner).
+- `core/c2_core.[ch]`: a boot-menu Dual-Slot ENTER start (detected by the non-zero `SCART_SLT` write, `dual_slot_start`) now always applies `Mconf = 0xFF` (expanded slot with all devices) for that one reload. Hardware tests showed the MSX hangs on those starts whenever the menu selected a device set without cartridge RAM (ROM only, non-expanded, IDE without RAM), while the full set boots; the Dual-Slot device selection is therefore ignored. Normal SPACE starts are unchanged. Host test added (`test_dual_slot_start_forces_full_mconf`).
+
+## PicoVerse 2350 Carnivore2 v1.00
 
 - Added the dedicated Carnivore2 firmware (`2350/software/carnivore2.pio`), following the layout of the other firmwares (`pico/carnivore2` firmware, `tool` UF2 creator, `tests`, `docs/log.md`, top-level `Makefile`) for issue #102 of the public repository.
 - `pico/carnivore2/core/c2_core.[ch]`: portable software model of the Carnivore2 FPGA (`mcscc.vhd` 2.50): expanded slot and sub-slot decode (`Mconf`, `SLM_cfg`, `0xFFFF`), the 64-byte register window with its four possible bases, bank windows R1–R4 with page registers and delayed reconfiguration (`CardMDR[3:2]`), `DatM0` direct vector port, 1 MB memory mapper (ports `FC–FF`, `3C` and memory-mapped registers), Sunrise IDE window and ROM segments, FM-PAC slot (ROM page, 8 KB SRAM keys, OPLL ports), SCC/SCC+ window and bank/mode registers including the NSC SCC+ write rules, PSG/beeper ports with `PsgAlt`, port `#F0` protocol with `PFXN`, volume registers. VHDL quirks that software may depend on are kept.

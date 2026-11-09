@@ -175,7 +175,7 @@ These v2.57 features work as on the cartridge:
 
 - **F** in the microSD list copies the selected ROM to flash after `To flash? Y/N`. The menu shows `Wait NN%` while the copy runs (about 200KB/s of emulated time, like the real flash), and the ROM then appears in the F1 list. The script applies the firmware rules: no folders, MP3/WAV, `.DSK`, SYSTEM mappers or duplicate names; at most 128 flash entries; the image goes to the lowest free 4KB-aligned gap after the hidden payloads; the entry is appended to the next free config slot, and the config area is compacted when all 204 slots have been used. The ROM's `.PVC` is copied to `/<name>.flash.PVC`.
 - **R** renames a microSD ROM/`.DSK` (the folder, mapper tag and extension are kept) or a flash entry (appended under the new name, then the old slot is tombstoned). The list reopens on the renamed entry.
-- **D** deletes a microSD file (with its `.PVC`) or a flash entry (its slot is tombstoned).
+- **D** deletes a microSD file (with its `.PVC`), an empty microSD folder (a folder with content reports `Folder not empty.`) or a flash entry (its slot is tombstoned).
 
 ## 10. Starting entries
 

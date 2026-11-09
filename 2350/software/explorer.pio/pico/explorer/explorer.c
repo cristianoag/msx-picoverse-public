@@ -30,6 +30,7 @@
 #include "hardware/regs/uart.h"
 #include "hardware/irq.h"
 #include "hardware/flash.h"
+#include "hardware/watchdog.h"
 #include "hw_config.h"
 #include "explorer.h"
 #define MAPPER_DETECT_MAX_ROM_SIZE PICO_FLASH_SIZE_BYTES
@@ -122,6 +123,8 @@
 #define CMD_MOVE_PASTE 0x13 // Command: move the marked file into the current microSD directory
 #define MOVE_ERR_EXISTS 1u // CTRL_MAPPER after a failed CMD_MOVE_PASTE: the destination name is taken
 #define MOVE_ERR_SAME 2u // CTRL_MAPPER after CMD_MOVE_PASTE: the file already is in this directory
+#define DELETE_ERR_IO 1u // CTRL_MAPPER after a failed CMD_DELETE_SD_FILE: generic failure
+#define DELETE_ERR_NOT_EMPTY 2u // CTRL_MAPPER after CMD_DELETE_SD_FILE on a folder that still has content
 #define CMD_HELP_PAGE 0x14 // Command: put one help page in the data window (query: page, 1 = 80 columns)
 #define CMD_HELP_END 0x15 // Command: the menu has read the help; rebuild the list page the window held
 #define CMD_SET_DOWNLOAD_DIR 0x16 // Command: use the folder being browsed for File Hunter downloads
@@ -367,6 +370,7 @@
 #define PV_CONFIG_PATH "/PICOVERSE.PVC"
 #define PV_DOWNLOAD_DIR_PATH "/PICOVERSE.PVD" // File Hunter download folder (path text), in the root of the browse partition
 #define FH_DOWNLOAD_DIR_MAX 96u // Longest download folder path, so the whole save path stays small
+#define MKDIR_WATCHDOG_MS 8000u // Longest f_mkdir may take before the Pico reboots instead of hanging the MSX
 
 // Last executed Flash/microSD entry, remembered across power cycles.
 #define PV_LAST_MAGIC_0 'P'
@@ -2802,8 +2806,36 @@ static void process_cycle_sd_partition_request(void) {
 
 static bool flash_store_delete_entry(uint16_t record_index);
 
+// D on a folder: remove it only when it is empty (f_unlink refuses otherwise).
+// CTRL_MAPPER tells the menu why a delete failed (DELETE_ERR_*).
+static void __noinline process_delete_folder_request(const char *name) {
+    char path[SD_PATH_MAX];
+    int written = snprintf(path, sizeof(path), "%s/%s", is_root_path(sd_current_path) ? "" : sd_current_path, name);
+
+    ctrl_mapper_value = DELETE_ERR_IO;
+    if (is_excluded_folder(name) || !sd_mount_card() || written <= 0 || (size_t)written >= sizeof(path)) {
+        ctrl_cmd_state = 0;
+        return;
+    }
+    sd_activity_note();
+    FRESULT fr = f_unlink(path);
+    if (fr == FR_OK) {
+        printf("RMDIR: %s removed\n", path);
+        ctrl_mapper_value = 0;
+        refresh_requested = true;
+        ctrl_ack_value = 1;
+    } else {
+        printf("RMDIR: %s failed fr=%d\n", path, (int)fr);
+        if (fr == FR_DENIED) {
+            ctrl_mapper_value = DELETE_ERR_NOT_EMPTY;
+        }
+        ctrl_cmd_state = 0;
+    }
+}
+
 static void process_delete_sd_file_request(void) {
     ctrl_ack_value = 0;
+    ctrl_mapper_value = 0;
     cancel_refresh_work();
 
     uint16_t index = query_filtered_index();
@@ -2813,8 +2845,15 @@ static void process_delete_sd_file_request(void) {
     }
 
     uint16_t record_index = filtered_indices[index];
-    if (record_index >= full_record_count || (records[record_index].Mapper & FOLDER_FLAG) != 0) {
+    if (record_index >= full_record_count) {
         ctrl_cmd_state = 0;
+        return;
+    }
+    if ((records[record_index].Mapper & FOLDER_FLAG) != 0) {
+        char folder[sizeof(records[0].Name) + 1];
+        memcpy(folder, records[record_index].Name, sizeof(records[0].Name));
+        folder[sizeof(records[0].Name)] = '\0';
+        process_delete_folder_request(folder);
         return;
     }
 
@@ -3810,6 +3849,26 @@ static void __noinline process_rename_request(void) {
     }
 }
 
+// FatFs allocates its working buffers with ff_memalloc() and is written to cope
+// with a NULL result: dir_clear() (f_mkdir) asks for up to 32 KB and halves the
+// request until it fits. The SDK wraps malloc() so a failure panics ("Out of
+// memory") and the Pico hangs instead, which is what happened when creating a
+// folder on a card with big clusters while the heap (shared with the MP3
+// buffers) was a few hundred bytes short. Allocate without the panic wrapper
+// (the link wraps ff_memalloc to this) and report a failure as NULL.
+extern void *__real_malloc(size_t size);
+extern char __StackLimit;
+
+void *__wrap_ff_memalloc(UINT msize) {
+    void *block = __real_malloc((size_t)msize);
+
+    if (block != NULL && (char *)block + msize > &__StackLimit) {
+        free(block);
+        block = NULL;
+    }
+    return block;
+}
+
 // Called from the RAM-resident menu write handler like process_rename_request().
 // The menu writes the folder name to the data window; the folder is created in
 // the directory currently listed on the browse partition.
@@ -3826,12 +3885,26 @@ static void __noinline process_create_folder_request(void) {
                                rename_buf);
         if (sd_mount_card() && written > 0 && (size_t)written < sizeof(path)) {
             sd_activity_note();
+            // Unlike the other writers, f_mkdir used to run without a timestamp
+            // override, so FatFs asked the RTC code (which asserts on a time it
+            // cannot convert). Stamp it like every other file the firmware creates.
+            fatfs_set_fattime_override(file_write_fattime(0u));
+            // f_mkdir clears a whole cluster and syncs the volume, which can take
+            // seconds on a slow card, and the MSX waits on the bus meanwhile. If
+            // the card or driver never answers, reboot the Pico instead of leaving
+            // both machines frozen (8 s is the longest the watchdog accepts).
+            watchdog_enable(MKDIR_WATCHDOG_MS, true);
+            printf("MKDIR: creating %s\n", path);
+            uint32_t started_us = time_us_32();
             FRESULT fr = f_mkdir(path);
+            watchdog_disable();
+            fatfs_set_fattime_override(0u);
+            uint32_t elapsed_ms = (time_us_32() - started_us) / 1000u;
             if (fr == FR_OK) {
-                printf("MKDIR: %s\n", path);
+                printf("MKDIR: %s done in %u ms\n", path, (unsigned)elapsed_ms);
                 ok = true;
             } else {
-                printf("MKDIR: %s failed fr=%d\n", path, (int)fr);
+                printf("MKDIR: %s failed fr=%d after %u ms\n", path, (int)fr, (unsigned)elapsed_ms);
             }
         }
     }

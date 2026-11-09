@@ -10,7 +10,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v1.1
+VERSION ?= v1.01
 
 # Paths
 PICO_DIR := pico/carnivore2

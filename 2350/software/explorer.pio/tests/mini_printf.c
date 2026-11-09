@@ -83,8 +83,8 @@ int main(void)
         CHECK("%d|%5d|%-5d|%05d", numbers[i], numbers[i], numbers[i], numbers[i]);
     }
 
-    CHECK("MSX PICOVERSE 2350%44s[EXPLORER %s]", "", "v2.61");
-    CHECK("MSX PICOVERSE 2350%4s[EXPLORER %s]", "", "v2.61");
+    CHECK("MSX PICOVERSE 2350%44s[EXPLORER %s]", "", "v2.62");
+    CHECK("MSX PICOVERSE 2350%4s[EXPLORER %s]", "", "v2.62");
     CHECK("Listing:%s", " ROM");
     CHECK("%%");
     CHECK("100%%|%5s|%-5s|", "ab", "cd");

@@ -258,6 +258,27 @@ static void test_bank_switching_and_delayed_reload(void)
     CHECK_EQ(rd(0x4000), 'A');
 }
 
+static void test_dual_slot_start_forces_full_mconf(void)
+{
+    setup();
+    wr(0xFFFF, 0);
+    // Normal start: Mconf is applied as written
+    reg_write(0x00, 0x38);
+    reg_write(0x1E, 0x81);
+    c2_fetch_zero(&c2);
+    CHECK_EQ(c2.mconf, 0x81);
+    // Dual-Slot ENTER start (SCART_SLT written non-zero): full device set, once
+    reg_write(0x00, 0x38);
+    reg_write(0x1E, 0x01);
+    reg_write(0x2A, 0x10);
+    c2_fetch_zero(&c2);
+    CHECK_EQ(c2.mconf, 0xFF);
+    reg_write(0x00, 0x38);
+    reg_write(0x1E, 0x81);
+    c2_fetch_zero(&c2);
+    CHECK_EQ(c2.mconf, 0x81);
+}
+
 static void test_ram_banks(void)
 {
     setup();
@@ -595,6 +616,7 @@ int main(void)
     test_port_f0();
     test_register_window();
     test_bank_switching_and_delayed_reload();
+    test_dual_slot_start_forces_full_mconf();
     test_ram_banks();
     test_mapper();
     test_flash_chip();

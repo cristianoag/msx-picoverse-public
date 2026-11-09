@@ -724,7 +724,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    const size_t fmpac_bios_rom_size = sizeof(______loadrom_pio_fmpac_FMPCCMFC_BIN);
+    const size_t fmpac_bios_rom_size = sizeof(___resources_FMPCCMFC_BIN);
     if (fmpac_bios_rom_size != FMPAC_BIOS_ROM_SIZE) {
         printf("Embedded FM-PAC BIOS must be %u bytes (found %zu)\n",
                (unsigned)FMPAC_BIOS_ROM_SIZE, fmpac_bios_rom_size);
@@ -783,7 +783,7 @@ int main(int argc, char *argv[])
     offset += WIFI_BIOS_ROM_SIZE;
 
     // Hidden FM-PAC BIOS exposed when an Explorer ROM is launched with MSX-MUSIC.
-    memcpy(combined_buffer + offset, ______loadrom_pio_fmpac_FMPCCMFC_BIN, fmpac_bios_rom_size);
+    memcpy(combined_buffer + offset, ___resources_FMPCCMFC_BIN, fmpac_bios_rom_size);
     offset += FMPAC_BIOS_ROM_SIZE;
 
     // Hidden Yamaha SFG BIOS exposed when an Explorer ROM is launched with YM2151/SFG.

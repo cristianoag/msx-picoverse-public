@@ -65,6 +65,16 @@ if ((Get-CFunction $firmware "process_move_paste_request") -notmatch "(?s)f_stat
 if ($firmware -notmatch "(?s)process_cycle_sd_partition_request\(void\) \{.*move_src_valid = false;.*sd_save_browse_partition") {
     throw "A marked file must be forgotten when the browse partition changes"
 }
+# FatFs expects ff_memalloc() to return NULL on failure (f_mkdir halves a 32 KB buffer until it
+# fits); the SDK's malloc wrapper panics instead, which hung the Pico. The link must wrap it.
+$cmakeText = Get-Content (Join-Path $root "pico\explorer\CMakeLists.txt") -Raw
+if ($cmakeText -notmatch "target_link_options\(explorer PRIVATE -Wl,--wrap=ff_memalloc\)" -or
+    $firmware -notmatch "(?s)void \*__wrap_ff_memalloc\(UINT msize\) \{\s*void \*block = __real_malloc\(\(size_t\)msize\);") {
+    throw "FatFs allocations must go through __wrap_ff_memalloc (no panic on failure)"
+}
+if ((Get-CFunction $firmware "process_create_folder_request") -notmatch "(?s)fatfs_set_fattime_override\(file_write_fattime\(0u\)\);.*watchdog_enable\(MKDIR_WATCHDOG_MS, true\);.*f_mkdir\(path\);\s*watchdog_disable\(\);\s*fatfs_set_fattime_override\(0u\);") {
+    throw "f_mkdir must run with a timestamp override and under the watchdog, both released afterwards"
+}
 if ($firmware -notmatch "static void __noinline process_create_folder_request\(void\)" -or
     (Get-CFunction $firmware "process_create_folder_request") -notmatch "(?s)rename_clean_name\(rename_buf\).*is_excluded_folder\(rename_buf\).*f_mkdir\(path\)") {
     throw "process_create_folder_request must clean and check the name before f_mkdir, out of the SRAM-resident handler"

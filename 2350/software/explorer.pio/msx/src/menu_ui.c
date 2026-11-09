@@ -352,7 +352,7 @@ static void menu_ui_render_last_line(const char *text) {
             if (menu_move_pending) {
                 text = "M: move here";
             } else if (menu_pick_download) {
-                text = "A: set download folder";
+                text = "A: use the open folder";
             }
         }
         sprintf(row, "Page %02d/%02d", currentPage, totalPages);

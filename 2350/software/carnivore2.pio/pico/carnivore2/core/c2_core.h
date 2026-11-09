@@ -127,6 +127,7 @@ typedef struct c2 {
 
     // Set when the active configuration must be reloaded by a bus event
     bool    reload_pending;
+    bool    dual_slot_start;    // boot menu Dual-Slot ENTER start pending (SCART_SLT written non-zero)
 
     // Per 8 KB page read decode cache (see c2_fast_get)
     c2_fast_t fast[8];
