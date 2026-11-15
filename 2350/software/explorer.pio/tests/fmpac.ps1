@@ -75,6 +75,11 @@ if ($dskCase.Groups[1].Value -notmatch "else if \(audio_mode == AUDIO_MODE_MSX_M
 if ($dskCase.Groups[1].Value -notmatch "else if \(sfg_audio\)\s*loadrom_sunrise_sfg_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, sfg_variant\);") {
     throw "MAPPER_DSK does not route YM2151/SFG to loadrom_sunrise_sfg_common with the DSK backend"
 }
+# The DSK Megaram option reuses the Nextor MegaRAM loaders with the DSK backend
+# and keeps the entry's 1MB Mapper choice.
+if ($dskCase.Groups[1].Value -notmatch "if \(dsk_megaram\)[^;]*?\{[^}]*loadrom_sunrise_fmpac_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, true\);[^}]*loadrom_sunrise_megaram_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, dsk_mapper\);") {
+    throw "MAPPER_DSK does not route Megaram to the Nextor MegaRAM loaders with the DSK backend"
+}
 # Dual PSG rides the plain/mapper DSK loops, whose system audio starts it.
 foreach ($name in @("loadrom_sunrise_storage", "loadrom_sunrise_mapper_storage")) {
     if ((Get-CFunction $firmware $name) -notmatch "system_audio_init_for_sunrise\(") {

@@ -24,14 +24,16 @@ The feature lets the user choose, per ROM, whether the game runs at **60 Hz**, *
 machine **Default**. The choice is stored per ROM and applied automatically each time that ROM is
 launched.
 
-It is offered only for **regular game ROMs**. The system ROMs (Nextor/Sunrise IDE, Carnivore2,
-MegaRAM) manage their own boot flow and are intentionally excluded.
+It is offered for **regular game ROMs** and, since v2.63, **DSK images**, on MSX2 and newer.
+DSK choices are saved in `GAME.DSK.PVC` and applied through the cached Nextor kernel's INIT,
+without modifying the disk image. The system ROM entries (Nextor/Sunrise IDE, Carnivore2,
+MegaRAM) manage their own boot flow and remain excluded.
 
 ---
 
 ## 2. User guide
 
-1. Highlight a ROM in the Explorer menu and press **ENTER** to open its detail screen.
+1. Highlight a ROM or DSK in the Explorer menu and press **ENTER** to open its detail screen.
 2. A `Frequency` option is shown with three values, cycled with **LEFT / RIGHT**:
    - `Default` — leave the machine's boot frequency untouched.
    - `60Hz` — force NTSC / 60 Hz.
@@ -322,27 +324,30 @@ When any guard fails the ROM is left completely untouched, so choosing a frequen
 game from booting.
 ### System-ROM exclusion
 
-`prepare_rom_source()` is shared by the regular game mappers **and** the Nextor/Sunrise loaders, so
-the patch is gated by launch flags set in `main()`:
+Regular games use `prepare_rom_source()`; Nextor/Sunrise loaders use
+`prepare_sunrise_mapper_rom_source()`. Both apply the self-restoring stub to their cache,
+gated by launch flags set in `main()`:
 
 ```c
-bool system_mapper = is_system_mapper(mapper);
-vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
+bool system_mapper = is_system_mapper(mapper) || is_dsk;
+vdp_freq_launch = (!system_mapper || is_dsk) ? ctrl_vdp_frequency : VDP_FREQ_DEFAULT;
 cpu_mode_launch = system_mapper ? CPU_MODE_DEFAULT : ctrl_cpu_mode;
 ```
 
 `is_system_mapper()` covers `MAPPER_SUNRISE_USB/SD`, `MAPPER_SUNRISE_MAPPER_USB/SD`,
 `MAPPER_C2_SD/USB`, and `MAPPER_MEGARAM(_SD/_USB)`. Setting the launch flags to `DEFAULT` for those
-guarantees their headers are never touched. (Patching the Nextor header previously caused a boot
-loop; this gate fixes it.)
+guarantees their headers are never touched. DSK launches are the frequency-only exception:
+the hidden Nextor kernel uses the stub at the end of block 0, away from its driver jump table,
+and its original bytes and INIT vector are restored before Nextor INIT runs. All DSK audio
+and memory variants share this cache path. CPU speed remains disabled for DSKs.
 
 ---
 
 ## 8. Menu-side UI details
 
-- The `Frequency` line is rendered on the ROM detail screen only when
-  `allow_freq = !record_is_system_rom(record) && (Peek(0x002D) != 0)` is true. It is therefore
-  hidden for system ROMs **and** on MSX1 (VDP R9 only exists on the V9938/V9958; the main-ROM MSX
+- The `Frequency` line is rendered for regular ROMs or DSK entries (mapper code 23), only when
+  `Peek(0x002D) != 0`. It is therefore
+  hidden for other system ROMs **and** on MSX1 (VDP R9 only exists on the V9938/V9958; the main-ROM MSX
   version byte at `0x002D` is `0` on MSX1). When hidden, the following options (SD partition / Wi-Fi /
   Action) shift up to fill the gap, and the launch forces the applied value to `Default` so the Pico
   never patches R9 on a machine without register 9.
@@ -381,7 +386,8 @@ from the Pico-injected stub.
 - **A few mappers are not covered.** NEO8, NEO16 and ASCII16-X do not use the shared ROM cache the
   patch is written into, and Planar64 carries its `AB` header at image offset `0x4000` rather than
   0. Those ROMs launch normally, with the option simply not applied.
-- **System ROMs are excluded** (Nextor/Sunrise, Carnivore2, MegaRAM). For DOS/Nextor use, tools such
+- **System ROM entries are excluded** (Nextor/Sunrise, Carnivore2, MegaRAM); DSK launches support
+  the frequency override through their hidden Nextor kernel. For other DOS/Nextor use, tools such
   as SofaRun can switch the frequency from within the environment.
 
 ---

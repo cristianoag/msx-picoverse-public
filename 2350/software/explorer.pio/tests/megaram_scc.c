@@ -150,6 +150,7 @@ static void test_nextor_drain(void) {
     sunrise_megaram_bus_t bus = {
         .ide = &ide, .mapper_reg = {3, 2, 1, 0}, .megaram_bank_reg = {0, 1, 2, 3},
         .subslot_reg = 1u << 4, .megaram_write_enabled = false, .megaram_scc_audio = true,
+        .mapper_enable = true,
     };
     reset_state(SCC_STANDARD);
     // Page 2 in the 1MB mapper subslot: SCC-looking writes are mapper RAM.
@@ -169,7 +170,13 @@ static void test_nextor_drain(void) {
     enqueue(0x7FFF, 4);
     sunrise_megaram_drain_writes(&bus);
     assert(ide_count == 1 && ide.segment == 4);
-    printf("PASS: Nextor MegaRAM drain keeps SCC in the MegaRAM subslot only\n");
+    // Without the 1MB mapper the subslot-1 pages are empty: writes go nowhere.
+    bus.mapper_enable = false;
+    enqueue(0xFFFF, 1u << 4);
+    enqueue(0x9800, 0x77);
+    sunrise_megaram_drain_writes(&bus);
+    assert(mapper_count == 2);
+    printf("PASS: Nextor MegaRAM drain keeps SCC in the MegaRAM subslot only, mapper optional\n");
 }
 
 int main(void) {

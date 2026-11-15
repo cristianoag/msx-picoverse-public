@@ -70,9 +70,16 @@ DSK entries are treated as SYSTEM-style entries on the MSX detail screen:
 | WiFi support | No |
 | Mapper override | No |
 | SD partition | No |
-| 50/60 Hz, CPU speed | No |
+| **Frequency**: Default, 60Hz, 50Hz (v2.63) | Yes, on MSX2 and newer |
+| CPU speed | No |
 
 Options are saved in a per-image file named after the full image name, for example `GAME.DSK.PVC`, so a `GAME.ROM` in the same folder keeps its own `GAME.PVC`.
+
+The frequency choice uses the existing `.PVC` byte 9 and is restored for quick run too.
+`Default` leaves the machine's boot frequency unchanged. For `60Hz` or `50Hz`, the cached
+Nextor kernel runs the same self-restoring INIT stub as game ROMs: it changes only R9 bit 1
+through BIOS `WRTVDP`, then restores the original kernel bytes before Nextor INIT runs.
+The disk image is not patched. Disk software that changes R9 itself can override the choice.
 
 ### External SCC and External SCC+
 
@@ -196,7 +203,7 @@ Core 0 is unchanged from the Sunrise microSD mode: the shared `loadrom_sunrise_s
 The launch path in `main()` of [explorer.c](../2350/software/explorer.pio/pico/explorer/explorer.c) runs these steps for a DSK record:
 
 1. **Record detection.** `is_dsk_record()` is true when the record is not a folder or MP3 and its mapper code is `MAPPER_DSK` (23).
-2. **Profile clamp.** `dsk_audio_mode_supported()` keeps External SCC/SCC+, MSX-MUSIC, YM2151/SFG and Dual PSG and forces every other audio mode and profile to none; WiFi is forced off. The launch is treated like a SYSTEM launch, so no 50/60 Hz or CPU INIT patch is armed and no game audio pipeline is started.
+2. **Profile clamp.** `dsk_audio_mode_supported()` keeps External SCC/SCC+, MSX-MUSIC, YM2151/SFG and Dual PSG and forces every other audio mode and profile to none; WiFi is forced off. The launch is treated like a SYSTEM launch for CPU speed and audio setup, but preserves the per-image frequency override for the cached Nextor INIT.
 3. **Hold `/WAIT`** and stop the MP3 core (common launch path).
 4. **Stage the image.** `load_rom_from_sd()` streams the whole `.DSK` into the 4 MB PSRAM SD region (`sd_rom_region`), starting 1 KB in, so the two sectors in front of it are free for the multi-disk header.
 5. **Build the write map.** `dsk_build_write_map()` resolves the file's clusters to card sectors (see [section 6](#6-write-through-and-the-write-map)).
@@ -358,7 +365,7 @@ In addition, the options loader and both `CMD_SET_MAPPER` handlers refuse to re-
 ## 10. MSX menu changes
 
 - [menu.c](../2350/software/explorer.pio/msx/src/menu.c): `mapper_description()` returns `"DSK"` for code 23, and `build_menu_row_text()` shows `DSK` in the type column of the menu list (other SD files show `ROM`, `MP3`, `WAV` or `<DIR>`).
-- [screen_rom.c](../2350/software/explorer.pio/msx/src/screen_rom.c): `record_is_system_rom()` includes code 23. This hides mapper override, 50/60 Hz and CPU speed. DSK is not a Sunrise system ROM, so WiFi and the SD partition option are hidden too. `record_supports_external_scc_audio()` returns true for DSK entries (code 23), as for the Sunrise SYSTEM ROMs. External SCC/SCC+, Dual PSG, MSX-MUSIC and YM2151/SFG all derive from it, so those profiles appear in the Audio row without DSK-specific rules. PSG Mirror stays available, and DSK entries get the `1MB Mapper` row (the WiFi row, relabelled).
+- [screen_rom.c](../2350/software/explorer.pio/msx/src/screen_rom.c): `record_is_system_rom()` includes code 23. This hides mapper override and CPU speed; frequency explicitly allows DSK on MSX2 and newer. DSK is not a Sunrise system ROM, so WiFi and the SD partition option are hidden too. `record_supports_external_scc_audio()` returns true for DSK entries (code 23), as for the Sunrise SYSTEM ROMs. External SCC/SCC+, Dual PSG, MSX-MUSIC and YM2151/SFG all derive from it, so those profiles appear in the Audio row without DSK-specific rules. PSG Mirror stays available, and DSK entries get the `1MB Mapper` row (the WiFi row, relabelled).
 - The first line of every detail screen (ROM, DSK, MP3 and WAV) is `Name:`, printed by one shared `render_detail_name_line()` instead of per-type `ROM:`, `MP3:` and `WAV:` code. That saved 185 bytes of menu code.
 
 Size budget: the menu's `_CODE` segment ends at `0x4050 + 0x7843 = 0xB893`, 109 bytes below the Pico communication window at `0xB900` (`MEMORY_START`).

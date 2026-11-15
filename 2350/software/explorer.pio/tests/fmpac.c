@@ -14,7 +14,7 @@
 
 typedef struct { uint8_t segment; } sunrise_ide_t;
 typedef struct { uint8_t Mapper; } ROMRecord;
-static uint8_t cur_wifi_enabled, current_wavegame_rom, cur_is_dsk;
+static uint8_t cur_wifi_enabled, current_wavegame_rom, cur_is_dsk, cur_megaram_enabled;
 static uint16_t fm_writes[16];
 static unsigned fm_count, mapper_count, megaram_count, bank_count, ide_count;
 static uint32_t mapper_offset;
@@ -290,7 +290,7 @@ static void test_profiles(void) {
             bool dsk_audio = profile != AUDIO_PROFILE_SCC && profile != AUDIO_PROFILE_SCC_PLUS &&
                              profile != AUDIO_PROFILE_MEGARAM_SCC && profile != AUDIO_PROFILE_MEGARAM_SCC_PLUS;
             assert(audio_profile_is_supported(&record, profile) == dsk_audio);
-            assert(dsk_audio_mode_supported(resolve_audio_mode(MAPPER_DSK, profile)) == dsk_audio);
+            assert(dsk_audio_mode_supported(resolve_audio_mode(MAPPER_DSK, profile), false) == dsk_audio);
         }
         assert(audio_profile_is_supported(&record, AUDIO_PROFILE_NONE));
     }
@@ -303,7 +303,26 @@ static void test_profiles(void) {
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG01) == AUDIO_MODE_YM2151_SFG01);
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_YM2151_SFG01_4MHZ) == AUDIO_MODE_YM2151_SFG01);
     assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_SN76489_FRANKY) == AUDIO_MODE_SN76489_FRANKY);
-    assert(!dsk_audio_mode_supported(AUDIO_MODE_NONE));
+    assert(!dsk_audio_mode_supported(AUDIO_MODE_NONE, false));
+    // With Megaram on, only the profiles the Nextor MegaRAM loaders serve are
+    // offered (MSX-MUSIC, MegaRAM SCC/SCC+), in the menu and at launch, with
+    // the 1MB Mapper row off or on.
+    cur_megaram_enabled = 1;
+    for (unsigned mapper_on = 0; mapper_on < 2; mapper_on++) {
+        cur_wifi_enabled = (uint8_t)mapper_on;
+        for (unsigned i = 0; i < sizeof(dsk_profiles); i++) {
+            uint8_t profile = dsk_profiles[i];
+            bool mega_audio = profile == AUDIO_PROFILE_MSX_MUSIC || profile == AUDIO_PROFILE_MEGARAM_SCC ||
+                              profile == AUDIO_PROFILE_MEGARAM_SCC_PLUS;
+            assert(audio_profile_is_supported(&record, profile) == mega_audio);
+            assert(dsk_audio_mode_supported(resolve_audio_mode(MAPPER_DSK, profile), true) == mega_audio);
+        }
+    }
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_MEGARAM_SCC) == AUDIO_MODE_MEGARAM_SCC);
+    assert(resolve_audio_mode(MAPPER_DSK, AUDIO_PROFILE_MEGARAM_SCC_PLUS) == AUDIO_MODE_MEGARAM_SCC_PLUS);
+    assert(sanitize_audio_profile(&record, AUDIO_PROFILE_DUAL_PSG) == AUDIO_PROFILE_NONE);
+    assert(!dsk_audio_mode_supported(AUDIO_MODE_NONE, true));
+    cur_megaram_enabled = 0;
     // The DSK rule must not leak to other system entries: Nextor + MegaRAM
     // (19) still has no Dual PSG/SFG, standalone MegaRAM (21) no MSX-MUSIC.
     cur_is_dsk = 0;

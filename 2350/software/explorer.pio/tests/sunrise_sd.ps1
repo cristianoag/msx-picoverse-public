@@ -8,7 +8,7 @@ $screen = Get-Content (Join-Path $root "msx\src\screen_rom.c") -Raw
 $sdHeader = Get-Content (Join-Path $storage "sunrise_sd.h") -Raw
 
 function Get-CFunction([string]$source, [string]$name) {
-    $match = [regex]::Match($source, "(?m)^(?:static|void)[^\r\n]*\b$name\b\s*\([^;{]*\)\s*\{")
+    $match = [regex]::Match($source, "(?m)^(?:static|void)[^\r\n]*\b$name\b\)?\s*\([^;{]*\)\s*\{")
     if (!$match.Success) { throw "Cannot find function $name" }
     $end = $match.Index + $match.Length
     $depth = 1
@@ -26,14 +26,19 @@ $menuValue = [regex]::Match($menu, "(?m)^#define SD_PART_WHOLE_DISK\s+(\d+)u?")
 if (!$sdValue.Success -or !$menuValue.Success -or $sdValue.Groups[1].Value -ne $menuValue.Groups[1].Value) {
     throw "Firmware and menu disagree on Whole Disk selection"
 }
-$names = 'PVC_OPTIONS_\w+|MAPPER_\w+|SOURCE_SD_FLAG|FOLDER_FLAG|MP3_FLAG|AUDIO_VOLUME_\w+|VDP_FREQ_\w+|CPU_MODE_\w+|AUDIO_PROFILE_NONE|SD_BROWSE_PARTITION_MAX|SD_PATH_MAX|CTRL_SD_PARTITION_INFO_SIZE|SOURCE_MODE_SD'
+$names = 'PVC_OPTIONS_\w+|MAPPER_\w+|SOURCE_SD_FLAG|FOLDER_FLAG|MP3_FLAG|AUDIO_VOLUME_\w+|VDP_FREQ_\w+|CPU_MODE_\w+|AUDIO_PROFILE_NONE|SD_BROWSE_PARTITION_MAX|SD_PATH_MAX|CTRL_SD_PARTITION_INFO_SIZE|SOURCE_MODE_SD|BOOT_STUB_\w+|BOOT_PATCH_TRIGGER_OFF'
 $types = (([regex]::Matches($firmware, "(?m)^#define (?:$names)\b[^\r\n]*") |
            Where-Object { $_.Value -notmatch 'MAPPER_DETECT_MAX_ROM_SIZE' } |
            ForEach-Object { $_.Value }) -join "`n") + "`n"
 $descriptions = [regex]::Match($firmware, "(?s)static const char \*MAPPER_DESCRIPTIONS\[\] = \{.*?\};")
 if (!$descriptions.Success) { throw "Cannot find mapper descriptions" }
 $types += $descriptions.Value + "`n"
-$code = ""
+$bootState = [regex]::Match($firmware, "(?s)static volatile uint32_t boot_patch_trigger_rel = .*?static uint32_t boot_patch_offset = [^;]*;")
+if (!$bootState.Success) { throw "Cannot find boot patch state" }
+$code = $bootState.Value + "`n"
+foreach ($name in @("build_boot_stub", "boot_patch_disarm", "boot_patch_restore", "apply_boot_patches", "read_rom_byte")) {
+    $code += (Get-CFunction $firmware $name) + "`n"
+}
 foreach ($name in @("is_system_mapper", "is_sunrise_sd_mapper", "mapper_code_from_record_byte", "is_dsk_record",
                     "set_sunrise_partition_text", "update_sunrise_partition_text", "refresh_sunrise_partition_info",
                     "process_load_options_request", "process_save_options_request",
@@ -47,6 +52,16 @@ if (!$write.Success) { throw "Cannot find the SD partition control handler" }
 $code += "static void write_partition_control(uint8_t data) { $($write.Groups[1].Value) }`n"
 if ((Get-CFunction $screen "show_rom_screen") -notmatch 'sd_partition = next_sd_partition\(') {
     throw "The SD Part key handler must use the tested partition cycle"
+}
+if ((Get-CFunction $screen "show_rom_screen") -notmatch 'allow_freq = \(!record_is_system_rom\(record\) \|\| record_mapper_code\(record->Mapper\) == 23\) && \(Peek\(0x002D\) != 0\)' -or
+    $firmware -notmatch 'vdp_freq_launch = \(!system_mapper \|\| is_dsk\) \? ctrl_vdp_frequency : VDP_FREQ_DEFAULT;' -or
+    $firmware -notmatch 'cpu_mode_launch = ctrl_cpu_mode;') {
+    throw "DSKs must offer frequency on MSX2+, preserve it at launch and apply the CPU speed like every other entry"
+}
+$cache = Get-CFunction $firmware "prepare_sunrise_mapper_rom_source"
+if ($cache -notmatch 'boot_patch_disarm\(\);' -or
+    $cache -notmatch 'rom_cached_size = bytes_to_cache;[\s\S]*apply_boot_patches\(rom_sram, bytes_to_cache\);') {
+    throw "Every DSK Nextor loader must apply the self-restoring boot patch to its cache"
 }
 
 $work = Join-Path $PSScriptRoot (".sunrise-sd-" + [guid]::NewGuid().ToString("N"))
@@ -90,7 +105,7 @@ uint32_t ext_bits16(const uint8_t *cid, unsigned high, unsigned low);
     $exe = Join-Path $work "sunrise-sd.exe"
     & $CC -std=c11 -O2 -Wall -Wextra -Werror -I $work -I $storage (Join-Path $PSScriptRoot "sunrise_sd_test.c") -o $exe
     if ($LASTEXITCODE -ne 0) { throw "Sunrise SD host compilation failed" }
-    & $exe
+    & $exe (Join-Path $root "resources\Nextor-2.1.4.SunriseIDE.MasterOnly.ROM")
     if ($LASTEXITCODE -ne 0) { throw "Sunrise SD host tests failed" }
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force

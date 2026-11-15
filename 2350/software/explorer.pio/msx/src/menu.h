@@ -117,6 +117,9 @@
 #define CTRL_DISK_ACT 0xBFA3
 #define CTRL_FLASH_FREE_KB 0xBFA4
 #define CTRL_FLASH_LARGEST_KB 0xBFA6
+// Per-DSK MegaRAM choice (0 = No, 1 = Yes). Load read-back and launch poke;
+// the save channel carries it in query buffer byte 10.
+#define CTRL_MEGARAM 0xBFA8
 #define MP3_CTRL_BASE      0xBFE0
 #define MP3_CTRL_CMD       (MP3_CTRL_BASE + 0)
 #define MP3_CTRL_STATUS    (MP3_CTRL_BASE + 1)

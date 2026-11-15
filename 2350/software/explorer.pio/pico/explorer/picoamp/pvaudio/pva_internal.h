@@ -64,9 +64,12 @@ typedef struct
     uint32_t sample_rate;
     uint8_t  channels;
     bool     seekable;
+    uint32_t pic_pos, pic_len;      // the tag's picture (APIC, JPEG): where in the file; len 0 = none
+    bool     pic_front;             // it is the front cover
 } pva_track_info_t;
 
 bool pva_dec_init(void);
+const char *pva_dec_path(void);           // the file that is open (FatFs path)
 int  pva_dec_open(const char *fatfs_path, pva_track_info_t *info);  // PVA_OK / PVA_E_xxx
 void pva_dec_close(void);
 bool pva_dec_active(void);
@@ -121,6 +124,9 @@ void   pva_net_lend_tls(bool on);     // a web request borrows the stream's TLS 
 bool   pva_net_tls_free(void);        // the stream holds none now
 bool   pva_net_is_tls(void);          // the stream's URL is https
 void   *pva_net_spare_take(size_t n);   // a piece of it for good (NULL: none left)
+void   *pva_net_ring_idle(size_t n);     // the stream ring while no stream plays (covers): NULL else
+#define PVA_ART_KEEP (48u * 1024u)       // stream RAM kept for the covers' online part (a big stream RAM only)
+void   *pva_net_art_block(size_t n);     // that block, once (NULL: none)
 uint8_t pva_dir_conn(void);     // the directory's
 
 // the Radio Browser directory (pva_dir.c)
@@ -235,6 +241,8 @@ bool     pva_web_init(void);
 int      pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done);
 void     pva_web_poll(void);
 bool     pva_web_busy(void);
+void     pva_web_abort(void);
+void     pva_web_no_lend(void);         // the next request does not borrow the stream's TLS connection
 uint8_t  pva_web_result(void);
 uint8_t  pva_web_error(void);           // PVA_NERR_xxx
 uint16_t pva_web_http(void);
@@ -250,6 +258,7 @@ uint8_t     pva_cfg_gen(void);
 // time, place and weather now (pva_clock.c)
 void pva_clock_http_date(const char *v);
 bool pva_clock_have_time(void);
+void pva_clock_civil(uint32_t epoch, int *year, uint8_t *mon, uint8_t *day, uint8_t *hour, uint8_t *min, uint8_t *wday);  // (wday: 0 Monday)
 void pva_clock_poll(void);
 void pva_clock_enable(void);
 void pva_clock_cfg_changed(void);
@@ -278,6 +287,23 @@ int64_t pva_days_from_civil(int y, unsigned m, unsigned d);
 void    pva_civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d);
 bool    pva_clock_utc(int64_t *now, int32_t *offset);   // false: no time yet (offset 0 without the zone)
 
+// the market monitor (pva_markets.c, its catalogue pva_markets_cat.c)
+typedef struct { const char *sym, *name; uint8_t dec; } pva_mkt_item_t;
+typedef struct { uint8_t region; const char *name; const pva_mkt_item_t *items; uint8_t n; } pva_mkt_list_t;
+extern const char *const pva_mkt_region_codes[];    // end with NULL
+extern const char *const pva_mkt_region_names[];
+extern const pva_mkt_list_t pva_mkt_lists[];        // ends with a NULL name
+typedef struct { const char *sym, *name; const pva_mkt_item_t *items; uint8_t n; } pva_mkt_members_t;
+extern const pva_mkt_members_t pva_mkt_members[];   // an index's symbol and its members; ends with a NULL symbol
+int  pva_news_fetch_url(const char *name, const char *url);   // a feed that is not one of My feeds (PVA_NEWS_EXT)
+void pva_markets_init(void);
+void pva_markets_poll(void);
+int  pva_markets_cmd(uint8_t code, const uint8_t *args);    // PVA_C_MKT_xxx
+void pva_markets_state(uint8_t *out);               // PVA_CK_MKT_STATE.. (4 bytes)
+const char *pva_clock_zone(void);                   // "Europe/Amsterdam" ("": not known yet)
+pva_json_t *pva_clock_json(void);                   // the clock's JSON reader (one web request runs at a time)
+void pva_web_agent(const char *ua);                 // the next request's User-Agent (then the usual one again)
+
 // replies (pva_engine.c)
 void pva_reply_byte(uint8_t b);
 void pva_reply_str(const char *s);
@@ -291,5 +317,23 @@ void pva_reply_patch16(uint32_t at, uint16_t v);   // a u16 at that place of the
 // helpers
 int  pva_kind_from_name(const char *name);   // PVA_DE_xxx or 0
 void pva_copy_ascii(char *dst, size_t size, const char *src, size_t src_len);
+
+// covers (pva_art.c)
+bool    pva_art_init(void);
+void    pva_art_track(const char *fatfs_path, uint32_t pic_pos, uint32_t pic_len, const char *artist, const char *album, const char *title);
+void    pva_art_none(void);
+void    pva_art_station(const char *url, const char *uuid, const char *name);
+void    pva_art_song(const char *artist, const char *title);
+bool    pva_art_online(void);
+bool    pva_card_writes(void);
+// the default pictures (pva_art_defaults.c): 80 x 80 baseline JPEGs
+#define PVA_ART_DEFAULTS 3
+extern const uint8_t *const pva_art_default[PVA_ART_DEFAULTS];
+extern const uint16_t pva_art_default_len[PVA_ART_DEFAULTS];
+
+void    pva_art_poll(void);
+int     pva_art_cmd(uint8_t code, const uint8_t *args);
+uint8_t pva_art_state(void);
+uint8_t pva_art_gen(void);
 
 #endif

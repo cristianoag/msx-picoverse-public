@@ -85,6 +85,12 @@ set(EXPLORER_SOURCES
     picoamp/pvaudio/pva_clock.c
     picoamp/pvaudio/pva_news.c
     picoamp/pvaudio/pva_news_cat.c
+    picoamp/pvaudio/pva_markets.c
+    picoamp/pvaudio/pva_markets_cat.c
+    picoamp/pvaudio/pva_art.c
+    picoamp/pvaudio/pva_art_defaults.c
+    picoamp/pvaudio/pva_cover.c
+    picoamp/pvaudio/tjpgd/tjpgd.c
     picoamp/pvaudio/pva_hal_pico.c
     msx_bus.pio
 )

@@ -77,7 +77,7 @@
 #define NEXTOR3_ROM                ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
 
 // Menu label of the embedded PicoAmp player; it carries the upstream release.
-#define PICOAMP_LABEL              "PicoAmp 1.3 by Jzzy"
+#define PICOAMP_LABEL              "PicoAmp 1.4 by Jzzy"
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",

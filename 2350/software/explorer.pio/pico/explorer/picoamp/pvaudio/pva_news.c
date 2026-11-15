@@ -184,8 +184,18 @@ static bool resolve(const char *t, size_t n, char *name, size_t ns, char *url, s
     return name[0] && (!strncmp(url, "http://", 7) || !strncmp(url, "https://", 8));
 }
 
+// a feed from elsewhere (the markets: an instrument's headlines), feed number PVA_NEWS_EXT
+static char x_name[40], x_url[200];
+
 static bool fav(uint8_t i, char *name, size_t ns, char *url, size_t us)
 {
+    if (i == PVA_NEWS_EXT)
+    {
+        if (!x_url[0]) return false;
+        snprintf(name, ns, "%s", x_name);
+        snprintf(url, us, "%s", x_url);
+        return true;
+    }
     char s[FAVS_TEXT];
     favs_get(s, sizeof s);
     const char *t;
@@ -1335,6 +1345,19 @@ static int news_fetch(uint8_t f)
     return PVA_OK;
 }
 
+int pva_news_fetch_url(const char *name, const char *url)
+{
+    snprintf(x_name, sizeof x_name, "%s", name);
+    snprintf(x_url, sizeof x_url, "%s", url);
+    return news_fetch(PVA_NEWS_EXT);
+}
+
+// Yahoo's feeds answer a browser's User-Agent only
+static void feed_agent(const char *url)
+{
+    if (strstr(url, "yahoo.com/")) pva_web_agent("Mozilla/5.0 (compatible; PicoAmp/1.3; MSX PicoVerse 2350)");
+}
+
 int pva_news_cmd(uint8_t c, const uint8_t *a)
 {
     switch (c)
@@ -1372,6 +1395,7 @@ void pva_news_poll(void)
         f_wgen = f_gen;
         f_first = true;
         f_new = 0;
+        feed_agent(url);
         if (pva_web_get_from(url, f_got, body, fetch_done) != PVA_OK) fetch_done(false);
         return;
     }
@@ -1398,6 +1422,7 @@ void pva_news_poll(void)
         f_first = true;
         f_wgen = f_gen;
         xml_reset(M_LIST);
+        feed_agent(url);
         if (pva_web_get(url, body, fetch_done) != PVA_OK) { st = PVA_NEWS_FAILED; err = PVA_NERR_NOWIFI; }
         return;
     }

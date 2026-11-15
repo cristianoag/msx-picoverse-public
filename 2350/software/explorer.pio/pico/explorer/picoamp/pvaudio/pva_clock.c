@@ -66,6 +66,7 @@ static uint8_t  q = Q_NONE;
 static uint8_t  last_err;
 static bool     q_ok;
 static pva_json_t J;
+pva_json_t *pva_clock_json(void) { return &J; }     // the reader, for another module's web request
 // ip-api's fields
 static char     ip_city[40], ip_region[40], ip_cc[4], ip_tz[40], ip_lat[16], ip_lon[16];
 static bool     ip_success;
@@ -141,6 +142,8 @@ void pva_clock_http_date(const char *v)
 }
 
 bool pva_clock_have_time(void) { return have_utc; }
+const char *pva_clock_zone(void) { return have_zone ? zone : ""; }
+
 
 bool pva_clock_utc(int64_t *now, int32_t *offset)
 {
@@ -160,6 +163,21 @@ bool pva_clock_local(uint8_t *hour, uint8_t *min, uint8_t *wday)
     *min = (uint8_t)((rem / 60) % 60);
     *wday = (uint8_t)(((days % 7) + 7 + 3) % 7);
     return true;
+}
+
+// a time (seconds since 1970, UTC) in the place's time (UTC when no place is known)
+void pva_clock_civil(uint32_t epoch, int *year, uint8_t *mon, uint8_t *day, uint8_t *hour, uint8_t *min, uint8_t *wday)
+{
+    int64_t t = (int64_t)epoch + (have_zone ? offset_s : 0);
+    int64_t days = t >= 0 ? t / 86400 : (t - 86399) / 86400;
+    int32_t rem = (int32_t)(t - days * 86400);
+    unsigned m, d;
+    civil_from_days(days, year, &m, &d);
+    *mon = (uint8_t)m;
+    *day = (uint8_t)d;
+    *hour = (uint8_t)(rem / 3600);
+    *min = (uint8_t)((rem / 60) % 60);
+    *wday = (uint8_t)(((days % 7) + 7 + 3) % 7);
 }
 
 // ---------------------------------------------------------------- helpers

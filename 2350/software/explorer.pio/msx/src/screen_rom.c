@@ -71,7 +71,7 @@ static unsigned char cpu_mode_count = 1;
 static unsigned char cpu_mode_index = 0;
 /* Row/selection indices for the option block, computed once per screen so the
    renderer and the key handler cannot drift apart. */
-static int sel_freq, sel_cpu, sel_part, sel_wifi, sel_action;
+static int sel_freq, sel_cpu, sel_part, sel_wifi, sel_megaram, sel_action;
 /* Live state of the ROM detail screen. Held here rather than passed on every
    render call because render_rom_options_block() is invoked from a dozen key
    handlers and the argument marshalling alone cost hundreds of ROM bytes. */
@@ -89,6 +89,8 @@ static unsigned char forced_mapper_valid;
 static unsigned char cur_audio_profile;
 static unsigned char cur_psg_enabled;
 static unsigned char cur_wifi_enabled;
+/* .DSK only: add a 1MB MegaRAM next to Nextor (and the optional 1MB mapper). */
+static unsigned char cur_megaram_enabled;
 static unsigned char rom_allow_wifi;
 /* .DSK entries reuse the WiFi on/off row for their "1MB Mapper" memory choice
    (no DSK entry offers WiFi); cur_wifi_enabled then means "use the mapper". */
@@ -186,6 +188,7 @@ static unsigned char send_load_options(unsigned int index, unsigned char *audio_
         *vdp_freq = VDP_FREQ_DEFAULT;
     }
     cur_wifi_enabled = Peek(CTRL_WIFI_SUPPORT) ? 1 : 0;
+    cur_megaram_enabled = Peek(CTRL_MEGARAM) ? 1 : 0;
     rom_cpu_mode = Peek(CTRL_CPU_MODE);
     select_cpu_mode(rom_cpu_mode);
     sd_partition_count = Peek(CTRL_SD_PARTITION_INFO_BASE);
@@ -203,7 +206,8 @@ static void send_save_options(unsigned int index, unsigned char audio_profile, u
     Poke(CTRL_QUERY_BASE + 7, vdp_freq);
     Poke(CTRL_QUERY_BASE + 8, rom_allow_cpu ? rom_cpu_mode : CPU_MODE_DEFAULT);
     Poke(CTRL_QUERY_BASE + 9, cur_wifi_enabled);
-    clear_query_tail(10);
+    Poke(CTRL_QUERY_BASE + 10, cur_is_dsk ? cur_megaram_enabled : 0);
+    clear_query_tail(11);
     Poke(CTRL_CMD, CMD_SAVE_OPTIONS);
     wait_ctrl_cmd();
 }
@@ -212,38 +216,20 @@ static unsigned char read_mapper_value(void) {
     return *((unsigned char *)CTRL_MAPPER);
 }
 
-/* Builds the list of CPU speeds this machine can deliver, entirely in assembly
-   to keep the menu ROM small. The Panasonic switched-I/O turbo device answers
-   on port #40 with the complement of the selected manufacturer id (8), and port
-   #41 bit 2 reports whether the 5.37MHz turbo is fitted (0 = available). The
-   previously selected id is saved and restored so the probe is harmless on
-   machines without expanded I/O. MSXVER (main ROM #002D) is 3 on a turbo R,
-   which is the only family with CHGCPU/R800. */
+/* Builds the list of CPU speeds offered on this machine, entirely in assembly
+   to keep the menu ROM small. Turbo is always listed: the launch stub applies
+   it to whichever turbo hardware answers (Panasonic switched-I/O device 8, CIEL
+   Expert3 port #B6) and does nothing elsewhere. MSXVER (main ROM #002D) is 3 on
+   a turbo R, which is the only family with CHGCPU/R800, so R800 is listed only
+   there. */
 static void build_cpu_mode_list(void) {
     __asm
         ld   hl,#_cpu_modes
         ld   (hl),#0
         inc  hl
-        ld   c,#1
-        in   a,(#0x40)
-        cpl
-        push af
-        ld   a,#8
-        out  (#0x40),a
-        in   a,(#0x40)
-        cpl
-        cp   #8
-        jr   nz,cpu_no_pana
-        in   a,(#0x41)
-        bit  2,a
-        jr   nz,cpu_no_pana
         ld   (hl),#1
         inc  hl
-        inc  c
-    cpu_no_pana:
-        pop  af
-        cpl
-        out  (#0x40),a
+        ld   c,#2
         ld   a,(#0x002D)
         cp   #3
         jr   nz,cpu_no_r800
@@ -303,6 +289,7 @@ static void compute_option_selections(unsigned char allow_wifi_support) {
     sel_cpu = rom_allow_cpu ? n++ : -1;
     sel_part = rom_allow_sd_partition ? n++ : -1;
     sel_wifi = allow_wifi_support ? n++ : -1;
+    sel_megaram = cur_is_dsk ? n++ : -1;
     sel_action = n;
 }
 
@@ -331,16 +318,23 @@ static void render_detail_name_line(const ROMRecord *record) {
 }
 
 static void render_rom_screen(const ROMRecord *record) {
-    render_detail_name_line(record);
+    char name[MAX_FILE_NAME_LENGTH + 1];
+
+    // The ROM/DSK options below use a wider label column, so the details are
+    // shifted 4 characters right to keep the colons aligned.
+    menu_ui_render_detail_frame();
+    trim_name_to_buffer(record->Name, name, use_80_columns ? 67 : 25);
+    Locate(0, 3);
+    printf(use_80_columns ? "       Name: %-67.67s" : "       Name: %-25.25s", name);
 
     {
         const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
         unsigned long size_kb = record->Size / 1024u;
 
         Locate(0, 4);
-        printf("   Size: %lu KB", size_kb);
+        printf("       Size: %lu KB", size_kb);
         Locate(0, 5);
-        printf(" Source: %s", source);
+        printf("     Source: %s", source);
         Locate(0, 6);
         printf(" ");
     }
@@ -361,7 +355,7 @@ void show_rom_screen(unsigned int index) {
     /* VDP R9 (50/60Hz) exists only on the V9938/V9958 (MSX2+). The MSX version
        byte at main-ROM 0x002D is 0 on MSX1, so the frequency option is offered
        only when it is non-zero. */
-    unsigned char allow_freq = !record_is_system_rom(record) && (Peek(0x002D) != 0);
+     unsigned char allow_freq = (!record_is_system_rom(record) || record_mapper_code(record->Mapper) == 23) && (Peek(0x002D) != 0);
     int volume_selection = 2;
     int psg_selection = 3;
 
@@ -371,16 +365,16 @@ void show_rom_screen(unsigned int index) {
     cur_audio_profile = AUDIO_PROFILE_NONE;
     cur_psg_enabled = 1;
     cur_wifi_enabled = 0;
+    cur_megaram_enabled = 0;
     cur_is_dsk = record_mapper_code(record->Mapper) == 23;
     rom_allow_wifi = record_is_wifi_capable_system_rom(record) || cur_is_dsk;
 
     build_cpu_mode_list();
     rom_allow_sd_partition = allow_sd_partition;
     rom_allow_freq = allow_freq;
-    /* The CPU speed patch is injected into the launched ROM's cartridge INIT,
-       so it only applies to regular game ROMs; the system ROMs manage their own
-       boot. The row is also hidden when this machine offers no alternative. */
-    rom_allow_cpu = !record_is_system_rom(record) && (cpu_mode_count > 1);
+    /* The CPU speed patch is injected into the launched entry's cartridge INIT,
+       so it applies to every ROM, DSK and SYSTEM entry, on every machine. */
+    rom_allow_cpu = 1;
     compute_option_selections(rom_allow_wifi);
     cur_selection = sel_action;
 
@@ -451,6 +445,7 @@ void show_rom_screen(unsigned int index) {
                     Poke(CTRL_AUDIO, cur_audio_profile);
                     Poke(CTRL_PSG_EMULATION, cur_psg_enabled);
                     Poke(CTRL_WIFI_SUPPORT, rom_allow_wifi ? cur_wifi_enabled : 0);
+                    Poke(CTRL_MEGARAM, cur_is_dsk ? cur_megaram_enabled : 0);
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
                     send_save_options(index, cur_audio_profile, cur_psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
@@ -546,6 +541,12 @@ void show_rom_screen(unsigned int index) {
                     cur_audio_profile = AUDIO_PROFILE_NONE;
                     cur_psg_enabled = 0;
                 }
+                render_rom_options_block();
+            }
+            if ((key == 28 || key == 29) && cur_is_dsk && cur_selection == sel_megaram) {
+                cur_megaram_enabled = cur_megaram_enabled ? 0 : 1;
+                /* MegaRAM changes which audio profiles the loader can serve. */
+                cur_audio_profile = sanitize_audio_profile(record, cur_audio_profile);
                 render_rom_options_block();
             }
             if (key == 'C' || key == 'c') {
@@ -695,6 +696,9 @@ static void render_rom_options_block(void) {
     }
     if (rom_allow_wifi) {
         render_rom_wifi_line(row++, cur_wifi_enabled, cur_selection == sel_wifi);
+    }
+    if (cur_is_dsk) {
+        render_rom_prefixed_line(row++, "   Megaram: ", cur_megaram_enabled ? "Yes" : "No", cur_selection == sel_megaram);
     }
     render_rom_action_line(row, cur_selection == sel_action);
     render_rom_footer_line();
@@ -990,6 +994,12 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     }
     if (audio_profile == AUDIO_PROFILE_NONE) {
         return 1;
+    }
+    /* Nextor + MegaRAM (DSK) serves only MSX-MUSIC and the MegaRAM SCC pair. */
+    if (cur_is_dsk && cur_megaram_enabled) {
+        return audio_profile == AUDIO_PROFILE_MSX_MUSIC ||
+               audio_profile == AUDIO_PROFILE_MEGARAM_SCC ||
+               audio_profile == AUDIO_PROFILE_MEGARAM_SCC_PLUS;
     }
     if (audio_profile == AUDIO_PROFILE_SN76489_FRANKY) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);

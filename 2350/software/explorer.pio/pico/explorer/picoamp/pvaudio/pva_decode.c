@@ -12,6 +12,7 @@
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+#include <stdio.h>
 #include <string.h>
 #include "ff.h"
 #include "mp3dec.h"
@@ -179,6 +180,30 @@ static void id3_text(char *dst, size_t size, const uint8_t *p, uint32_t len)
     }
 }
 
+// An attached picture (APIC): encoding, MIME type 0, picture type, description 0 (00 in UTF-16), the
+// image. Only JPEG (the cover's decoder); the front cover (type 3) before any other.
+static void apic(pva_track_info_t *info, uint32_t at, uint32_t size)
+{
+    uint8_t h[160];
+    UINT br;
+    uint32_t n = size < sizeof h ? size : sizeof h;
+    if (n < 16 || f_read(&file, h, n, &br) != FR_OK || br != n) return;
+    uint32_t i = 1;
+    const char *mime = (const char *)h + 1;
+    while (i < n && h[i]) i++;
+    if (++i >= n) return;
+    uint8_t type = h[i++];
+    bool wide = h[0] == 1 || h[0] == 2;
+    if (wide) { while (i + 1 < n && (h[i] || h[i + 1])) i += 2; i += 2; }
+    else { while (i < n && h[i]) i++; i++; }
+    if (i + 4 > n) return;
+    bool jpeg = (h[i] == 0xFF && h[i + 1] == 0xD8) || !strncmp(mime, "image/jp", 8);
+    if (!jpeg) return;
+    info->pic_pos = at + i;
+    info->pic_len = size - i;
+    info->pic_front = type == 3;
+}
+
 // Read the ID3v2 tag (tags only, the audio position is set by the caller).
 static void parse_id3v2(pva_track_info_t *info, uint32_t tag_size, uint8_t ver, uint8_t flags)
 {
@@ -201,6 +226,8 @@ static void parse_id3v2(pva_track_info_t *info, uint32_t tag_size, uint8_t ver, 
         if (fh[0] == 0) return;             // padding
         uint32_t fs = (ver == 4) ? syncsafe(fh + 4) : rd32be(fh + 4);
         if (fs == 0 || pos + 10 + fs > 10 + tag_size) return;
+        if (!memcmp(fh, "APIC", 4) && !(fh[9] & (ver == 4 ? 0x0B : 0xC0)) && (!info->pic_len || !info->pic_front))
+            apic(info, pos + 10, fs);             // (not compressed, encrypted or unsynchronised)
         char *dst = NULL;
         size_t dsz = 0;
         if (!memcmp(fh, "TIT2", 4)) { dst = info->title; dsz = sizeof info->title; }
@@ -572,9 +599,13 @@ void pva_dec_close(void)
 bool pva_dec_active(void) { return format != 0; }
 uint8_t pva_dec_last_fresult(void) { return last_fr; }
 
+static char open_path[256];
+const char *pva_dec_path(void) { return open_path; }
+
 int pva_dec_open(const char *path, pva_track_info_t *info)
 {
     pva_dec_close();
+    snprintf(open_path, sizeof open_path, "%s", path);
     pva_eq_reset();
     memset(info, 0, sizeof *info);
     int kind = pva_kind_from_name(path);

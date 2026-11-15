@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define __not_in_flash_func(name) name
+#define __noinline __attribute__((noinline))
 #include "diskio.h"
 #include "sd_card.h"
 #include "sunrise_sd.h"
@@ -101,8 +102,11 @@ typedef unsigned FRESULT;
 #define FA_CREATE_ALWAYS 4u
 
 static uint8_t ctrl_ack_value, ctrl_mapper_value, ctrl_wavegame_rom, ctrl_audio_selection;
-static uint8_t ctrl_psg_emulation, ctrl_wifi_support, ctrl_sd_partition;
+static uint8_t ctrl_psg_emulation, ctrl_wifi_support, ctrl_megaram, ctrl_sd_partition;
 static uint8_t ctrl_audio_volume, ctrl_vdp_frequency, ctrl_cpu_mode;
+static uint8_t vdp_freq_launch, cpu_mode_launch;
+static uint8_t rom_sram[BOOT_STUB_BLOCK0_END];
+static uint32_t rom_cached_size;
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE], sd_partition_mask;
 static uint8_t sd_browse_partition, sd_mounted_partition, saved_browse_partition;
 static uint8_t browse_source_mode;
@@ -333,7 +337,7 @@ static void test_persistence_and_blank_card(void)
         filter_query[5] = SD_PART_WHOLE_DISK;
         filter_query[6] = 130;
         process_save_options_request();
-        uint8_t expected[] = { 'P', 'V', 'C', '1', 4, 1, mappers[i], SD_PART_WHOLE_DISK, 130, 0, 0, 0 };
+        uint8_t expected[] = { 'P', 'V', 'C', '1', 4, 1, mappers[i], SD_PART_WHOLE_DISK, 130, 0, 0, 0, 0 };
         assert(ctrl_ack_value == 1 && pvc_size == sizeof(expected) && memcmp(pvc, expected, sizeof(expected)) == 0);
         ctrl_sd_partition = 1;
         process_load_options_request();
@@ -389,6 +393,83 @@ static void test_persistence_and_blank_card(void)
     process_load_options_request();
     assert(ctrl_wifi_support == 0);
     puts("PASS: PicoAmp saved WiFi/200% volume, legacy defaults and fixed system mapper");
+
+    // .DSK: 1MB Mapper (byte 11) and Megaram (byte 12) round trip; 12-byte files
+    // from before Megaram load with it off; other entries never pick it up.
+    reset_state();
+    records[0].Mapper = MAPPER_DSK;
+    filter_query[9] = 1;
+    filter_query[10] = 1;
+    process_save_options_request();
+    assert(ctrl_ack_value == 1 && pvc_size == PVC_OPTIONS_SIZE && pvc[11] == 1 && pvc[12] == 1);
+    process_load_options_request();
+    assert(ctrl_ack_value == 1 && ctrl_wifi_support == 1 && ctrl_megaram == 1);
+    pvc[11] = 0;
+    process_load_options_request();
+    assert(ctrl_wifi_support == 0 && ctrl_megaram == 1);
+    pvc_size = PVC_OPTIONS_DSK_SIZE;
+    pvc[11] = 1;
+    process_load_options_request();
+    assert(ctrl_wifi_support == 1 && ctrl_megaram == 0);
+    pvc_size = PVC_OPTIONS_SIZE;
+    records[0].Mapper = MAPPER_SUNRISE_SD;
+    process_load_options_request();
+    assert(ctrl_megaram == 0);
+    puts("PASS: .DSK Megaram saved in PVC byte 12, 12-byte files load with it off, other entries ignore it");
+}
+
+static void test_dsk_frequency(const char *kernel_path)
+{
+    uint8_t original[sizeof(rom_sram)];
+    FILE *kernel = fopen(kernel_path, "rb");
+    assert(kernel && fread(original, 1, sizeof(original), kernel) == sizeof(original));
+    fclose(kernel);
+    assert(original[0] == 'A' && original[1] == 'B');
+    uint16_t init = (uint16_t)original[2] | ((uint16_t)original[3] << 8);
+    assert(init >= 0x4000 && init < 0x8000);
+
+    reset_state();
+    records[0].Mapper = MAPPER_DSK;
+    cpu_mode_launch = CPU_MODE_DEFAULT;
+    rom_cached_size = sizeof(rom_sram);
+    for (uint8_t frequency = VDP_FREQ_DEFAULT; frequency <= VDP_FREQ_50HZ; frequency++) {
+        filter_query[7] = frequency;
+        process_save_options_request();
+        assert(ctrl_ack_value == 1 && pvc[9] == frequency);
+        process_load_options_request();
+        assert(ctrl_ack_value == 1 && ctrl_vdp_frequency == frequency);
+        vdp_freq_launch = ctrl_vdp_frequency;
+        memcpy(rom_sram, original, sizeof(original));
+        apply_boot_patches(rom_sram, sizeof(rom_sram));
+        if (frequency == VDP_FREQ_DEFAULT) {
+            assert(boot_patch_trigger_rel == BOOT_PATCH_TRIGGER_OFF);
+            assert(memcmp(rom_sram, original, sizeof(original)) == 0);
+            continue;
+        }
+        uint8_t expected[] = {0x3A, 0xE8, 0xFF, 0xCB, frequency == VDP_FREQ_50HZ ? 0xCF : 0x8F,
+                              0x47, 0x0E, 9, 0xCD, 0x47, 0, 0xC3, (uint8_t)init, (uint8_t)(init >> 8)};
+        uint32_t offset = sizeof(rom_sram) - sizeof(expected);
+        assert(boot_patch_offset == offset && boot_patch_trigger_rel == sizeof(rom_sram) - 1);
+        assert(memcmp(rom_sram + offset, expected, sizeof(expected)) == 0);
+        assert(((uint32_t)rom_sram[2] | ((uint32_t)rom_sram[3] << 8)) == 0x4000u + offset);
+        assert(memcmp(rom_sram + 4, original + 4, offset - 4) == 0);
+        for (unsigned byte = 0; byte < sizeof(expected); byte++) {
+            assert(read_rom_byte(original, offset + byte) == expected[byte]);
+            if (byte + 1 < sizeof(expected)) assert(boot_patch_trigger_rel != BOOT_PATCH_TRIGGER_OFF);
+        }
+        assert(boot_patch_trigger_rel == BOOT_PATCH_TRIGGER_OFF);
+        assert(memcmp(rom_sram, original, sizeof(original)) == 0);
+    }
+    pvc[9] = 255;
+    process_load_options_request();
+    assert(ctrl_vdp_frequency == VDP_FREQ_DEFAULT);
+    pvc_size = PVC_OPTIONS_VOLUME_SIZE;
+    process_load_options_request();
+    assert(ctrl_vdp_frequency == VDP_FREQ_DEFAULT);
+    filter_query[7] = 255;
+    process_save_options_request();
+    assert(ctrl_ack_value == 1 && pvc[9] == VDP_FREQ_DEFAULT);
+    puts("PASS: DSK Default/60Hz/50Hz PVC round trip, legacy defaults and self-restoring Nextor INIT stub");
 }
 
 static void test_raw_and_partition_io(void)
@@ -507,8 +588,10 @@ static void test_browsing_independence(void)
     puts("PASS: F2 partition enumeration, cycling, saved browsing selection and FatFs windows stay independent of Whole Disk");
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    assert(argc == 2);
+    test_dsk_frequency(argv[1]);
     test_options_and_cycle();
     test_persistence_and_blank_card();
     test_raw_and_partition_io();

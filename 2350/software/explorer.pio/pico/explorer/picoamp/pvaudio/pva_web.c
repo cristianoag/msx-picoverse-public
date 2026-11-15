@@ -36,6 +36,8 @@ enum { A_DONE, A_FAIL, A_REDIRECT };
 static pva_esp_slot_t *WS;
 static uint8_t  w = W_IDLE;
 static bool     held, available;
+static bool     aborting;
+static bool     next_nolend, w_nolend;  // pva_web_no_lend(): this request does not borrow the stream's TLS           // pva_web_abort(): ended as soon as the ESP's answer is in
 static uint8_t  conn, redirects, after, werr;
 static uint16_t whttp;
 static bool     w_tls;
@@ -55,7 +57,9 @@ static uint32_t t_query, t_phase, wait_until, state_asked;
 static pva_web_body_fn body_fn;
 static pva_web_done_fn done_fn;
 static uint8_t  result = PVA_WEB_IDLE;
+static const char *w_agent, *next_agent;     // another User-Agent for this request (some services want a browser's form)
 
+void     pva_web_agent(const char *ua) { next_agent = ua; }
 uint8_t  pva_web_error(void) { return werr; }
 uint16_t pva_web_http(void) { return whttp; }
 bool     pva_web_busy(void) { return w != W_IDLE; }
@@ -63,6 +67,11 @@ uint8_t  pva_web_result(void) { return result; }
 uint32_t pva_web_length(void) { return whttp == 206 && range_total ? range_total : content_len + (whttp == 206 ? w_from : 0); }   // the whole body's size (0: not said)
 void     pva_web_hold(bool on) { w_hold = on; }
 bool     pva_web_lending(void) { return lending; }        // the stream's TLS connection is borrowed
+
+// the request in flight ends (failed) as soon as the ESP has answered what it was asked:
+// its connection is closed, its done callback is called
+void     pva_web_no_lend(void) { next_nolend = true; }
+void     pva_web_abort(void) { if (w != W_IDLE && w != W_CLOSE) aborting = true; }
 
 static void w_close_then(uint8_t what)
 {
@@ -211,6 +220,18 @@ void pva_web_poll(void)
     if (w == W_IDLE) return;
     pva_esp_io();
     if (!pva_esp_finished(WS) && w != W_HEAD && w != W_BODY && w != W_LEND) return;
+    if (aborting && w != W_CLOSE)
+    {
+        if (WS->want_fn && !pva_esp_finished(WS)) return;      // (its answer first: then it is not left over)
+        aborting = false;
+        if (w == W_OPEN && !WS->rsp_timeout && WS->rc == 0 && WS->pgot >= 1) conn = WS->pfirst[0];
+        pva_esp_clear(WS);
+        if (!werr) werr = PVA_NERR_TIMEOUT;
+        pva_log("web: %.36s given up", w_host);
+        if (w == W_LEND || w == W_DNS) { conn = 0; }
+        w_close_then(A_FAIL);
+        return;
+    }
     uint32_t now = pva_hal_millis();
     switch (w)
     {
@@ -231,7 +252,7 @@ void pva_web_poll(void)
             if (WS->rsp_timeout || WS->rc != 0 || WS->pgot < 1)
             {
                 pva_log("web: %s open failed (rc %u)", w_tls ? "TLS" : "TCP", (unsigned)WS->rc);
-                if (w_tls && !WS->rsp_timeout && WS->rc == 9 && !lent_once && !pva_net_tls_free())
+                if (w_tls && !WS->rsp_timeout && WS->rc == 9 && !lent_once && !w_nolend && !pva_net_tls_free())
                 {
                     // no free connection (UNAPI ERR_NO_FREE_CONN): the ESP-01 has one for TLS,
                     // and the radio uses it; it lends it for this request
@@ -253,8 +274,9 @@ void pva_web_poll(void)
                 char range[32] = "";
                 if (w_from) snprintf(range, sizeof range, "Range: bytes=%lu-\r\n", (unsigned long)w_from);
                 int n = snprintf(req, 640,
-                    "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: PicoAmp/1.1 (MSX PicoVerse 2350)\r\n"
-                    "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host, range);
+                    "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                    "Accept: */*\r\n%sConnection: close\r\n\r\n", w_path, w_host,
+                    w_agent ? w_agent : "PicoAmp/1.1 (MSX PicoVerse 2350)", range);
                 req_len = (n > 0 && n < 640) ? (size_t)n : 0;
                 req_pos = 0;
             }
@@ -362,14 +384,20 @@ int pva_web_get(const char *url, pva_web_body_fn body, pva_web_done_fn done)
 // of it (pva_web_http() 200, not 206)
 int pva_web_get_from(const char *url, uint32_t from, pva_web_body_fn body, pva_web_done_fn done)
 {
+    const char *ua = next_agent;
+    next_agent = NULL;
+    w_nolend = next_nolend;
+    next_nolend = false;
     if (!available) return PVA_E_NOWIFI;
     if (!pva_hal_net_present()) return PVA_E_NOWIFI;
     if (w != W_IDLE) return PVA_E_BUSY;
     if (!parse_target(url) || url[0] == '/') return PVA_E_ARGS;
+    aborting = false;
     if (!held && !pva_esp_acquire()) return PVA_E_NOWIFI;
     held = true;
     body_fn = body;
     done_fn = done;
+    w_agent = ua;
     redirects = 0;
     werr = 0;
     lent_once = false;

@@ -6,9 +6,9 @@ MP3    ?= ../../../lib/picomp3lib/src
 ASSETS ?= assets
 
 CFLAGS = -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -DPVA_HOST \
-         -I.. -Ihostinc -I$(FATFS)/include -I$(FATFS)/ff15/source -I$(MP3)
+         -I.. -I../tjpgd -Ihostinc -I$(FATFS)/include -I$(FATFS)/ff15/source -I$(MP3)
 
-PVA    = ../pva_window.c ../pva_engine.c ../pva_decode.c ../pva_net.c ../pva_esp.c ../pva_dir.c ../pva_eq.c ../pva_viz.c ../pva_json.c ../pva_web.c ../pva_cfg.c ../pva_clock.c ../pva_news.c ../pva_news_cat.c
+PVA    = ../pva_window.c ../pva_engine.c ../pva_decode.c ../pva_net.c ../pva_esp.c ../pva_dir.c ../pva_eq.c ../pva_viz.c ../pva_json.c ../pva_web.c ../pva_cfg.c ../pva_clock.c ../pva_news.c ../pva_news_cat.c ../pva_markets.c ../pva_markets_cat.c ../pva_art.c ../pva_art_defaults.c ../pva_cover.c ../tjpgd/tjpgd.c
 FATSRC = $(FATFS)/ff15/source/ff.c $(FATFS)/ff15/source/ffunicode.c $(FATFS)/ff15/source/ffsystem.c
 MP3SRC = $(filter-out $(MP3)/buffers.c,$(wildcard $(MP3)/*.c))
 

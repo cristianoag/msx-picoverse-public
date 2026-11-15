@@ -1,6 +1,6 @@
-// PicoAmp integration for Explorer. ROM and engine 0.12 from
-// Jzzy-dev/msx-picoplay-picoamp, release 1.3 (tag 1.3, aad845d), plus the
-// later news-catalogue commit 558f9c8.
+// PicoAmp integration for Explorer. ROM and engine 0.16 from
+// Jzzy-dev/msx-picoplay-picoamp, main e09debe (PicoAmp 1.4 with the market monitor,
+// covers and station logos; the last tagged release is 1.3, aad845d).
 // Licensed under CC BY-NC-SA 4.0, like the upstream PicoVerse Audio Engine.
 
 #include <stdio.h>
@@ -17,8 +17,10 @@
 #include "picoamp_bus.h"
 #include "pvaudio/pva_internal.h"
 
-#define ESP_RX_SIZE 4096u
-static uint8_t esp_rx[ESP_RX_SIZE];
+#define ESP_RX_SIZE PICOAMP_ESP_RX_SIZE
+// Lives in the tail of the launch workspace (records[]), which the ROM copy and
+// the core 1 stack leave free, so it takes no SRAM of its own.
+static uint8_t *esp_rx;
 static volatile uint32_t esp_head, esp_tail;
 static volatile bool esp_overflow;
 static bool wifi_enabled;
@@ -119,7 +121,7 @@ bool picoamp_prepare(const uint8_t *rom, size_t rom_size,
                      struct audio_buffer_pool *pool, bool wifi, uint8_t volume)
 {
     if (!rom || !workspace || rom_size != PICOAMP_ROM_SIZE || rom[0] != 'A' || rom[1] != 'B' ||
-        workspace_size < PICOAMP_ROM_SIZE + PICOAMP_STACK_SIZE ||
+        workspace_size < PICOAMP_ROM_SIZE + PICOAMP_STACK_SIZE + ESP_RX_SIZE ||
         ((uintptr_t)workspace & 7u) || !stream || stream_size < PICOAMP_STREAM_SIZE ||
         volume > 200u)
     {
@@ -138,6 +140,7 @@ bool picoamp_prepare(const uint8_t *rom, size_t rom_size,
     cartridge.bank = 0;
     uint32_t *stack = (uint32_t *)((uint8_t *)workspace + PICOAMP_ROM_SIZE);
     memset(stack, 0xA5, PICOAMP_STACK_SIZE);
+    esp_rx = (uint8_t *)stack + PICOAMP_STACK_SIZE;
     stream_ram = stream;
     stream_bytes = PICOAMP_STREAM_SIZE;
     pva_init(arena, PICOAMP_ARENA_SIZE);
@@ -207,7 +210,8 @@ static inline void __not_in_flash_func(drain_writes)(PIO bus, uint sm_write)
     }
 }
 
-void __not_in_flash_func(picoamp_run)(PIO bus, uint sm_read, uint sm_write)
+void __not_in_flash_func(picoamp_run)(PIO bus, uint sm_read, uint sm_write,
+                                      const volatile uint32_t *boot_trigger, void (*boot_restore)(void))
 {
     // All core-0 code and data below are SRAM-resident. Only core 1 uses QMI.
     while (true)
@@ -218,6 +222,10 @@ void __not_in_flash_func(picoamp_run)(PIO bus, uint sm_read, uint sm_write)
             uint16_t addr = (uint16_t)pio_sm_get(bus, sm_read);
             drain_writes(bus, sm_write);
             pio_sm_put_blocking(bus, sm_read, 0xFF00u | picoamp_bus_read(&cartridge, addr));
+            // The boot stub lives in ROM bank 0; its last byte has been served.
+            if (addr >= 0x4000u && (uint32_t)(addr - 0x4000u) == *boot_trigger && cartridge.bank == 0u &&
+                ((cartridge.subslot >> 2) & 3u) == 0u)
+                boot_restore();
         }
     }
 }

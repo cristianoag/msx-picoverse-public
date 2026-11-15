@@ -136,6 +136,8 @@ int main(int argc, char **argv)
     host_esp_present = false;
     pva_core1_init();
     host_audio_sink = sink;
+    // 256 KB of stream RAM: the covers' online part and the directory both fit, the arena stays free
+    assert(pva_art_online() && pva_dir_available());
 
     for (unsigned bank = 0; bank < 4; bank++)
     {

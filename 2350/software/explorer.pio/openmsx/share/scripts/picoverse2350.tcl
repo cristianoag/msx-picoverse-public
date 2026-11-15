@@ -45,7 +45,7 @@
 
 namespace eval picoverse2350 {
 
-variable version "v2.62"
+variable version "v2.63"
 
 # Flash layout, must match pico/explorer/explorer.c and tool/src/explorer.c.
 # Offsets are relative to the menu ROM (the firmware's flash_rom pointer).
@@ -803,7 +803,7 @@ proc ctrl_reset {} {
 	variable ctrl
 	set ctrl [dict create count 0 page 0 status 0xA5 cmd 0 mapper 0 \
 		ack 0 audio 0 wifi 0 psg 1 wavegame 0 sd_part 0 browse_part 1 volume 100 \
-		vdp 0 net 0 cpu 0]
+		vdp 0 net 0 cpu 0 megaram 0]
 }
 
 proc ctrl_set {key value} {
@@ -836,9 +836,11 @@ proc sync_ctrl {} {
 			[expr {$match & 0xFF}] [expr {($match >> 8) & 0xFF}] $mapper $ack $audio \
 			$wifi $psg $wavegame $sd_part $browse_part $volume]]
 		set misc [binary format c4 [list $vdp $net $cpu $disk_act]]
+		set megaram_byte [binary format c [list $megaram]]
 	}
 	put $ctrl_base $block
 	put $vdp_addr $misc
+	put [expr {$vdp_addr + 8}] $megaram_byte
 	if {!$fh_active} {
 		lassign [flash_capacity] free largest
 		put $flash_info_base [binary format ss $free $largest]
@@ -1054,7 +1056,7 @@ proc sunrise_partition_info {selected} {
 proc load_options {} {
 	variable recs
 	variable filtered
-	foreach {k v} {ack 0 mapper 0 wavegame 0 audio 0 psg 1 wifi 0 sd_part 0 volume 100 vdp 0 cpu 0} {
+	foreach {k v} {ack 0 mapper 0 wavegame 0 audio 0 psg 1 wifi 0 sd_part 0 volume 100 vdp 0 cpu 0 megaram 0} {
 		ctrl_set $k $v
 	}
 	set_part_info 0 0 ""
@@ -1071,7 +1073,7 @@ proc load_options {} {
 		return
 	}
 	sd_note
-	set data [string range [read_binary [sd_host $p]] 0 11]
+	set data [string range [read_binary [sd_host $p]] 0 12]
 	set n [string length $data]
 	if {$n < 6 || [string range $data 0 3] ne "PVC1"} return
 	binary scan $data cu* b
@@ -1090,6 +1092,7 @@ proc load_options {} {
 	if {$n >= 10} {ctrl_set vdp [expr {[lindex $b 9] <= 2 ? [lindex $b 9] : 0}]}
 	if {$n >= 11} {ctrl_set cpu [expr {[lindex $b 10] <= 2 ? [lindex $b 10] : 0}]}
 	if {$n >= 12 && [rec_is_dsk $rec]} {ctrl_set wifi [expr {[lindex $b 11] ? 1 : 0}]}
+	if {$n >= 13 && [rec_is_dsk $rec]} {ctrl_set megaram [expr {[lindex $b 12] ? 1 : 0}]}
 	ctrl_set ack 1
 }
 
@@ -1101,13 +1104,14 @@ proc save_options {} {
 	if {$rec eq ""} return
 	set p [pvc_path $rec]
 	if {$p eq ""} return
-	lassign [lrange $query 2 9] audio psg mapper part volume vdp cpu wifi
+	lassign [lrange $query 2 10] audio psg mapper part volume vdp cpu wifi megaram
 	if {$volume > 200} {set volume 100}
 	if {$vdp > 2} {set vdp 0}
 	if {$cpu > 2} {set cpu 0}
 	set psg [expr {$psg ? 1 : 0}]
 	set wifi [expr {$wifi ? 1 : 0}]
-	if {[catch {write_binary [sd_host $p] "PVC1[binary format c8 [list $audio $psg $mapper $part $volume $vdp $cpu $wifi]]"}]} {
+	set megaram [expr {$megaram ? 1 : 0}]
+	if {[catch {write_binary [sd_host $p] "PVC1[binary format c9 [list $audio $psg $mapper $part $volume $vdp $cpu $wifi $megaram]]"}]} {
 		return
 	}
 	sd_note
@@ -1120,7 +1124,7 @@ proc save_options {} {
 proc quick_run {} {
 	variable recs
 	variable filtered
-	foreach {k v} {ack 0 mapper 0 audio 0 psg 1 wifi 0 wavegame 0 volume 100 vdp 0 cpu 0} {
+	foreach {k v} {ack 0 mapper 0 audio 0 psg 1 wifi 0 wavegame 0 volume 100 vdp 0 cpu 0 megaram 0} {
 		ctrl_set $k $v
 	}
 	set idx [query_index]
@@ -1141,7 +1145,7 @@ proc quick_run {} {
 		ctrl_set audio [expr {$code in {3 14} ? 1 : 0}]
 		ctrl_set psg 1
 	}
-	if {![rec_is_dsk $rec]} {ctrl_set wifi 0}
+	if {![rec_is_dsk $rec]} {ctrl_set wifi 0; ctrl_set megaram 0}
 	ctrl_set ack 1
 }
 
@@ -2719,6 +2723,7 @@ proc handle_write {addr value} {
 		}
 		BFF9 {ctrl_set audio $value}
 		BFFA {ctrl_set wifi [expr {$value ? 1 : 0}]}
+		BFA8 {ctrl_set megaram [expr {$value ? 1 : 0}]}
 		BFFB {ctrl_set psg [expr {$value ? 1 : 0}]}
 		BFFD {
 			sunrise_partition_info $value
@@ -2784,7 +2789,7 @@ proc on_select {value} {
 		return
 	}
 	set opts [dict create]
-	foreach k {audio psg wifi sd_part volume vdp cpu} {dict set opts $k [ctrl_get $k]}
+	foreach k {audio psg wifi megaram sd_part volume vdp cpu} {dict set opts $k [ctrl_get $k]}
 	set pending 1
 	after realtime 0 [list picoverse2350::boot_record $rec $opts]
 }
@@ -2796,6 +2801,9 @@ proc on_select {value} {
 # resolve_audio_mode() of the firmware
 proc audio_mode {code profile} {
     if {$profile == 13 && (($code > 0 && $code <= 18) || $code == 22 || $code == 23)} {return sn_franky}
+	if {$code == 23 && ($profile == 9 || $profile == 10)} {
+		return [expr {$profile == 10 ? "megaram_sccp" : "megaram_scc"}]
+	}
 	set system [is_system_code $code]
 	if {$system} {
 		if {$profile == 4 && $code != 21} {return msx_music}
@@ -3054,11 +3062,20 @@ proc start_record {rec opts} {
 		notify "$name: the Carnivore2 RAM registers are not emulated, starting Nextor with the 1MB mapper" warning
 	}
 	if {$code == $mapper_dsk} {
-		if {$audio ni {scc_ext sccp_ext msx_music dual_psg sfg05 sfg01 sn_franky}} {set audio none}
+		set megaram [dict get $opts megaram]
+		if {$megaram} {
+			set supported {msx_music megaram_scc megaram_sccp}
+		} else {
+			set supported {scc_ext sccp_ext msx_music dual_psg sfg05 sfg01 sn_franky}
+		}
+		if {$audio ni $supported} {set audio none}
 		set kernel [cache_file "nextor_dsk.rom" [read_range $image_file $dsk_offset 0x20000]]
 		dict set slots 0 [ide_xml $kernel [sd_host $path]]
 		if {[dict get $opts wifi]} {
 			dict set slots 1 [mapper_xml]
+		}
+		if {$megaram} {
+			dict set slots 3 [megaram_xml]
 		}
 		set what "DSK"
 	} elseif {[is_system_code $code]} {

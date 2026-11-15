@@ -9,6 +9,7 @@
 #include <string.h>
 #include "ff.h"
 #include "pva_internal.h"
+#include "pva_cover.h"
 
 #define DIR_MAX         1024u
 #define DIR_POOL        (16u * 1024u)
@@ -916,6 +917,7 @@ static int cmd_entry_info(void)
 // ROM). Under MSX-DOS the program writes the file through Nextor instead.
 #define FAV_MAX 4096u               // as PicoPlay: the file stays within 4 KB
 static bool card_writes;
+bool pva_card_writes(void) { return card_writes; }
 
 void pva_allow_card_writes(bool on) { card_writes = on; }
 
@@ -1156,8 +1158,9 @@ static int open_stream(const char *entry)
     int r = pva_net_start(u);
     if (r != PVA_OK) return r;
     if (uuid) pva_dir_click(uuid);          // Radio Browser counts the station's listeners
+    pva_art_station(u, uuid, given_station);    // its logo (online: it comes when it comes)
     r = pva_dec_open_stream(&info);
-    if (r != PVA_OK) { pva_net_stop(); return r; }
+    if (r != PVA_OK) { pva_art_none(); pva_net_stop(); return r; }
     snprintf(info.album, sizeof info.album, "%s", given_station);
     if (given_station[0]) snprintf(info.title, sizeof info.title, "%s", given_station);
     else
@@ -1197,6 +1200,7 @@ static int open_track(const char *path)
         r = pva_dec_open(alt, &info);
     }
     if (r == PVA_OK && !info.title[0]) set_title_from_path(path);
+    if (r == PVA_OK) pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len, info.artist, info.album, info.title);
     return r;
 }
 
@@ -1231,6 +1235,7 @@ static int play_pos(uint16_t pos)
 
 static void stop_playback(void)
 {
+    pva_art_none();
     if (pva_dec_is_stream() || pva_net_active()) pva_net_stop();
     buffering = false;
     pva_dec_close();
@@ -1539,6 +1544,7 @@ void pva_engine_extra(uint8_t *out)
     out[PVA_CK_AL_HOUR - PVA_CK_EXTRA] = al_hour;
     out[PVA_CK_AL_MIN - PVA_CK_EXTRA] = al_min;
     pva_news_state(&out[PVA_CK_NEWS_STATE - PVA_CK_EXTRA]);
+    pva_markets_state(&out[PVA_CK_MKT_STATE - PVA_CK_EXTRA]);
 }
 
 static int cmd_mode(void)
@@ -1686,6 +1692,12 @@ static int execute(uint8_t code)
         case PVA_C_NEWS_MOVE: case PVA_C_NEWS_FULL: case PVA_C_NEWS_TEXT: case PVA_C_NEWS_INFO:
         case PVA_C_NEWS_SORT:
             return pva_news_cmd(code, args);
+        case PVA_C_MKT_LISTS: case PVA_C_MKT_REGION: case PVA_C_MKT_OPEN: case PVA_C_MKT_ROWS:
+        case PVA_C_MKT_INFO: case PVA_C_MKT_CHART: case PVA_C_MKT_CHART_GET:
+        case PVA_C_MKT_MEMBERS: case PVA_C_MKT_NEWS: case PVA_C_MKT_SORT: case PVA_C_MKT_TAPE:
+            return pva_markets_cmd(code, args);
+        case PVA_C_COVER_SETUP: case PVA_C_COVER_GET:
+            return pva_art_cmd(code, args);
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1838,6 +1850,8 @@ static void publish_status(void)
         for (int i = 0; i < PVA_EQ_BANDS; i++) st8(PVA_ST_EQ + (uint32_t)i, (uint8_t)g[i]);
     }
     st8(PVA_ST_BALANCE, balance);
+    st8(PVA_ST_COVER_GEN, pva_art_gen());
+    st8(PVA_ST_COVER_STATE, pva_art_state());
     st8(PVA_ST_DIR_STATE, dstate);
     st8(PVA_ST_DIR_ERR, derr);
     // display fields: coarse buffer level and rate, then the generation
@@ -1903,13 +1917,18 @@ void pva_core1_init(void)
     reply = pva_alloc(PVA_REPLY_SIZE);
     bool dec_ok = pva_dec_init();
     // the Nextor modes leave the engine less RAM: the news then takes some of the stream RAM
-    size_t news_keep = pva_arena_size() < 160u * 1024u ? PVA_NEWS_KEEP : 0u;
+    // the news keeps 24 KB of the stream RAM (the stream's buffer: 72 KB); also in the PicoAmp ROM,
+    // whose arena's last 46 KB are the covers' (online)
+    size_t news_keep = PVA_NEWS_KEEP;
     bool net_ok = pva_net_init(news_keep);
     pva_viz_init();                     // takes some of the stream RAM; before the directory
     if (net_ok && news_keep) pva_news_init(news_keep);
     if (net_ok && !pva_web_init()) pva_log("web: no memory");
+    if (net_ok) pva_markets_init();
     if (net_ok && !pva_dir_init()) pva_log("radio directory: no memory");
     bool hal_ok = pva_hal_audio_init();
+    // covers: their memory is the stream ring while a file plays (or the arena's)
+    pva_log(!pva_art_init() ? "covers: off (no memory)" : pva_art_online() ? "covers: on, online too" : "covers: on (files; online needs the PicoAmp ROM's memory)");
     pva_hal_audio_mute(true);
     pva_log("engine %d.%d start, arena free %lu", PVA_FW_MAJOR, PVA_FW_MINOR, (unsigned long)pva_arena_free());
     static uint8_t reply_fallback[64];
@@ -1951,6 +1970,7 @@ bool pva_core1_poll(void)
     pva_web_poll();
     pva_clock_poll();
     pva_news_poll();
+    pva_markets_poll();
     sleep_alarm_poll();
     pva_win[PVA_R_WHERE] = PVA_W_STREAM;
     if (pva_net_active())
@@ -1961,6 +1981,7 @@ bool pva_core1_poll(void)
         {
             shown_title_gen = ns->title_gen;
             split_stream_title(pva_net_stream_title());
+            pva_art_song(info.artist, info.title);      // its cover (online)
             status_dirty = true;
         }
         if (pva_dec_is_stream() && !given_station[0] && pva_net_station()[0] && strcmp(info.album, pva_net_station()))
@@ -2019,6 +2040,11 @@ bool pva_core1_poll(void)
         pva_win[PVA_R_HEARTBEAT] = ++hb;
     }
     pva_viz_poll(state == PVA_STATE_PLAYING && !buffering);
+    {
+        uint8_t g = pva_art_gen();
+        pva_art_poll();                 // a cover in the making: a step
+        if (g != pva_art_gen()) status_dirty = true;
+    }
     pva_win[PVA_R_WHERE] = PVA_W_STATUS;
     if (status_dirty || now - last_status_ms >= STATUS_MS)
     {

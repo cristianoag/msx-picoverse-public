@@ -64,7 +64,7 @@ static psram_region_t sd_rom_region;
 static uint8_t psram_stage[64 * 1024];
 static uint8_t menu_image[MENU_ROM_SIZE], page_buffer[DATA_BUFFER_SIZE];
 static uint8_t *rom_sram = menu_image;
-static uint8_t current_page, ctrl_status_value, ctrl_audio_selection, ctrl_wifi_support;
+static uint8_t current_page, ctrl_status_value, ctrl_audio_selection, ctrl_wifi_support, ctrl_megaram;
 static uint8_t ctrl_psg_emulation, ctrl_wavegame_rom, ctrl_sd_partition, sd_browse_partition;
 static uint8_t ctrl_audio_volume, ctrl_vdp_frequency, ctrl_cpu_mode, esp_net_status, sd_activity_counter;
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];

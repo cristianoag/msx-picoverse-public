@@ -88,7 +88,7 @@ namespace eval picoverse2350 {
     command 8
     assert {[ctrl_get ack] == 1 && $pending == 0 && $last_source == 0}
     set flash_options [read_binary [sd_host /Large.flash.PVC]]
-    assert {$flash_options eq "PVC1[binary format c8 {5 0 8 0 130 2 1 0}]"}
+    assert {$flash_options eq "PVC1[binary format c9 {5 0 8 0 130 2 1 0 0}]"}
     assert {[read_binary [sd_host $pvc]] eq "PVC1\x04\x01\x08"}
     lassign [flash_capacity] free largest
     assert {$free == $initial_free - 8192 && $largest == $free}
@@ -222,7 +222,7 @@ namespace eval picoverse2350 {
         assert {[string range $mirror [expr {$part_base - 0x4000 + 2}] [expr {$part_base - 0x4000 + 11}]] eq "WHOLE DISK"}
         set query [lreplace $query 2 9 4 1 $mapper 5 130 0 0 0]
         command 8
-        assert {[ctrl_get ack] == 1 && [read_binary $p] eq "PVC1[binary format c8 [list 4 1 $mapper 5 130 0 0 0]]"}
+        assert {[ctrl_get ack] == 1 && [read_binary $p] eq "PVC1[binary format c9 [list 4 1 $mapper 5 130 0 0 0 0]]"}
         ctrl_set sd_part 1
         command 7
         assert {[ctrl_get sd_part] == 5 && [ctrl_get volume] == 130}

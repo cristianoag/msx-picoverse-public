@@ -35,7 +35,7 @@ namespace eval picoverse2350 {
         save_options
         assert {[ctrl_get ack] == 1}
         set data [read_binary [file join $sd_folder Song.PVC]]
-        assert {[string length $data] == 12 && [string range $data 0 3] eq "PVC1"}
+        assert {[string length $data] == 13 && [string range $data 0 3] eq "PVC1"}
         ctrl_set audio 0
         load_options
         assert {[ctrl_get ack] == 1 && [ctrl_get audio] == $profile}

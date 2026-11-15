@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        12
+#define PVA_FW_MINOR        16
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -158,6 +158,57 @@
                                     // shown are sorted again at once)
 #define PVA_C_MUTE          0x45    // args: u8 0 sound on, 1 muted, 2 the other one: reply: u8 muted now. The
                                     // volume stays as it is (PVA_F_MUTED in the status)
+// the market monitor (engine 0.13): regions, their lists of instruments, My list ([markets] list=SYM,SYM in
+// PICOAMP.INI); the prices come in while a list is open (PVA_CK_MKT_xxx)
+#define PVA_C_MKT_LISTS     0x46    // reply: u8 region, u8 regions, u8 lists, u8 the open list (FFh: none), the
+                                    // region's name, the lists' names (0-terminated each)
+#define PVA_C_MKT_REGION    0x47    // args: u8 region (FEh the next one, FFh ask): reply: u8 region, its name
+                                    // (kept in [markets] region=europe|americas|asia; an open list closes)
+#define PVA_C_MKT_OPEN      0x48    // args: u8 list (FFh: none, the updates stop): reply: u8 rows. Its prices are
+                                    // fetched, and again every minute; the open list once more: now
+#define PVA_C_MKT_ROWS      0x49    // args: u8 first, u8 count (40 at most): reply: u8 rows in all, u8 rows here, then per row
+                                    // u8 '+' up / '-' down / ' ' unchanged / '?' no price, and 39 characters
+                                    // (0-terminated): name 14, price 10, change 8, percent 7
+#define PVA_C_MKT_INFO      0x4A    // reply: u8 PVA_MKT_xxx, u8 rows, u16 seconds since the last update (FFFFh:
+                                    // none yet), the list's name, the region's, the time of the update ("12:53")
+#define PVA_C_MKT_CHART     0x4B    // args: u8 row: the day's course of that instrument is fetched (PVA_CK_MKT_CHART)
+                                    // (MKT_CHART: a second argument, u8 range, PVA_MKT_RANGES; after CHART_GET's columns:
+                                    // u8 n and n times a level and a text, the price scale; u8 n and n times a column and a
+                                    // text, the time scale. Range 0 is the day by its time, the others point after point)
+#define PVA_C_MKT_CHART_GET 0x4C    // args: u8 columns (8-240), u8 levels (8-120): reply: u8 columns, u8 the level of the previous
+                                    // close (0: unknown), the name, the price, the change, the day's high, its low,
+                                    // the previous close (0-terminated each), then per column u8: 0 nothing yet,
+                                    // else its level 1..levels, +80h below the previous close
+#define PVA_C_MKT_MEMBERS   0x4D    // args: u8 row of the open list: an index: the list of its members opens in its
+                                    // place (reply: u8 rows; PVA_E_NOTFOUND: the catalogue has none for it). MKT_OPEN
+                                    // of the list brings it back
+#define PVA_C_MKT_NEWS      0x4E    // args: u8 row: that instrument's headlines are fetched, as the news reader's feed
+                                    // PVA_NEWS_EXT (PVA_CK_NEWS_xxx, NEWS_LIST and the other NEWS commands)
+#define PVA_C_MKT_SORT      0x4F    // args: u8 order: 0 as the list has them, 1 by percent the risers first, 2 the fallers
+                                    // first, FFh ask; reply: u8 order. The rows of ROWS, CHART, MEMBERS and NEWS are in that
+                                    // order (again after every update)
+#define PVA_C_MKT_TAPE      0x50    // the region's market headlines as a tape: reply: 80 characters from where the tape
+                                    // is, which goes one on with every call (an empty text: no headlines yet). They are
+                                    // fetched while a list is open, every 15 minutes
+// covers (engine 0.14): a track's picture as SCREEN 4 cells, 10 x 10 (80 x 80 pixels), see pva_cover.h
+#define PVA_C_COVER_SETUP   0x51    // args: the player's palette (16 x 0RRR0BBB, 00000GGG), u16 the entries the cover may
+                                    // set (bit n: entry n). The covers are made only after this
+#define PVA_C_COVER_GET     0x52    // reply: the cover's palette (32 bytes: the player's, its free entries the cover's), 800
+                                    // pattern bytes (the cells row by row, 8 each, bit 7 the left pixel), 800 colour bytes
+                                    // (first << 4 | second). PVA_E_BUSY: still in the making, PVA_E_NOTFOUND: none
+#define PVA_COVER_BYTES     1632
+// (engine 0.15: a station's logo too; 0.16: online covers for songs and files, default pictures)
+#define PVA_COVER_NONE      0       // PVA_ST_COVER_STATE
+#define PVA_COVER_MAKING    1
+#define PVA_COVER_READY     2
+#define PVA_MKT_RANGES      8       // MKT_CHART's ranges: 0 1D, 1 5D, 2 1M, 3 6M, 4 YTD, 5 1Y, 6 5Y, 7 all
+#define PVA_MKT_NOW         0xFD    // MKT_OPEN: what is open (a list or an index's members) once more, now
+#define PVA_NEWS_EXT        0xFE    // the news' feed number of a feed that is not one of My feeds
+#define PVA_MKT_ROWS        100     // instruments in a list at most
+#define PVA_MKT_IDLE        0
+#define PVA_MKT_LOADING     1
+#define PVA_MKT_DONE        2
+#define PVA_MKT_FAILED      3
 #define PVA_TXF_LOADING     0x01    // the article is still coming in
 #define PVA_TXF_ARTICLE     0x02    // these are the article's lines (else the summary's)
 #define PVA_TXF_FAILED      0x04    // there is no article (the summary instead)
@@ -244,6 +295,8 @@
 #define PVA_ST_DIR_ERR      178     // u8  PVA_NERR_xxx when it failed
 #define PVA_ST_EQ           179     // s8[5] equalizer band gains in dB
 #define PVA_ST_BALANCE      184     // u8  0..100, 50 = centre
+#define PVA_ST_COVER_GEN    185     // u8  +1 when the cover changes (engine 0.14)
+#define PVA_ST_COVER_STATE  186     // u8  PVA_COVER_xxx
 #define PVA_EQ_BANDS        5
 #define PVA_EQ_MAX_DB       12
 
@@ -304,6 +357,10 @@
 #define PVA_CK_ART_PCT      42      // u8  % of the page read (FF: its size is not known)
 #define PVA_CK_ART_WAIT     43      // u8  1: between two pieces, the radio fills its buffer; 2: the reading waits
                                     // for the radio (0: reading)
+#define PVA_CK_MKT_STATE    44      // u8  PVA_MKT_xxx of the open list (engine 0.13)
+#define PVA_CK_MKT_GEN      45      // u8  +1 when its prices changed (MKT_ROWS again)
+#define PVA_CK_MKT_CHART    46      // u8  PVA_MKT_xxx of the chart asked for
+#define PVA_CK_MKT_ERR      47      // u8  PVA_NERR_xxx of the last failed update
 #define PVA_ART_IDLE        0
 #define PVA_ART_LOADING     1
 #define PVA_ART_DONE        2

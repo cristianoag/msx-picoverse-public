@@ -73,6 +73,7 @@ static uint8_t *ring;
 static uint8_t *spare;              // stream RAM after the ring (for the station directory)
 static size_t   spare_size;
 static size_t   ring_size, ring_head, ring_tail, ring_count;
+static uint8_t *art_block;          // stream RAM kept for the covers (PVA_ART_KEEP)
 
 static size_t ring_free(void) { return ring_size - ring_count; }
 
@@ -907,7 +908,24 @@ bool pva_net_init(size_t keep)
         ring = NULL;
         ring_size = 0;
     }
+    // a big stream RAM (Explorer's 256 KB of PSRAM) keeps a block for the covers' online part,
+    // which the arena has no room for; the directory takes what is left
+    if (spare && spare_size >= PVA_ART_KEEP + 48u * 1024u)
+    {
+        spare_size -= PVA_ART_KEEP;
+        art_block = spare + spare_size;
+    }
     return true;
+}
+
+// the block the covers keep (NULL: none, or already taken)
+void *pva_net_art_block(size_t n)
+{
+    void *p = art_block;
+    if (!p || n > PVA_ART_KEEP) return NULL;
+    art_block = NULL;
+    memset(p, 0, n);
+    return p;
 }
 
 static void begin_session(void)
@@ -1043,6 +1061,14 @@ bool pva_net_is_tls(void) { return tls; }
 bool pva_net_tls_free(void) { return !(tls && conn && s != S_IDLE && s != S_FAILED); }
 
 uint8_t *pva_net_spare(size_t *size) { *size = spare_size; return spare; }
+
+// the stream ring while no stream uses it (a file plays): n bytes of it for a moment (the covers);
+// NULL when a stream is on or there is no ring. The ring is the stream's again with the next stream.
+void *pva_net_ring_idle(size_t n)
+{
+    if (!ring || ring_size < n || pva_net_active()) return NULL;
+    return ring;
+}
 
 // take n bytes (4-byte aligned) off the front of the spare RAM
 void *pva_net_spare_take(size_t n)

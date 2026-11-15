@@ -13,6 +13,9 @@
 //     /list.pls       audio/x-scpls body pointing at /stream.mp3
 //     /aac            content-type audio/aacp
 //     /missing        404
+//   wsrv.nl (10.0.0.12): the image proxy: ?...&url=<a logo or a cover> answers logo.jpg (a
+//     station's logo) or art.jpg (a cover) from host_esp_logo_dir; a .txt: 404 (no picture)
+//   itunes.apple.com (10.0.0.13): /search?term=: "Artist One ..." has a cover, the rest none
 //   radio2.test (10.0.0.2) port 8000  /live  plain stream
 //   secure.test (10.0.0.3)            TLS only, /stream.mp3
 //   all.api.radio-browser.info, de1.api.radio-browser.info (10.0.0.4) and
@@ -22,9 +25,12 @@
 //                               HLS, broken and over-long ones mixed in;
 //                               tag=many gives 150 stations
 //     /json/url/<uuid>          counts a click
+//     /json/stations/byuuid/<uuid>, /json/stations/byurl?url=   one station
+//       (Test FM's favicon is /logo.png, Radio Two Live's /logo.jpg, Plain "Quoted" Radio's /logo.txt)
 //   ip-api.com (10.0.0.6)                     /json/?fields=...  Amsterdam by IP
 //   geocoding-api.open-meteo.com (10.0.0.7)   /v1/search?name=   places by name
 //   api.open-meteo.com (10.0.0.8)             /v1/forecast?...   offset and weather now
+//   query1/2.finance.yahoo.com (10.0.0.10/11) /v8/finance/spark?symbols=   prices (https only, 20 symbols)
 //   (these three and the Radio Browser send a Date header: host_esp_date_base + time)
 //   anything else: DNS error
 
@@ -36,6 +42,11 @@
 
 // ---------------- configuration (tests change these) ----------------
 bool     host_esp_present = true;
+const char *host_esp_logo_dir = "assets";
+uint32_t host_esp_logo_gets;                // requests for a logo
+bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
+uint32_t host_esp_itunes_asks;              // questions to the iTunes search
+char     host_esp_last_itunes[200];
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
 uint32_t host_esp_uart_bpms = 86;           // 859372 baud / 10 bits / 1000
 uint32_t host_esp_server_bps = 24000;       // server sends this many bytes/s (128 kbit/s = 16000)
@@ -66,6 +77,11 @@ bool     host_esp_range = true;             // news.test/big answers Range with 
 uint32_t host_esp_ranges;                   // Range requests news.test had
 uint32_t host_esp_redirs;                   // requests for secure.test/go (a redirect)
 uint32_t host_esp_web_requests;
+uint32_t host_esp_yahoo_requests;           // quote requests query1/2.finance.yahoo.com had
+uint32_t host_esp_yahoo_symbols;            // symbols in the last one
+bool     host_esp_yahoo_down1;              // query1 answers 503 (query2 works)
+int      host_esp_yahoo_move;               // the prices move by this many cents
+char     host_esp_last_agent[100];
 char     host_esp_last_web[600];
 
 // statistics for the checks
@@ -175,17 +191,25 @@ static const st_t stations[] = {
     { "Long URL", "http://radio.test/stream.mp3?xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "MP3", "Germany", "pop", 128, 0, 1 },
 };
 
+static const char *favicon(const st_t *t)
+{
+    if (!strcmp(t->url, "http://radio.test/stream.mp3") && !strcmp(t->name, "Test FM")) return "http:\\/\\/radio.test\\/logo.png";
+    if (!strcmp(t->url, "http://radio2.test:8000/live")) return "http://radio.test/logo.jpg";
+    if (!strcmp(t->url, "http://radio.test/plain") && t->name[0] == ' ') return "http://radio.test/logo.txt";
+    return "";
+}
+
 static void station_json(bq_t *b, const st_t *t, int i)
 {
     char j[1200];
     int n = snprintf(j, sizeof j,
         "{\"changeuuid\":\"c-%d\",\"stationuuid\":\"9617a958-0601-11e8-ae97-52543be04c%02d\",\"serveruuid\":null,"
-        "\"name\":\"%s\",\"url\":\"%s\",\"url_resolved\":\"%s\",\"homepage\":\"http://x.test/\",\"favicon\":\"\","
+        "\"name\":\"%s\",\"url\":\"%s\",\"url_resolved\":\"%s\",\"homepage\":\"http://x.test/\",\"favicon\":\"%s\","
         "\"tags\":\"%s\",\"country\":\"%s\",\"countrycode\":\"XX\",\"iso_3166_2\":null,\"state\":\"\","
         "\"language\":\"dutch,english\",\"languagecodes\":\"nl\",\"votes\":%d,\"lastchangetime\":\"2024-01-01 10:00:00\","
         "\"codec\":\"%s\",\"bitrate\":%d,\"hls\":%d,\"lastcheckok\":%d,\"clickcount\":%d,\"clicktrend\":-1,"
         "\"ssl_error\":0,\"geo_lat\":52.1,\"geo_long\":-4.5e0,\"has_extended_info\":false}",
-        i, i % 100, t->name, t->url, t->url, t->tags, t->country, 100 - i, t->codec, t->bitrate, t->hls, t->ok, 1000 - i);
+        i, i % 100, t->name, t->url, t->url, favicon(t), t->tags, t->country, 100 - i, t->codec, t->bitrate, t->hls, t->ok, 1000 - i);
     bq_put(b, j, (size_t)n);
 }
 
@@ -271,6 +295,28 @@ static void api(conn_t *c, const char *path)
                 if (n++) bq_put(&b, ",", 1);
                 station_json(&b, t, i);
             }
+        bq_put(&b, "]", 1);
+    }
+    else if (!strncmp(path, "/json/stations/byuuid/", 22) || !strncmp(path, "/json/stations/byurl?url=", 25))
+    {
+        char want[300] = "";
+        const char *q = path[15] == 'u' ? path + 22 : path + 25;
+        size_t k = 0;
+        for (; *q && *q != '&' && k + 1 < sizeof want; q++)
+        {
+            if (*q == '%' && q[1] && q[2]) { char h[3] = { q[1], q[2], 0 }; want[k++] = (char)strtol(h, NULL, 16); q += 2; }
+            else want[k++] = *q;
+        }
+        want[k] = 0;
+        bq_put(&b, "[", 1);
+        for (int i = 0; i < (int)(sizeof stations / sizeof stations[0]); i++)
+        {
+            char u[64];
+            snprintf(u, sizeof u, "9617a958-0601-11e8-ae97-52543be04c%02d", i % 100);
+            if (path[15] == 'u' ? strcmp(want, u) : strcmp(want, stations[i].url)) continue;
+            station_json(&b, &stations[i], i);
+            break;
+        }
         bq_put(&b, "]", 1);
     }
     else if (!strncmp(path, "/json/url/", 10))
@@ -378,12 +424,124 @@ static void web(conn_t *c, const char *path)
 
 // RSS feeds: news.test (10.0.0.9): /rss (RSS 2.0, CDATA, entities, HTML), /rdf (RSS 1.0),
 // /atom (Atom), /many (60 stories), /content (the whole text in the feed), /1 (an article's page)
+// Yahoo Finance's spark service as it answered on 2026-11-13: an object per symbol it knows
+static void yahoo(conn_t *c, const char *path, const char *req)
+{
+    host_esp_yahoo_requests++;
+    snprintf(host_esp_last_web, sizeof host_esp_last_web, "%s", path);
+    const char *ua = strstr(req, "\r\nUser-Agent: ");
+    host_esp_last_agent[0] = 0;
+    if (ua) sscanf(ua + 14, "%99[^\r]", host_esp_last_agent);
+    if (!c->tls) { http_reply(c, "HTTP/1.1 400 Bad Request\r\n\r\n", NULL); return; }
+    if (c->ip[3] == 10 && host_esp_yahoo_down1) { http_reply(c, "HTTP/1.1 503 Service Unavailable\r\n\r\n", "busy"); return; }
+    if (strncmp(host_esp_last_agent, "Mozilla/5.0", 11)) { http_reply(c, "HTTP/1.1 429 Too Many Requests\r\n\r\n", "Edge: Too Many Requests"); return; }
+    const char *q = strstr(path, "symbols=");
+    if (strncmp(path, "/v8/finance/spark?", 18) || !q) { http_reply(c, "HTTP/1.1 404 Not Found\r\n\r\n", "{}"); return; }
+    bool chart = strstr(path, "interval=15m") != NULL;
+    // the longer ranges: 5 days of hours, days, weeks, months since 1992
+    unsigned hist_n = strstr(path, "range=5d") ? 46u : strstr(path, "range=1mo") ? 24u : strstr(path, "range=6mo") ? 133u : strstr(path, "range=ytd") ? 223u :
+                      strstr(path, "range=1y") ? 256u : strstr(path, "range=5y") ? 262u : strstr(path, "range=max") ? 410u : 0u;
+    unsigned hist_step = strstr(path, "interval=60m") ? 3600u : strstr(path, "interval=1wk") ? 604800u : strstr(path, "interval=1mo") ? 2629800u : 86400u;
+    static char j[20000];
+    size_t o = 0;
+    unsigned n = 0;
+    j[o++] = '{';
+    for (q += 8; *q && *q != '&'; )
+    {
+        char sym[40];
+        size_t k = 0;
+        while (*q && *q != '&' && *q != ',')
+        {
+            char ch = *q++;
+            if (ch == '%' && q[0] && q[1]) { char h[3] = { q[0], q[1], 0 }; ch = (char)strtol(h, NULL, 16); q += 2; }
+            if (k < sizeof sym - 1) sym[k++] = ch;
+        }
+        sym[k] = 0;
+        if (*q == ',') q++;
+        n++;
+        if (!strncmp(sym, "GONE", 4)) continue;             // a symbol the service does not know: left out
+        // prices in cents from the name, a few as the real ones were
+        unsigned h = 0;
+        for (const char *s = sym; *s; s++) h = h * 31u + (unsigned char)*s;
+        long prev = 1000 + (long)(h % 500000u), price = prev + (long)(h % 2001u) - 1000 + host_esp_yahoo_move;
+        if (!strcmp(sym, "^AEX")) { prev = 114012; price = 114103 + host_esp_yahoo_move; }
+        if (!strcmp(sym, "ASML.AS")) { prev = 137680; price = 136520; }
+        if (!strcmp(sym, "FLAT")) price = prev;
+        if (o > 1) j[o++] = ',';
+        if (!strcmp(sym, "EURUSD=X"))                       // (a small change comes as -4.0E-4)
+            o += (size_t)snprintf(j + o, sizeof j - o, "\"EURUSD=X\":{\"timestamp\":[1794570750],\"end\":null,\"dataGranularity\":300,"
+                "\"symbol\":\"EURUSD=X\",\"fulldayChange\":-4.0E-4,\"fulldayChangePercent\":-0.0332,\"fulldayPrice\":1.1056,"
+                "\"close\":[1.1056],\"previousClose\":null,\"chartPreviousClose\":1.1059,\"start\":null}");
+        else if (!strcmp(sym, "OLDFORM"))                   // without the fullday fields: the last close counts
+            o += (size_t)snprintf(j + o, sizeof j - o, "\"OLDFORM\":{\"timestamp\":[1,2,3],\"symbol\":\"OLDFORM\","
+                "\"close\":[10.5,null,12.25],\"previousClose\":12.0,\"chartPreviousClose\":null}");
+        else if (hist_n)                                    // from a tenth of the price up to it, with a wave
+        {
+            o += (size_t)snprintf(j + o, sizeof j - o, "\"%s\":{\"timestamp\":[", sym);
+            for (unsigned i = 0; i < hist_n; i++)
+                o += (size_t)snprintf(j + o, sizeof j - o, "%s%lu", i ? "," : "", 1794556800ul - (unsigned long)(hist_n - 1u - i) * hist_step);
+            o += (size_t)snprintf(j + o, sizeof j - o, "],\"end\":null,\"symbol\":\"%s\",\"dataGranularity\":300,\"start\":null,\"close\":[", sym);
+            for (unsigned i = 0; i < hist_n; i++)
+            {
+                long v = price / 10 + (long)((long long)(price - price / 10) * i / (hist_n - 1u)) + ((i / 8u) % 2u ? 37 : -37);
+                if (i == hist_n - 1u) v = price;
+                o += (size_t)snprintf(j + o, sizeof j - o, "%s%ld.%02ld", i ? "," : "", v / 100, v % 100);
+            }
+            o += (size_t)snprintf(j + o, sizeof j - o, "],\"previousClose\":null,\"chartPreviousClose\":%ld.%02ld,\"fulldayChange\":1.0,"
+                "\"fulldayChangePercent\":0.1,\"fulldayPrice\":%ld.%02ld}", (price / 10) / 100, (price / 10) % 100, price / 100, price % 100);
+        }
+        else if (chart)
+            o += (size_t)snprintf(j + o, sizeof j - o, "\"%s\":{\"timestamp\":[1794556800,1794557700,1794558600,1794559500,1794560400,1794561300,"
+                "1794562200,1794563100],\"end\":1794587400,\"symbol\":\"%s\",\"previousClose\":%ld.%02ld,\"chartPreviousClose\":%ld.%02ld,"
+                "\"fulldayChange\":0.91,\"fulldayChangePercent\":0.08,\"fulldayPrice\":%ld.%02ld,"
+                "\"close\":[%ld.%02ld,%ld.%02ld,null,%ld.%02ld,%ld.%02ld,%ld.%02ld,%ld.%02ld,%ld.%02ld],\"dataGranularity\":300,\"start\":1794556800}",
+                sym, sym, prev / 100, prev % 100, prev / 100, prev % 100, price / 100, price % 100,
+                (prev - 200) / 100, (prev - 200) % 100, (prev - 100) / 100, (prev - 100) % 100, (prev + 100) / 100, (prev + 100) % 100,
+                (prev + 300) / 100, (prev + 300) % 100, (prev + 200) / 100, (prev + 200) % 100, (prev + 50) / 100, (prev + 50) % 100,
+                price / 100, price % 100);
+        else
+            o += (size_t)snprintf(j + o, sizeof j - o, "\"%s\":{\"timestamp\":[1794569895],\"end\":null,\"dataGranularity\":300,\"symbol\":\"%s\","
+                "\"fulldayChange\":%.2f,\"fulldayChangePercent\":0.077,\"fulldayPrice\":%ld.%02ld,\"close\":[%ld.%02ld],"
+                "\"previousClose\":null,\"chartPreviousClose\":%ld.%02ld,\"start\":null}",
+                sym, sym, (double)(price - prev) / 100.0, price / 100, price % 100, price / 100, price % 100, prev / 100, prev % 100);
+    }
+    j[o++] = '}';
+    j[o] = 0;
+    host_esp_yahoo_symbols = n;
+    if (n > 20)
+    {
+        http_reply(c, "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n", "{\"spark\":{\"result\":null,\"error\":{\"code\":\"Bad Request\","
+                   "\"description\":\"Number of symbols needs to be less than or equal to 20\"}}}");
+        return;
+    }
+    web_json(c, j);
+}
+
 static void news(conn_t *c, const char *path)
 {
     host_esp_web_requests++;
     snprintf(host_esp_last_web, sizeof host_esp_last_web, "%s", path);
     bq_t b = { 0 };
     char t[600];
+    if (!strncmp(path, "/rss/2.0/headline?s=", 20))    // Yahoo Finance's feed for a symbol, as it answered on 2026-11-13
+    {
+        http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\n\r\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<rss version=\"2.0\">\n    <channel>\n"
+            "        <copyright>Copyright (c) 2026 Yahoo Inc. All rights reserved.</copyright>\n"
+            "        <description>Latest Financial News for ASML.AS</description>\n        <image>\n            <height>45</height>\n"
+            "            <link>http://finance.yahoo.com/q/h?s=ASML.AS</link>\n            <title>Yahoo! Finance: ASML.AS News</title>\n"
+            "            <url>https://s.yimg.com/rz/stage/p/yahoo_finance_en-US_h_p_finance_2.png</url>\n            <width>144</width>\n        </image>\n"
+            "        <item>\n            <description>A chip maker's stock declined on Friday as the rest of the sector also fell.</description>\n"
+            "            <guid isPermaLink=\"false\">48ad1294-079c-405a-ab92-d2b35a979ce5</guid>\n"
+            "            <link>https://finance.yahoo.com/markets/article/chip-stock-slips-144818245.html?.tsrc=rss</link>\n"
+            "            <pubDate>Fri, 13 Nov 2026 14:48:18 +0000</pubDate>\n            <title>Chip stock slips as the sector's sell-off goes on</title>\n        </item>\n"
+            "        <item>\n            <description>An analyst cut the maker of chip machines to Hold a day after a record quarter.</description>\n"
+            "            <guid isPermaLink=\"false\">ebdd36d2-d681-3cd8-a10b-34ddc0395d9d</guid>\n"
+            "            <link>https://finance.yahoo.com/news/analyst-cut-131500123.html?.tsrc=rss</link>\n"
+            "            <pubDate>Fri, 13 Nov 2026 13:15:00 +0000</pubDate>\n            <title>Analyst cuts chip machine maker to Hold</title>\n        </item>\n"
+            "    </channel>\n</rss>\n");
+        return;
+    }
     if (!strcmp(path, "/rss"))
     {
         const char *x = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">"
@@ -510,7 +668,7 @@ static void serve(conn_t *c)
     char *r = (char *)c->reqbuf.b;
     char path[600] = "", hosth[128] = "";
     sscanf(r, "GET %599s", path);
-    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4)) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }
+    if (strncmp(path, "/json/", 6) && strncmp(path, "/v1/", 4) && strncmp(path, "/v8/", 4) && strncmp(path, "/rss/2.0/", 9) && c->ip[3] < 12) { char *qm = strchr(path, '?'); if (qm) *qm = 0; }
    // a stream's ?query does not matter
     char *h = strstr(r, "\r\nHost: ");
     if (h) sscanf(h + 8, "%127[^\r]", hosth);
@@ -520,6 +678,56 @@ static void serve(conn_t *c)
     bool r1 = c->ip[3] == 1, r2 = c->ip[3] == 2, sec = c->ip[3] == 3;
     if (c->ip[3] >= 6 && c->ip[3] <= 8) { web(c, path); return; }
     if (c->ip[3] == 9) { news(c, path); return; }
+    if (c->ip[3] == 10 || c->ip[3] == 11) { yahoo(c, path, r); return; }
+    if (c->ip[3] == 12)
+    {
+        // the image proxy
+        host_esp_logo_gets++;
+        const char *u = strstr(path, "url=");
+        char want[300] = "";
+        size_t k = 0;
+        for (const char *q = u ? u + 4 : ""; *q && *q != '&' && k + 1 < sizeof want; q++)
+        {
+            if (*q == '%' && q[1] && q[2]) { char h[3] = { q[1], q[2], 0 }; want[k++] = (char)strtol(h, NULL, 16); q += 2; }
+            else want[k++] = *q;
+        }
+        want[k] = 0;
+        if (host_esp_logo_stall)
+        {
+            static const char hd[] = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: 9000\r\n\r\n\xff\xd8";
+            bq_put(&c->out, hd, sizeof hd - 1);
+            c->kind = 3;
+            c->closed = false;
+            return;
+        }
+        const char *file = strstr(want, ".txt") ? NULL : strstr(want, "art.test") ? "art.jpg" : "logo.jpg";
+        char fn[300];
+        FILE *fp = NULL;
+        if (file) { snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, file); fp = fopen(fn, "rb"); }
+        if (!fp) { http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n", "Error 404: Unable to parse the image"); return; }
+        static uint8_t im[65536];
+        size_t n = fread(im, 1, sizeof im, fp);
+        fclose(fp);
+        char hd[160];
+        snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", (unsigned)n);
+        bq_put(&c->out, hd, strlen(hd));
+        bq_put(&c->out, im, n);
+        c->kind = 3;
+        c->closed = true;
+        return;
+    }
+    if (c->ip[3] == 13)
+    {
+        host_esp_itunes_asks++;
+        snprintf(host_esp_last_itunes, sizeof host_esp_last_itunes, "%s", path);
+        if (strstr(path, "Artist%20One"))
+            http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n",
+                       "\n\n\n{\n \"resultCount\":1,\n \"results\": [\n{\"wrapperType\":\"track\", \"artistName\":\"Artist One\", "
+                       "\"artworkUrl60\":\"https://art.test/one/60x60bb.jpg\", \"artworkUrl100\":\"https://art.test/one/100x100bb.jpg\"}]\n}\n");
+        else
+            http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\n\r\n", "\n\n\n{\n \"resultCount\":0,\n \"results\": []\n}\n");
+        return;
+    }
     if (c->ip[3] == 4 || c->ip[3] == 5)
     {
         if (host_esp_api_http_silent && !c->tls) return;
@@ -555,6 +763,33 @@ static void serve(conn_t *c)
                    "[playlist]\r\nNumberOfEntries=1\r\nFile1=http://radio.test/stream.mp3\r\nTitle1=Test FM\r\nLength1=-1\r\n");
         return;
     }
+    if (r1 && (!strcmp(path, "/logo.png") || !strcmp(path, "/logo.jpg")))
+    {
+        host_esp_logo_gets++;
+        if (host_esp_logo_stall)
+        {
+            static const char hd[] = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 90000\r\n\r\n\x89PNG\r\n\x1a\n";
+            bq_put(&c->out, hd, sizeof hd - 1);
+            c->kind = 3;
+            c->closed = false;
+            return;
+        }
+        char fn[300];
+        snprintf(fn, sizeof fn, "%s/%s", host_esp_logo_dir, path + 1);
+        FILE *fp = fopen(fn, "rb");
+        if (!fp) { http_reply(c, "HTTP/1.1 404 Not Found\r\n\r\n", NULL); return; }
+        static uint8_t img[200000];
+        size_t n = fread(img, 1, sizeof img, fp);
+        fclose(fp);
+        char hd[160];
+        snprintf(hd, sizeof hd, "HTTP/1.1 200 OK\r\nContent-Type: image/%s\r\nContent-Length: %u\r\n\r\n", path[7] == 'p' ? "png" : "jpeg", (unsigned)n);
+        bq_put(&c->out, hd, strlen(hd));
+        bq_put(&c->out, img, n);
+        c->kind = 3;
+        c->closed = true;
+        return;
+    }
+    if (r1 && !strcmp(path, "/logo.txt")) { host_esp_logo_gets++; http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n", "<html>a page, no picture</html>"); return; }
     if (r1 && !strcmp(path, "/aac")) { http_reply(c, "HTTP/1.1 200 OK\r\nContent-Type: audio/aacp\r\n\r\n", "xxxx"); return; }
     http_reply(c, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n", "<html>no</html>");
 }
@@ -629,7 +864,9 @@ static int dns(const char *name, uint8_t *ip)
         { "all.api.radio-browser.info", { 10, 0, 0, 4 } }, { "de1.api.radio-browser.info", { 10, 0, 0, 4 } },
         { "nl1.api.radio-browser.info", { 10, 0, 0, 5 } }, { "ip-api.com", { 10, 0, 0, 6 } },
         { "geocoding-api.open-meteo.com", { 10, 0, 0, 7 } }, { "api.open-meteo.com", { 10, 0, 0, 8 } },
-        { "news.test", { 10, 0, 0, 9 } } };
+        { "news.test", { 10, 0, 0, 9 } }, { "feeds.finance.yahoo.com", { 10, 0, 0, 9 } },
+        { "query1.finance.yahoo.com", { 10, 0, 0, 10 } }, { "query2.finance.yahoo.com", { 10, 0, 0, 11 } },
+        { "wsrv.nl", { 10, 0, 0, 12 } }, { "itunes.apple.com", { 10, 0, 0, 13 } } };
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(name, t[i].n)) { memcpy(ip, t[i].ip, 4); return 0; }
     return -1;
 }
@@ -663,8 +900,8 @@ static void request(const uint8_t *p, size_t n)
             for (int i = 1; i <= 4; i++) if (conns[i].used && conns[i].tls) tls_busy = true;
             if (!slot || (tls && tls_busy)) { answer(host_esp_open_ms, fn, 9, NULL, 0); break; }   // ERR_NO_FREE_CONN
             uint16_t port = (uint16_t)(a[4] | (a[5] << 8));
-            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 9);
-            if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && host_esp_web_down)) known = false;
+            bool known = (a[0] == 10 && a[3] >= 1 && a[3] <= 13);
+            if ((a[3] == 4 && host_esp_api_down) || ((a[3] == 4 || a[3] == 5) && host_esp_api_all_down) || (a[3] >= 6 && a[3] <= 9 && host_esp_web_down)) known = false;
             if (!slot || !known || (a[3] == 2 && port != 8000)) { answer(host_esp_open_ms, fn, 3, NULL, 0); break; }
             conn_t *c = &conns[slot];
             memset(c, 0, sizeof *c);

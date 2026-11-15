@@ -57,6 +57,7 @@ try {
         (Join-Path $fatfs "ff15\source\ffsystem.c"))
     $sources += Get-ChildItem -LiteralPath $engine -Filter "*.c" |
         Where-Object { $_.Name -ne "pva_hal_pico.c" } | ForEach-Object { $_.FullName }
+    $sources += Join-Path $engine "tjpgd\tjpgd.c"
     $sources += Get-ChildItem -LiteralPath $mp3 -Filter "*.c" | ForEach-Object { $_.FullName }
     $exe = Join-Path $work "picoamp-test.exe"
     # Compile Helix's own portable arithmetic on the host instead of MSVC assembly.
@@ -69,7 +70,7 @@ try {
     & $CC -std=gnu11 -O0 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -DPVA_HOST `
         -include $portable `
         -DMPDEC_ALLOCATOR=pv_mp3_alloc -include (Join-Path $pico "picoamp\mp3_alloc_dispatch.h") `
-        -I $pico -I (Join-Path $fatfs "include") -I (Join-Path $fatfs "ff15\source") -I $mp3 `
+        -I $pico -I $engine -I (Join-Path $engine "tjpgd") -I (Join-Path $fatfs "include") -I (Join-Path $fatfs "ff15\source") -I $mp3 `
         @sources -lm -o $exe
     if ($LASTEXITCODE -ne 0) { throw "PicoAmp engine test compilation failed" }
     Push-Location $work
@@ -94,10 +95,10 @@ try {
     $firmware = [IO.File]::ReadAllBytes((Join-Path $pico "build\explorer.bin"))
     $menu = [IO.File]::ReadAllBytes((Join-Path $root "msx\dist\menu.rom"))
     $player = [IO.File]::ReadAllBytes($rom)
-    # PICOAMP.ROM of upstream release 1.3 (Jzzy-dev/msx-picoplay-picoamp, tag 1.3)
-    $releaseSha = "2723BB79ABA4ED8A9F9E39815507AA8DD0F6D4FC5EE311395C5892E558B6F6AF"
+    # PICOAMP.ROM of upstream main e09debe (v1.4 with covers, engine 0.16), Jzzy-dev/msx-picoplay-picoamp
+    $releaseSha = "9A46E2DECD7ACA40E35DB03DB495C5D713AB7728D8B64041CCB78BD5BD241A8B"
     if ((Get-FileHash -LiteralPath $rom -Algorithm SHA256).Hash -ne $releaseSha) {
-        throw "resources\PICOAMP.ROM is not the PicoAmp 1.3 release ROM"
+        throw "resources\PICOAMP.ROM is not the PicoAmp 1.4 ROM"
     }
     $external = New-Object byte[] 8192
     $external[0] = 65; $external[1] = 66; $external[2] = 16; $external[3] = 64; $external[16] = 201
@@ -132,7 +133,7 @@ try {
             $offset = [BitConverter]::ToUInt32($image, $pos + 76)
             if ($mapper -eq 24) {
                 $found++
-                $label = "PicoAmp 1.3 by Jzzy"
+                $label = "PicoAmp 1.4 by Jzzy"
                 if ($size -ne 65536 -or [Text.Encoding]::ASCII.GetString($image, $pos, $label.Length) -ne $label -or $image[$pos + $label.Length] -ne 0) {
                     throw "Invalid PicoAmp record"
                 }

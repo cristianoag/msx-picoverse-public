@@ -176,6 +176,7 @@
 #define CTRL_DISK_ACT   0xBFA3 // Control: microSD activity counter read-back (Pico -> MSX)
 #define CTRL_FLASH_FREE_KB 0xBFA4
 #define CTRL_FLASH_LARGEST_KB 0xBFA6
+#define CTRL_MEGARAM    0xBFA8 // Control: per-DSK MegaRAM option (0=No, 1=Yes); load read-back and launch write
 #define CPU_MODE_DEFAULT 0u    // Leave the CPU as the BIOS boots it
 #define CPU_MODE_TURBO   1u    // Panasonic MSX2+/turbo R switched-I/O 5.37MHz Z80 turbo
 #define CPU_MODE_R800    2u    // MSX turbo R R800 ROM mode via the CHGCPU BIOS entry
@@ -360,7 +361,9 @@
 #define PVC_OPTIONS_FREQ_SIZE 10u
 #define PVC_OPTIONS_CPU_SIZE 11u
 // v6: + DSK memory (0 = plain Nextor, 1 = Nextor + 1MB PSRAM mapper).
-#define PVC_OPTIONS_SIZE 12u
+#define PVC_OPTIONS_DSK_SIZE 12u
+// v7: + DSK MegaRAM (0 = none, 1 = 1MB PSRAM MegaRAM in subslot 3).
+#define PVC_OPTIONS_SIZE 13u
 
 #define PV_CONFIG_MAGIC_0 'P'
 #define PV_CONFIG_MAGIC_1 'V'
@@ -826,7 +829,7 @@ typedef struct {
 } ROMRecord;
 
 ROMRecord records[MAX_ROM_RECORDS] __attribute__((aligned(8))); // Retired as PicoAmp ROM/stack storage after launch
-_Static_assert(sizeof(records) >= PICOAMP_ROM_SIZE + PICOAMP_STACK_SIZE, "PicoAmp launch workspace");
+_Static_assert(sizeof(records) >= PICOAMP_ROM_SIZE + PICOAMP_STACK_SIZE + PICOAMP_ESP_RX_SIZE, "PicoAmp launch workspace");
 
 #define SD_PATH_MAX        256
 #define SD_PATH_BUFFER_SIZE 19000
@@ -955,12 +958,13 @@ static volatile uint8_t mp3_play_mode = MP3_PLAY_MODE_SINGLE;
 static uint16_t mp3_playing_filtered_index = 0xFFFF;
 static volatile uint8_t ctrl_audio_selection = AUDIO_PROFILE_NONE;
 static volatile uint8_t ctrl_wifi_support = 0; // 0=disabled, 1=enabled for Sunrise Nextor launches
+static volatile uint8_t ctrl_megaram = 0; // .DSK only: 0=none, 1=add a 1MB MegaRAM
 static volatile uint8_t ctrl_psg_emulation = 0; // 0=disabled, 1=primary PSG over I2S
 static volatile uint8_t ctrl_wavegame_rom = 0; // 0=normal ROM, 1=WAVEGAME sidecars detected
 static volatile uint8_t ctrl_sd_partition = 0; // 0=auto/default, 1-4=MBR primary, 5=whole disk
 static volatile uint8_t ctrl_audio_volume = AUDIO_VOLUME_DEFAULT; // per-ROM audio volume percent
 static volatile uint8_t ctrl_vdp_frequency = VDP_FREQ_DEFAULT; // per-ROM VDP 50/60Hz option (0=default,1=60,2=50)
-static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the launched game's INIT (regular game mappers only)
+static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the game ROM or DSK kernel INIT
 static volatile uint8_t ctrl_cpu_mode = CPU_MODE_DEFAULT; // per-ROM CPU speed option (0=default,1=turbo,2=R800)
 static volatile uint8_t cpu_mode_launch = CPU_MODE_DEFAULT; // CPU speed to inject into the launched game's INIT (regular game mappers only)
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
@@ -1335,8 +1339,14 @@ static bool mapper_supports_scc_audio(uint8_t mapper) {
 // cartridge audio profiles as the Sunrise SYSTEM entries: External SCC/SCC+
 // (Sunrise SCC loader), MSX-MUSIC (Sunrise FM-PAC loader), YM2151/SFG (Sunrise
 // SFG loader) and Dual PSG (the plain/mapper Nextor loops' system audio). The
-// native SCC/SCC+ (game mapper) and MegaRAM SCC profiles do not apply.
-static bool dsk_audio_mode_supported(audio_mode_t mode) {
+// native SCC/SCC+ (game mapper) profiles do not apply. With the DSK MegaRAM
+// option the Nextor MegaRAM loaders apply instead: MSX-MUSIC (Sunrise FM-PAC
+// loader with MegaRAM) and MegaRAM SCC/SCC+ (Sunrise MegaRAM loader); the
+// others have no MegaRAM variant.
+static bool dsk_audio_mode_supported(audio_mode_t mode, bool megaram) {
+    if (megaram)
+        return mode == AUDIO_MODE_MSX_MUSIC || mode == AUDIO_MODE_MEGARAM_SCC ||
+               mode == AUDIO_MODE_MEGARAM_SCC_PLUS;
     return mode == AUDIO_MODE_SCC_EXTERNAL || mode == AUDIO_MODE_SCC_PLUS_EXTERNAL ||
            mode == AUDIO_MODE_MSX_MUSIC || mode == AUDIO_MODE_DUAL_PSG ||
            mode == AUDIO_MODE_YM2151_SFG05 || mode == AUDIO_MODE_YM2151_SFG01 ||
@@ -1349,6 +1359,12 @@ static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile
     if (requested_profile == AUDIO_PROFILE_SN76489_FRANKY &&
         ((mapper > 0u && mapper <= MAPPER_C2_USB) || mapper == MAPPER_ASCII16X_FR || mapper == MAPPER_DSK))
         return AUDIO_MODE_SN76489_FRANKY;
+    if (mapper == MAPPER_DSK) {
+        if (requested_profile == AUDIO_PROFILE_MEGARAM_SCC_PLUS)
+            return AUDIO_MODE_MEGARAM_SCC_PLUS;
+        if (requested_profile == AUDIO_PROFILE_MEGARAM_SCC)
+            return AUDIO_MODE_MEGARAM_SCC;
+    }
     if (is_system_mapper(mapper)) {
         if (requested_profile == AUDIO_PROFILE_MSX_MUSIC && mapper != MAPPER_MEGARAM)
             return AUDIO_MODE_MSX_MUSIC;
@@ -2233,6 +2249,7 @@ static void process_load_options_request(void) {
     ctrl_audio_selection = AUDIO_PROFILE_NONE;
     ctrl_psg_emulation = 1;
     ctrl_wifi_support = 0;
+    ctrl_megaram = 0;
     ctrl_sd_partition = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
     ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
@@ -2313,8 +2330,11 @@ static void process_load_options_request(void) {
     }
     // .DSK entries reuse the menu's on/off option row (CTRL_WIFI_SUPPORT) for
     // their "1MB Mapper" memory choice; no DSK entry offers WiFi.
-    if (br >= PVC_OPTIONS_SIZE && (is_dsk_record(rec) || mapper_code_from_record_byte(rec->Mapper) == MAPPER_PICOAMP)) {
+    if (br >= PVC_OPTIONS_DSK_SIZE && (is_dsk_record(rec) || mapper_code_from_record_byte(rec->Mapper) == MAPPER_PICOAMP)) {
         ctrl_wifi_support = data[11] ? 1u : 0u;
+    }
+    if (br >= PVC_OPTIONS_SIZE && is_dsk_record(rec)) {
+        ctrl_megaram = data[12] ? 1u : 0u;
     }
     ctrl_ack_value = 1;
 }
@@ -2360,7 +2380,8 @@ static void process_save_options_request(void) {
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
         audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4], sd_partition,
-        audio_volume, vdp_frequency, cpu_mode, (uint8_t)(filter_query[9] ? 1u : 0u)
+        audio_volume, vdp_frequency, cpu_mode, (uint8_t)(filter_query[9] ? 1u : 0u),
+        (uint8_t)(filter_query[10] ? 1u : 0u)
     };
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
@@ -2573,6 +2594,7 @@ static void process_prepare_quick_run_request(void) {
     ctrl_audio_selection = AUDIO_PROFILE_NONE;
     ctrl_psg_emulation = 1;
     ctrl_wifi_support = 0;
+    ctrl_megaram = 0;
     ctrl_wavegame_rom = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
     ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
@@ -2608,9 +2630,10 @@ static void process_prepare_quick_run_request(void) {
         ctrl_audio_selection = mapper_supports_scc_audio(mapper) ? AUDIO_PROFILE_SCC : AUDIO_PROFILE_NONE;
         ctrl_psg_emulation = 1;
     }
-    // Quick run never enables WiFi, but keeps a DSK entry's saved memory choice.
+    // Quick run never enables WiFi, but keeps a DSK entry's saved memory choices.
     if (!is_dsk_record(rec)) {
         ctrl_wifi_support = 0;
+        ctrl_megaram = 0;
     }
     ctrl_ack_value = 1;
 }
@@ -5459,7 +5482,9 @@ static bool fh_prepare_list_region(void)
 //             machine-correct update of the register and its shadow; a raw port
 //             0x99 write does not, and had no effect on real hardware. This is
 //             the sequence the Carnivore2 boot menu uses.
-//   Turbo   : Panasonic switched-I/O device 8, port 0x41 bit 0 (0 = 5.37MHz).
+//   Turbo   : Panasonic switched-I/O device 8, port 0x41 bit 0 (0 = 5.37MHz),
+//             then CIEL Expert3 turbo switch, port 0xB6 bit 7 (1 = turbo on). The
+//             Panasonic jr skips only its own write, so the 0xB6 write always runs.
 //   R800    : CHGCPU (0x0180) with A=0x81 (R800 ROM mode + turbo LED).
 //
 // Both CPU fragments re-verify the machine at run time (MSXVER for the turbo R,
@@ -5515,7 +5540,8 @@ static uint8_t boot_patch_saved_init[2];         // original INIT vector
 static uint8_t *boot_patch_image = NULL;         // writable cache the stub lives in
 static uint32_t boot_patch_offset = 0;           // image offset the stub was written to
 
-static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig_init)
+// Flash-resident: pure byte assembly, called once per launch, and kept out of SRAM.
+static uint8_t __noinline build_boot_stub(uint8_t *stub, uint16_t orig_init)
 {
     uint8_t n = 0;
 
@@ -5546,6 +5572,8 @@ static uint8_t __not_in_flash_func(build_boot_stub)(uint8_t *stub, uint16_t orig
         stub[n++] = 0x20u; stub[n++] = 0x04u;                                // jr nz,+4
         stub[n++] = 0x3Eu; stub[n++] = 0x80u;                                // ld a,80h (bit0=0 -> 5.37MHz)
         stub[n++] = 0xD3u; stub[n++] = 0x41u;                                // out (41h),a
+        stub[n++] = 0x3Eu; stub[n++] = 0x80u;                                // ld a,80h (Expert3: bit7 = turbo on)
+        stub[n++] = 0xD3u; stub[n++] = 0xB6u;                                // out (0B6h),a
     }
 
     stub[n++] = 0xC3u;                                                       // jp orig_init
@@ -5697,9 +5725,8 @@ static inline void __not_in_flash_func(prepare_rom_source)(
 
         // Per-ROM 50/60Hz and CPU speed: patch the launched game's cartridge
         // INIT so the options are applied right after the BIOS boot, when the
-        // ROM's INIT runs. vdp_freq_launch / cpu_mode_launch are zeroed for
-        // system ROMs so their loaders are never touched; the menu also zeroes
-        // the per-ROM frequency on MSX1 (no R9), so no MSX1 guard is needed.
+        // ROM's INIT runs. System entries keep both options zeroed; DSKs use
+        // the same frequency patch on their cached Nextor kernel below.
         apply_boot_patches(rom_sram, bytes_to_cache);
 
         // Release /WAIT only once the cache bookkeeping and the boot patch are
@@ -5749,9 +5776,11 @@ static inline void __not_in_flash_func(prepare_sunrise_mapper_rom_source)(
         {
             rom_base = rom_sram;
         }
+        apply_boot_patches(rom_sram, bytes_to_cache);
     }
     else
     {
+        boot_patch_disarm();
         rom_cached_size = 0;
     }
 
@@ -8345,6 +8374,11 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         return;
     }
 
+    if (addr == CTRL_MEGARAM) {
+        ctrl_megaram = data ? 1u : 0u;
+        return;
+    }
+
     if (addr == CTRL_PSG_EMULATION) {
         ctrl_psg_emulation = data ? 1u : 0u;
         return;
@@ -10426,6 +10460,8 @@ static uint8_t __no_inline_not_in_flash_func(menu_read_byte)(uint16_t addr, bool
         data = ctrl_vdp_frequency;
     else if (!fh_menu_window_active && addr == CTRL_CPU_MODE)
         data = ctrl_cpu_mode;
+    else if (!fh_menu_window_active && addr == CTRL_MEGARAM)
+        data = ctrl_megaram;
     else if (addr == CTRL_NET_STATUS)
         data = esp_net_status;
     else if (addr == CTRL_DISK_ACT)
@@ -12014,6 +12050,7 @@ typedef struct {
     uint8_t subslot_reg;
     bool megaram_write_enabled;
     bool megaram_scc_audio;
+    bool mapper_enable;
 } sunrise_megaram_bus_t;
 
 // Out of line: called twice per loop iteration, and SRAM has little headroom.
@@ -12035,7 +12072,7 @@ static void __no_inline_not_in_flash_func(sunrise_megaram_drain_writes)(sunrise_
             if (addr >= 0x4000u && addr <= 0x7FFFu)
                 sunrise_ide_handle_write(bus->ide, addr, data);
         }
-        else if (subslot == 1u)
+        else if (subslot == 1u && bus->mapper_enable)
         {
             uint32_t offset = ((uint32_t)mapper_page_from_reg(bus->mapper_reg[page]) << 14) |
                               (addr & 0x3FFFu);
@@ -12053,7 +12090,8 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
     uint32_t offset,
     bool cache_enable,
     sunrise_backend_task_fn_t core1_task,
-    sunrise_backend_attach_fn_t attach_ctx)
+    sunrise_backend_attach_fn_t attach_ctx,
+    bool mapper_enable)
 {
     static const uint8_t bootstrap_rom[] = {
         0x41, 0x42, 0x0A, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -12117,12 +12155,13 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
 
     // PSRAM fills and SCC/I2S setup finish before the shared storage/audio
     // Core 1 task starts, matching the FM-PAC MegaRAM loader.
-    if (!psram_prepare_mapper_region() || !psram_prepare_megaram_region())
+    if ((mapper_enable && !psram_prepare_mapper_region()) || !psram_prepare_megaram_region())
     {
         while (true) { tight_loop_contents(); }
     }
 
-    mapper_fill_ff();
+    if (mapper_enable)
+        mapper_fill_ff();
     megaram_fill_ff();
 
     sunrise_megaram_bus_t bus = {
@@ -12132,6 +12171,7 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
         .subslot_reg = 0x10u,
         .megaram_write_enabled = false,
         .megaram_scc_audio = megaram_scc_audio_selected(),
+        .mapper_enable = mapper_enable,
     };
 
     msx_pio_io_bus_init();
@@ -12150,7 +12190,7 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
             uint8_t port = io_addr & 0xFFu;
             if (system_audio_handle_io_write(port, io_data))
                 continue;
-            if (port >= 0xFCu && port <= 0xFFu)
+            if (port >= 0xFCu && port <= 0xFFu && mapper_enable)
                 bus.mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
             else if (port == 0x8Eu || port == 0x8Fu)
                 bus.megaram_write_enabled = false;
@@ -12165,7 +12205,7 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
             {
                 in_window = true;
             }
-            else if (port >= 0xFCu && port <= 0xFFu)
+            else if (port >= 0xFCu && port <= 0xFFu && mapper_enable)
             {
                 in_window = true;
                 data = (uint8_t)(0xC0u | (bus.mapper_reg[port - 0xFCu] & 0x3Fu));
@@ -12212,7 +12252,7 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
                         }
                     }
                 }
-                else if (active_subslot == 1)
+                else if (active_subslot == 1 && mapper_enable)
                 {
                     in_window = true;
                     uint8_t mapper_page = mapper_page_from_reg(bus.mapper_reg[page]);
@@ -12234,12 +12274,33 @@ static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
 
 void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_sd)(uint32_t offset, bool cache_enable)
 {
-    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx);
+    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx, true);
 }
 
 void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_usb)(uint32_t offset, bool cache_enable)
 {
-    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx);
+    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx, true);
+}
+
+// A standalone MegaRAM has no cartridge ROM whose INIT could be patched, so the
+// CPU speed stub is served as a tiny transient ROM header at 0x4000 instead:
+// "AB", INIT = 0x400A, then the stub and a RET. It disappears the moment software
+// starts writing to the RAM (the first MegaRAM write-enable port access).
+static uint8_t __noinline megaram_build_boot_overlay(uint8_t *overlay)
+{
+    if (cpu_mode_launch == CPU_MODE_DEFAULT) return 0;
+
+    uint8_t stub[BOOT_STUB_MAX];
+    uint8_t len = build_boot_stub(stub, 0u);
+    uint16_t ret_addr = (uint16_t)(0x400Au + len);
+    stub[len - 2u] = (uint8_t)(ret_addr & 0xFFu);                            // jp -> the RET below
+    stub[len - 1u] = (uint8_t)(ret_addr >> 8);
+
+    memset(overlay, 0, 10u);
+    overlay[0] = 'A'; overlay[1] = 'B'; overlay[2] = 0x0Au; overlay[3] = 0x40u;
+    memcpy(overlay + 10u, stub, len);
+    overlay[10u + len] = 0xC9u;                                              // ret
+    return (uint8_t)(11u + len);
 }
 
 void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_enable)
@@ -12257,6 +12318,8 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
     uint8_t megaram_bank_reg[4] = { 0, 1, 2, 3 };
     bool megaram_write_enabled = false;
     bool megaram_scc_audio = megaram_scc_audio_selected();
+    uint8_t boot_overlay[BOOT_STUB_MAX + 12u];
+    uint8_t boot_overlay_len = megaram_build_boot_overlay(boot_overlay);
     megaram_fill_ff();
 
     msx_pio_io_bus_init();
@@ -12284,7 +12347,10 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
         {
             uint8_t port = io_addr & 0xFFu;
             if (port == 0x8Eu || port == 0x8Fu)
+            {
                 megaram_write_enabled = true;
+                boot_overlay_len = 0;
+            }
             io_read_respond(false, 0xFFu);
         }
 
@@ -12296,7 +12362,12 @@ void __no_inline_not_in_flash_func(loadrom_megaram)(uint32_t offset, bool cache_
             bool in_window = addr >= 0x4000u && addr <= 0xBFFFu;
             uint8_t data = 0xFFu;
             if (in_window)
-                data = megaram_handle_read(addr, megaram_bank_reg, megaram_write_enabled, megaram_scc_audio);
+            {
+                uint16_t rel = (uint16_t)(addr - 0x4000u);
+                data = rel < boot_overlay_len
+                       ? boot_overlay[rel]
+                       : megaram_handle_read(addr, megaram_bank_reg, megaram_write_enabled, megaram_scc_audio);
+            }
             pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
         }
     }
@@ -15666,8 +15737,14 @@ static void loadrom_picoamp(uint32_t offset, bool wifi)
                          rom_audio_handoff_pool, wifi, ctrl_audio_volume))
         panic("PicoAmp: engine setup failed");
     rom_audio_handoff_pool = NULL;
+    // The ROM copy lives in the PicoAmp workspace; patch its INIT like any other
+    // cached cartridge image. The frequency option is never offered here.
+    vdp_freq_launch = VDP_FREQ_DEFAULT;
+    cpu_mode_launch = ctrl_cpu_mode;
+    apply_boot_patches(sd_rom_region.ptr, PICOAMP_ROM_SIZE);
     msx_pio_bus_init();
-    picoamp_run(msx_bus.pio, msx_bus.sm_read, msx_bus.sm_write);
+    picoamp_run(msx_bus.pio, msx_bus.sm_read, msx_bus.sm_write,
+                &boot_patch_trigger_rel, boot_patch_restore);
 }
 
 // Main function running on core 0
@@ -15749,11 +15826,12 @@ int __no_inline_not_in_flash_func(main)()
     // A .DSK boots through a Nextor Sunrise loader and takes the same cartridge
     // audio profiles as a Sunrise SYSTEM entry (see dsk_audio_mode_supported);
     // the WiFi BIOS is not offered. For DSK entries CTRL_WIFI_SUPPORT carries
-    // the "1MB Mapper" memory choice instead.
+    // the "1MB Mapper" memory choice instead, and CTRL_MEGARAM the "Megaram" one.
     bool is_dsk = is_dsk_record(selected);
     bool dsk_mapper = is_dsk && ctrl_wifi_support != 0u;
+    bool dsk_megaram = is_dsk && ctrl_megaram != 0u;
     if (is_dsk) {
-        if (!dsk_audio_mode_supported(audio_mode)) {
+        if (!dsk_audio_mode_supported(audio_mode, dsk_megaram)) {
             audio_mode = AUDIO_MODE_NONE;
             ctrl_audio_selection = AUDIO_PROFILE_NONE;
         }
@@ -15828,10 +15906,11 @@ int __no_inline_not_in_flash_func(main)()
                            audio_mode == AUDIO_MODE_MSX_MUSIC || sn_audio_selected();
     bool psg_emulation = (ctrl_psg_emulation != 0u);
     bool system_mapper = is_system_mapper(mapper) || is_dsk;
-    // The 50/60Hz INIT patch only applies to regular game ROMs; the system ROMs
-    // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
-    vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
-    cpu_mode_launch = system_mapper ? CPU_MODE_DEFAULT : ctrl_cpu_mode;
+    // DSKs apply frequency through the hidden Nextor kernel's INIT; other
+    // system entries keep their frequency untouched. CPU speed is injected into
+    // every cached cartridge image, system entries included.
+    vdp_freq_launch = (!system_mapper || is_dsk) ? ctrl_vdp_frequency : VDP_FREQ_DEFAULT;
+    cpu_mode_launch = ctrl_cpu_mode;
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);
@@ -16046,7 +16125,15 @@ int __no_inline_not_in_flash_func(main)()
         case MAPPER_DSK:
             // Dual PSG needs no branch of its own: the plain and mapper DSK
             // loops start it through system_audio_init_for_sunrise().
-            if (external_scc_audio)
+            if (dsk_megaram) {
+                // The Nextor MegaRAM loaders keep the entry's 1MB mapper choice;
+                // the MegaRAM SCC profiles are served by the plain MegaRAM loop.
+                if (audio_mode == AUDIO_MODE_MSX_MUSIC)
+                    loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, true);
+                else
+                    loadrom_sunrise_megaram_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, dsk_mapper);
+            }
+            else if (external_scc_audio)
                 loadrom_sunrise_scc_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper);
             else if (audio_mode == AUDIO_MODE_MSX_MUSIC)
                 loadrom_sunrise_fmpac_common(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false);

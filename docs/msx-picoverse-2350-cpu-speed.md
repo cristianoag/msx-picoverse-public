@@ -16,15 +16,18 @@ Two unrelated hardware mechanisms are exposed through a single `CPU` option:
 | Value | Mechanism | Machines |
 |---|---|---|
 | `Default` | nothing is changed | all |
-| `Turbo` | Panasonic switched-I/O device 8, port `#41` bit 0 → 5.37 MHz Z80 | FS-A1FX, FS-A1WX, FS-A1WSX, FS-A1ST, FS-A1GT and faithful FPGA cores |
+| `Turbo` | Panasonic switched-I/O device 8, port `#41` bit 0 → 5.37 MHz Z80; CIEL Expert3 turbo switch, port `#B6` bit 7 | FS-A1FX, FS-A1WX, FS-A1WSX, FS-A1ST, FS-A1GT, faithful FPGA cores, MSX Expert 3 Turbo |
 | `R800` | `CHGCPU` BIOS entry (`#0180`) with `A = #81` → R800 ROM mode | MSX turbo R only |
 
-The option is offered only for **regular game ROMs**. The system ROMs (Nextor/Sunrise IDE,
-Carnivore2, MegaRAM) manage their own boot flow and are intentionally excluded, exactly like the
-50/60 Hz option.
+The option is offered for **all entries**: regular game ROMs, DSKs and the SYSTEM entries (Nextor/Sunrise,
+Carnivore2, MegaRAM, PicoAmp). Sunrise/Nextor-based entries and DSKs reuse the cached Nextor ROM's INIT patch;
+a standalone MegaRAM serves a transient `AB` header + stub at `0x4000` until software first enables RAM writes;
+PicoAmp patches its workspace ROM copy.
 
-Values the current machine cannot deliver are never shown, and the whole row is hidden on machines
-that support neither.
+The row is shown on **every machine**: `Turbo` is always listed and `R800` only on a turbo R. Turbo hardware
+cannot be probed reliably (the Expert3 switch has no known read-back), so on machines without it `Turbo` does
+nothing: the Panasonic write is guarded by the port `#40` read-back and the `#B6` write is assumed harmless.
+The Expert3 `#B6` behaviour is taken from the MSX Assembly Page I/O port table and is unverified on hardware.
 
 ---
 
