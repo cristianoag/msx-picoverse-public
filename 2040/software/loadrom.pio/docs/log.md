@@ -1,5 +1,13 @@
 # Change Log
 
+## PicoVerse 2040 LoadROM v2.67
+
+- Joystick firmware (`pico/joystick`): added Xbox 360 wireless receiver (XUSB, interface class `0xFF`/`0x5D`/`0x81`) support to the existing XInput class driver in `xinput_host.c`/`xinput_host.h`. Each receiver interface is one pad slot (up to 4); the driver sends the receiver a presence request, assigns an MSX port when a pad connects, releases it (state back to `0xFF`) when it leaves, and decodes the 20-byte XInput report that follows the 4-byte receiver header. Wired Xbox 360 (`0x5D`/`0x01`) and Xbox One (GIP) handling is unchanged.
+- Xbox 360 wired and wireless pads now get their player LED lit for the assigned MSX port (queued and retried from the OUT completion callback while the endpoint is busy).
+- HID gamepads and Xbox controllers now share the two MSX ports: `hid_gamepad_port_in_use()` / `xinput_port_in_use()` replace the independent allocators, so a HID pad and an Xbox pad can no longer land on the same port. `XINPUT_MAX_DEVICES` raised from 2 to 4 for the receiver interfaces.
+- Bumped the aggregate and PC tool versions to v2.67 and rebuilt `pico/joystick/dist/joystick.bin` (32396 bytes), `tool/src/joystick_fw.h` and `tool/dist/loadrom.exe`. 
+- Docs: updated `docs/msx-picoverse-2040-joystick.md` for the wireless receiver, LED and shared port allocation.
+
 ## PicoVerse 2040 LoadROM v2.66
 
 - Refreshed the ROM mapper SHA1 database (3363 entries, from the latest Vampier softwaredb) by re-running `gen_romdb.py`: `tool/src/romdb.h`.

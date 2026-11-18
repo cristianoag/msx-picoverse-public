@@ -20,7 +20,7 @@ MSX joysticks are managed through the PSG (Programmable Sound Generator, AY-3-89
 
 - Fully standalone: does not require any MSX-side software or driver.
 - Supports generic USB HID gamepads, including gamepads connected through USB hubs.
-- Supports Xbox 360 and XInput-compatible controllers via a dedicated XInput protocol driver.
+- Supports Xbox 360 and XInput-compatible controllers via a dedicated XInput protocol driver, including the Xbox 360 wireless receiver.
 - Supports Xbox One and Xbox Series X|S controllers via a dedicated GIP protocol driver.
 - Full joystick coverage: 4 directions (Up, Down, Left, Right) and 2 trigger buttons (A and B).
 - Both D-pad (hat switch) and analog stick are supported simultaneously, with a configurable deadzone for the analog stick.
@@ -192,9 +192,11 @@ The firmware supports two classes of USB gamepads:
 
 2. **XInput (Xbox 360) controllers**: Xbox 360 wired controllers and many third-party XInput-compatible gamepads use a vendor-specific USB protocol (interface class `0xFF`, subclass `0x5D`, protocol `0x01`) rather than standard USB HID. A dedicated TinyUSB custom class driver claims these interfaces and parses their fixed 20-byte input reports.
 
-3. **Xbox One / Series X|S (GIP) controllers**: Xbox One, Xbox One S/X, and Xbox Series X|S controllers use a different vendor-specific protocol called GIP (Game Input Protocol, interface class `0xFF`, subclass `0x47`, protocol `0xD0`). These controllers also require a 5-byte initialisation packet to be sent on the OUT endpoint before they begin producing input reports. The same custom class driver handles both Xbox 360 and Xbox One families.
+3. **Xbox 360 wireless receiver (XUSB)**: The Xbox 360 wireless gaming receiver exposes one vendor-specific interface per controller slot (interface class `0xFF`, subclass `0x5D`, protocol `0x81`). The same custom class driver claims them, asks the receiver which pads are present, assigns an MSX port when a pad connects and releases it when the pad disconnects.
 
-All three coexist and are active simultaneously. Standard HID gamepads are handled by the TinyUSB HID host driver, while XInput and GIP devices are handled by the custom class driver. Each driver independently allocates MSX joystick ports (up to 2 total across all drivers).
+4. **Xbox One / Series X|S (GIP) controllers**: Xbox One, Xbox One S/X, and Xbox Series X|S controllers use a different vendor-specific protocol called GIP (Game Input Protocol, interface class `0xFF`, subclass `0x47`, protocol `0xD0`). These controllers also require a 5-byte initialisation packet to be sent on the OUT endpoint before they begin producing input reports. The same custom class driver handles the Xbox 360 and Xbox One families.
+
+All four coexist and are active simultaneously. Standard HID gamepads are handled by the TinyUSB HID host driver, while XInput, wireless receiver and GIP devices are handled by the custom class driver. Both drivers allocate from the same two MSX joystick ports (up to 2 gamepads in total across all drivers).
 
 ### Why Not Boot Protocol
 
@@ -267,6 +269,19 @@ Xbox 360 wired controllers send a fixed 20-byte input report via an interrupt IN
 | 15 | Y | — |
 
 The Xbox left analog stick is also mapped to directions using a deadzone of approximately 25% (8192 out of 32768). The Y axis convention on XInput is positive = up, negative = down.
+
+Xbox 360 pads also get their player LED lit for the assigned MSX port (port 1 = first quadrant, port 2 = second quadrant).
+
+### Xbox 360 Wireless Receiver Packets
+
+The receiver reports on its interrupt IN endpoint, one interface per controller slot:
+
+| Packet | Meaning |
+| --- | --- |
+| Byte 0 bit 3 set, byte 1 bit 7 = 1 | Pad connected (bit 7 = 0: disconnected) |
+| Byte 1 = `0x01`, bytes 0–3 = `00 01 00 F0` | Pad data: the 20-byte XInput report above follows the 4-byte header |
+
+On configuration the firmware sends the 12-byte presence request `08 00 0F C0 00...` on the OUT endpoint so a receiver that was already powered reports its connected pads. When a pad connects, the firmware assigns the next free MSX port and sends the player LED command (`00 00 08 4x 00...`); when it disconnects, the port state returns to `0xFF`. The button, trigger and stick mapping is identical to the wired XInput driver.
 
 ### Xbox One / Series X|S (GIP) Report Format
 
@@ -459,8 +474,8 @@ The `-j` / `--joystick` option is standalone and cannot be combined with ROM loa
 | `pico/joystick/joystick_main.c` | Main firmware: PIO IRQ handler, GPIO/PIO init, gamepad management, TinyUSB callbacks, dual-core entry points |
 | `pico/joystick/hid_gamepad_parser.h` | Public API for HID report descriptor parsing and joystick extraction |
 | `pico/joystick/hid_gamepad_parser.c` | HID descriptor walker, hat/axis/button field extraction, deadzone calculation |
-| `pico/joystick/xinput_host.h` | Xbox 360 (XInput) and Xbox One (GIP) protocol definitions, report structures, button constants |
-| `pico/joystick/xinput_host.c` | TinyUSB custom class driver for Xbox 360, Xbox One, and Xbox Series X\|S controllers |
+| `pico/joystick/xinput_host.h` | Xbox 360 (XInput, wired and wireless receiver) and Xbox One (GIP) protocol definitions, report structures, button constants |
+| `pico/joystick/xinput_host.c` | TinyUSB custom class driver for Xbox 360 (wired and wireless receiver), Xbox One, and Xbox Series X\|S controllers |
 | `pico/joystick/tusb_config.h` | TinyUSB host configuration (report protocol, 4 HID interfaces, hub support) |
 | `pico/joystick/CMakeLists.txt` | CMake build configuration |
 | `pico/joystick/pico_sdk_import.cmake` | Pico SDK import helper |
@@ -474,7 +489,7 @@ The `-j` / `--joystick` option is standalone and cannot be combined with ROM loa
 
 - **No physical joystick passthrough**: The firmware does not read the physical DE-9 joystick ports. If a real joystick is also connected to the MSX, the PSG will report the logical AND (active-low) of both the real joystick and the USB gamepad, which effectively means both inputs work simultaneously — pressing a direction on either device activates it.
 
-- **Gamepad compatibility**: Not all USB gamepads will be recognised. The firmware supports three USB gamepad families: standard USB HID gamepads (via HID report descriptor parsing), Xbox 360 / XInput controllers (via vendor-specific class `0xFF`/`0x5D`/`0x01`), and Xbox One / Series X|S controllers (via GIP protocol, class `0xFF`/`0x47`/`0xD0`). Proprietary protocols not covered by any of these drivers (e.g. PlayStation DualSense via Bluetooth, some older wireless adapters) may not be recognised. Wired USB gamepads that present a standard HID gamepad descriptor, an XInput interface, or a GIP interface should work.
+- **Gamepad compatibility**: Not all USB gamepads will be recognised. The firmware supports four USB gamepad families: standard USB HID gamepads (via HID report descriptor parsing), Xbox 360 / XInput controllers (via vendor-specific class `0xFF`/`0x5D`/`0x01`), the Xbox 360 wireless receiver (`0xFF`/`0x5D`/`0x81`), and Xbox One / Series X|S controllers (via GIP protocol, class `0xFF`/`0x47`/`0xD0`). Proprietary protocols not covered by any of these drivers (e.g. PlayStation DualSense via Bluetooth, third-party wireless adapters with their own protocol) may not be recognised. Wired USB gamepads that present a standard HID gamepad descriptor, an XInput interface, or a GIP interface, and Xbox 360 wireless receivers, should work. The wireless receiver support has not yet been validated on hardware.
 
 - **Analog deadzone**: The 25% deadzone is compiled into the firmware. To change it, modify `DEADZONE_PERCENT` in `joystick.h` and rebuild.
 

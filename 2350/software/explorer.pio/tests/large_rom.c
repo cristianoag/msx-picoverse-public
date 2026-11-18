@@ -748,8 +748,39 @@ static void test_launches(void) {
     loadGame(0, 0);
     assert(resets == 0 && selections == 0 && saves == 0 && strstr(last_error, "Mapper/audio"));
     control[CTRL_AUDIO] = 0;
+    reset_launch(8388608UL, 'n', 1);
+    records[0].Mapper = MAPPER_ASCII16X_FR;
     loadGame(0, 0);
     assert(resets == 2 && questions == 0);
+    // ASC16X-FR must always save, so above 4 MB the FM chips are refused like
+    // MSX-MUSIC; the SRAM-cached profiles and plain ASC16X (which only presents
+    // the flash) keep the 8 MB ROM.
+    const uint8_t psram_hungry[] = {AUDIO_PROFILE_OPL4_22K, AUDIO_PROFILE_MAKOTO_OPNA, AUDIO_PROFILE_MSX_AUDIO};
+    for (size_t i = 0; i < sizeof(psram_hungry); i++) {
+        reset_launch(8388608UL, 'n', 1);
+        records[0].Mapper = MAPPER_ASCII16X_FR;
+        control[CTRL_AUDIO] = psram_hungry[i];
+        loadGame(0, 0);
+        assert(resets == 0 && selections == 0 && strstr(last_error, "Mapper/audio"));
+        reset_launch(8388608UL, 'n', 1);
+        records[0].Mapper = 12;
+        loadGame(0, 0);
+        assert(resets == 2 && questions == 0);
+    }
+    const uint8_t sram_cached[] = {AUDIO_PROFILE_SCC_EXTERNAL, AUDIO_PROFILE_YM2151_SFG05};
+    for (size_t i = 0; i < sizeof(sram_cached); i++) {
+        reset_launch(8388608UL, 'n', 1);
+        records[0].Mapper = MAPPER_ASCII16X_FR;
+        control[CTRL_AUDIO] = sram_cached[i];
+        loadGame(0, 0);
+        assert(resets == 2 && questions == 0);
+    }
+    reset_launch(4194304UL, 'n', 1);
+    records[0].Mapper = MAPPER_ASCII16X_FR;
+    control[CTRL_AUDIO] = AUDIO_PROFILE_OPL4_22K;
+    loadGame(0, 0);
+    assert(resets == 2 && questions == 0);
+    control[CTRL_AUDIO] = 0;
     reset_launch(8388609UL, 'n', 1);
     records[0].Mapper = MAPPER_ASCII16X_FR;
     loadGame(0, 0);

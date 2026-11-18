@@ -1168,3 +1168,59 @@ JRESULT jd_decomp (
 
 	return rc;
 }
+
+
+
+/*-----------------------------------------------------------------------*/
+/* Start to decompress the JPEG picture in steps (PicoVerse addition)    */
+/*-----------------------------------------------------------------------*/
+/* jd_decomp, cut in steps: jd_step_begin, then jd_step until it says    */
+/* done. Between steps the caller does other work (the PicoVerse engine: */
+/* the music), so that a big picture takes no long time at once.         */
+
+JRESULT jd_step_begin (
+	JDEC* jd,								/* Initialized decompression object */
+	JSTEP* st,								/* The steps' state */
+	int (*outfunc)(JDEC*, void*, JRECT*),	/* RGB output function */
+	uint8_t scale							/* Output de-scaling factor (0 to 3) */
+)
+{
+	if (scale > (JD_USE_SCALE ? 3 : 0)) return JDR_PAR;
+	jd->scale = scale;
+	jd->dcv[2] = jd->dcv[1] = jd->dcv[0] = 0;	/* Initialize DC values */
+	st->x = st->y = 0;
+	st->rst = st->rsc = 0;
+	st->done = 0;
+	st->outfunc = outfunc;
+	return JDR_OK;
+}
+
+JRESULT jd_step (
+	JDEC* jd,			/* Initialized decompression object (jd_step_begin) */
+	JSTEP* st,			/* The steps' state */
+	unsigned int n		/* At most this many MCUs now (one MCU row at most: it stops at its end) */
+)
+{
+	unsigned int mx = jd->msx * 8, my = jd->msy * 8;
+	JRESULT rc;
+
+	while (n-- && !st->done) {
+		if (jd->nrst && st->rst++ == jd->nrst) {	/* Process restart interval if enabled */
+			rc = restart(jd, st->rsc++);
+			if (rc != JDR_OK) return rc;
+			st->rst = 1;
+		}
+		rc = mcu_load(jd);
+		if (rc != JDR_OK) return rc;
+		rc = mcu_output(jd, st->outfunc, st->x, st->y);
+		if (rc != JDR_OK) return rc;
+		st->x += mx;
+		if (st->x >= jd->width) {				/* The end of an MCU row */
+			st->x = 0;
+			st->y += my;
+			if (st->y >= jd->height) st->done = 1;
+			break;
+		}
+	}
+	return JDR_OK;
+}

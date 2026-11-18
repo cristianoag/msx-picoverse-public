@@ -28,7 +28,9 @@
 #     ROMs with the openMSX mapper of the PicoVerse mapper code, plus the
 #     audio profile chosen in the menu (external SCC/SCC+, MSX-MUSIC with the
 #     FM-PAC BIOS of the UF2, Yamaha SFG-05/SFG-01 with the SFG BIOS of the
-#     UF2, or a second PSG); the Nextor SYSTEM entries as a Sunrise IDE with
+#     UF2, a second PSG, the MoonSound OPL4 with the wave ROM of the UF2, or
+#     MSX-AUDIO with the NMS-1205 BIOS of the UF2); the Nextor SYSTEM entries
+#     as a Sunrise IDE with
 #     their own Nextor kernel, the 1MB memory mapper and MegaRAM; .DSK images
 #     through the hidden Nextor 2.1.4 kernel of the UF2.
 #
@@ -45,7 +47,7 @@
 
 namespace eval picoverse2350 {
 
-variable version "v2.63"
+variable version "v2.64"
 
 # Flash layout, must match pico/explorer/explorer.c and tool/src/explorer.c.
 # Offsets are relative to the menu ROM (the firmware's flash_rom pointer).
@@ -63,7 +65,9 @@ variable max_records    1024
 variable fmpac_offset   0x12000        ;# 64KB FM-PAC BIOS
 variable sfg_offset     0x22000        ;# SFG-05 BIOS (32KB) + SFG-01 BIOS (32KB)
 variable dsk_offset     0x32000        ;# 128KB Nextor 2.1.4 kernel for .DSK images
-variable store_offset   0x52000        ;# first byte after the hidden payloads
+variable yrw801_offset  0x52000        ;# 2MB YRW801-M wave ROM for the OPL4 profile
+variable msxaudio_offset 0x252000      ;# 48KB MSX-AUDIO (NMS-1205) BIOS
+variable store_offset   0x25E000       ;# first byte after the hidden payloads
 variable sector         0x1000
 
 # Pico control area served in the cartridge window (msx/src/menu.h)
@@ -2801,6 +2805,8 @@ proc on_select {value} {
 # resolve_audio_mode() of the firmware
 proc audio_mode {code profile} {
     if {$profile == 13 && (($code > 0 && $code <= 18) || $code == 22 || $code == 23)} {return sn_franky}
+    if {$profile == 15 && (($code >= 1 && $code <= 8) || $code in {12 13 14 22 10 11 15 16 23})} {return opl4}
+    if {$profile == 17 && (($code >= 1 && $code <= 8) || $code in {12 13 14 22 10 11 15 16 17 18 23})} {return msx_audio}
 	if {$code == 23 && ($profile == 9 || $profile == 10)} {
 		return [expr {$profile == 10 ? "megaram_sccp" : "megaram_scc"}]
 	}
@@ -2915,8 +2921,50 @@ proc audio_devices {mode var_slots var_io} {
 	variable image_file
 	variable fmpac_offset
 	variable sfg_offset
+	variable yrw801_offset
+	variable msxaudio_offset
 	upvar $var_slots slots $var_io io
 	switch -- $mode {
+		msx_audio {
+			# Y8950 with 256KB of ADPCM RAM and the BIOS in a subslot of its own
+			# (share/extensions/Boosted_audio.xml, without the MIDI interface).
+			set bios [cache_file "msxaudio.rom" [read_range $image_file $msxaudio_offset 0xC000]]
+			append io "<MSX-AUDIO id=\"PicoVerse 2350 MSX-AUDIO\">
+      <io base=\"0xC0\" num=\"2\"/>
+      <io base=\"0x0A\" num=\"1\" type=\"O\"/>
+      <type>Philips</type>
+      <sound><volume>12000</volume></sound>
+      <sampleram>256</sampleram>
+    </MSX-AUDIO>"
+			dict set slots 2 "<ROM id=\"PicoVerse 2350 MSX-AUDIO BIOS\">
+          <mem base=\"0x0000\" size=\"0x3000\"/>
+          <mem base=\"0x4000\" size=\"0x3000\"/>
+          <mem base=\"0x8000\" size=\"0x3000\"/>
+          <mem base=\"0xC000\" size=\"0x3000\"/>
+          <mappertype>Normal0000</mappertype>
+          <rom><filename>[xml_escape $bios]</filename></rom>
+        </ROM>
+        <RAM id=\"PicoVerse 2350 MSX-AUDIO work RAM\">
+          <mem base=\"0x3000\" size=\"0x1000\"/>
+          <mem base=\"0x7000\" size=\"0x1000\"/>
+          <size>0x1000</size>
+        </RAM>
+        <RAM id=\"PicoVerse 2350 MSX-AUDIO expanded work RAM\">
+          <mem base=\"0xB000\" size=\"0x1000\"/>
+          <mem base=\"0xF000\" size=\"0x1000\"/>
+          <size>0x1000</size>
+        </RAM>"
+		}
+		opl4 {
+			set wave [cache_file "yrw801.rom" [read_range $image_file $yrw801_offset 0x200000]]
+			append io "<MoonSound id=\"PicoVerse 2350 OPL4\">
+      <io base=\"0x7E\" num=\"2\" type=\"IO\"/>
+      <io base=\"0xC4\" num=\"4\" type=\"IO\"/>
+      <sound><volume>17000</volume></sound>
+      <sampleram>2048</sampleram>
+      <rom><filename>[xml_escape $wave]</filename></rom>
+    </MoonSound>"
+		}
 		sn_franky {
 			append io "<Franky id=\"PicoVerse 2350 Franky\">
       <video_standard>NTSC</video_standard>
@@ -3054,6 +3102,9 @@ proc start_record {rec opts} {
 		return
 	}
 	set audio [audio_mode $code [dict get $opts audio]]
+	if {[dict get $opts audio] == 16} {
+		notify "$name: the Makoto YM2608 profile is not emulated by openMSX, starting without it" warning
+	}
 	set slots [dict create]
 	set io ""
 	set what "ROM"
@@ -3066,7 +3117,7 @@ proc start_record {rec opts} {
 		if {$megaram} {
 			set supported {msx_music megaram_scc megaram_sccp}
 		} else {
-			set supported {scc_ext sccp_ext msx_music dual_psg sfg05 sfg01 sn_franky}
+			set supported {scc_ext sccp_ext msx_music dual_psg sfg05 sfg01 sn_franky opl4 msx_audio}
 		}
 		if {$audio ni $supported} {set audio none}
 		set kernel [cache_file "nextor_dsk.rom" [read_range $image_file $dsk_offset 0x20000]]

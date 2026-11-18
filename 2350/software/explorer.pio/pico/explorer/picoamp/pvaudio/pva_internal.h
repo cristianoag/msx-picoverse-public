@@ -325,11 +325,33 @@ void    pva_art_none(void);
 void    pva_art_station(const char *url, const char *uuid, const char *name);
 void    pva_art_song(const char *artist, const char *title);
 bool    pva_art_online(void);
+uint8_t *pva_art_borrow(size_t *n);     // the covers' memory for the pictures (NULL: none); covers stop
+void    pva_art_giveback(void);         // and back: the cover of what plays is made again
+void    pva_cover_redo(void);           // (pva_engine.c: the cover of what plays, again)
+// pictures (pva_pics.c)
+void    pva_pics_poll(void);
+int     pva_pics_cmd(uint8_t code, const uint8_t *args, size_t n);
+void    pva_pics_close(void);
+bool    pva_pics_open(void);
+uint8_t pva_pics_saver(void);
+const char *pva_net_url(void);
 bool    pva_card_writes(void);
 // the default pictures (pva_art_defaults.c): 80 x 80 baseline JPEGs
 #define PVA_ART_DEFAULTS 3
 extern const uint8_t *const pva_art_default[PVA_ART_DEFAULTS];
 extern const uint16_t pva_art_default_len[PVA_ART_DEFAULTS];
+extern const uint8_t *const pva_art_default_big[PVA_ART_DEFAULTS];
+extern const uint16_t pva_art_default_big_len[PVA_ART_DEFAULTS];
+// what the cover shows, for a bigger picture of it (the pictures' full screen cover)
+enum { PVA_SRC_NONE, PVA_SRC_FILE, PVA_SRC_MEM, PVA_SRC_URL };
+typedef struct
+{
+    uint8_t     kind;
+    const char *s;                  // a file's path (FatFS), a picture's address
+    uint32_t    pos, len;           // a file: where the JPEG is in it (len 0: all of it)
+    const uint8_t *p;               // a picture in memory (len bytes)
+} pva_art_src_t;
+bool    pva_art_source(pva_art_src_t *s);   // false: no cover (or one in the making)
 
 void    pva_art_poll(void);
 int     pva_art_cmd(uint8_t code, const uint8_t *args);

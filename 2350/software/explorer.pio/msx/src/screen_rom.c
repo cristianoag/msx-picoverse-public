@@ -155,6 +155,42 @@ static unsigned char record_supports_msx_music(const ROMRecord *record) {
     return record_supports_external_scc_audio(record);
 }
 
+/* OPL4 / MoonSound (22.05 kHz) is offered for the game ROMs the firmware serves
+   through its external game loop (mappers 1-8, ASCII16-X and its FlashROM
+   variant ASC16X-FR, 13, Manbow 2), the
+   Nextor Sunrise SYSTEM ROMs (with or without the 1MB mapper) and .DSK images
+   (code 23). Carnivore2 and MegaRAM entries leave no PSRAM for its 2 MB sample
+   RAM, and PicoAmp has no loader. */
+static unsigned char record_supports_opl4_game(const ROMRecord *record) {
+    unsigned char mapper_code = record_mapper_code(record->Mapper);
+    return !record_is_folder(record) && !record_is_system_rom(record) &&
+           ((mapper_code >= 1 && mapper_code <= 8) || mapper_code == 12 || mapper_code == 13 || mapper_code == 14 ||
+            mapper_code == 22);
+}
+
+static unsigned char record_supports_opl4(const ROMRecord *record) {
+    unsigned char mapper_code = record_mapper_code(record->Mapper);
+    return record_supports_opl4_game(record) ||
+           (!record_is_folder(record) &&
+            (mapper_code == 10 || mapper_code == 11 || mapper_code == 15 || mapper_code == 16 || mapper_code == 23));
+}
+
+/* Makoto YM2608 (OPNA) answers plain I/O ports, so it is offered for the same
+   game ROMs as the OPL4, the Sunrise/Carnivore2 SYSTEM ROMs and .DSK images
+   (code 23): VGMPlay runs from Nextor. MegaRAM and PicoAmp have no loader. */
+static unsigned char record_supports_makoto(const ROMRecord *record) {
+    return !record_is_folder(record) &&
+           (record_supports_opl4_game(record) || record_is_sunrise_system_rom(record) ||
+            record_mapper_code(record->Mapper) == 23);
+}
+
+/* MSX-AUDIO (Y8950) needs only plain I/O ports and 256 KB of ADPCM RAM, so it
+   is offered wherever the Makoto is: game ROMs, Sunrise/Carnivore2 SYSTEM ROMs
+   and .DSK images. */
+static unsigned char record_supports_msxaudio(const ROMRecord *record) {
+    return record_supports_makoto(record);
+}
+
 static void send_detect_mapper(unsigned int index) {
     write_index_query(index);
     clear_query_tail(2);
@@ -1001,6 +1037,15 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
                audio_profile == AUDIO_PROFILE_MEGARAM_SCC ||
                audio_profile == AUDIO_PROFILE_MEGARAM_SCC_PLUS;
     }
+    /* An ASC16X-FR ROM above 4 MB needs the whole PSRAM for its writable 8 MB
+       array, which MSX-MUSIC (PSRAM bank cache) and the FM chips (also their
+       sample RAM at the top) leave no room for. FR always saves, so those
+       profiles are not offered for it; plain ASC16X has no such limit. */
+    if (record_mapper_code(record->Mapper) == MAPPER_ASCII16X_FR &&
+        record->Size > SD_ROM_MAX_SIZE_KB * 1024UL &&
+        (audio_profile == AUDIO_PROFILE_MSX_MUSIC || audio_profile >= AUDIO_PROFILE_OPL4_22K)) {
+        return 0;
+    }
     if (audio_profile == AUDIO_PROFILE_SN76489_FRANKY) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
         return !record_is_folder(record) && (mapper_code <= 18 || mapper_code == 22 || mapper_code == 23);
@@ -1021,6 +1066,15 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     }
     if (audio_profile == AUDIO_PROFILE_DUAL_PSG) {
         return record_supports_dual_psg(record);
+    }
+    if (audio_profile == AUDIO_PROFILE_OPL4_22K) {
+        return record_supports_opl4(record);
+    }
+    if (audio_profile == AUDIO_PROFILE_MAKOTO_OPNA) {
+        return record_supports_makoto(record);
+    }
+    if (audio_profile == AUDIO_PROFILE_MSX_AUDIO) {
+        return record_supports_msxaudio(record);
     }
     if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
@@ -1058,7 +1112,10 @@ static unsigned char next_audio_profile(const ROMRecord *record, unsigned char a
         AUDIO_PROFILE_YM2151_SFG01_4MHZ,
         AUDIO_PROFILE_DUAL_PSG,
         AUDIO_PROFILE_MSX_MUSIC,
-        AUDIO_PROFILE_SN76489_FRANKY
+        AUDIO_PROFILE_SN76489_FRANKY,
+        AUDIO_PROFILE_OPL4_22K,
+        AUDIO_PROFILE_MAKOTO_OPNA,
+        AUDIO_PROFILE_MSX_AUDIO
     };
     const unsigned int audio_count = (unsigned int)(sizeof(audio_profiles) / sizeof(audio_profiles[0]));
     int current = -1;
@@ -1120,6 +1177,12 @@ static void build_audio_text(const ROMRecord *record, unsigned char audio_profil
         audio_label = "Dual PSG";
     } else if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
         audio_label = "FMPAC/MSX-MUSIC";
+    } else if (audio_profile == AUDIO_PROFILE_OPL4_22K) {
+        audio_label = "OPL4 22kHz";
+    } else if (audio_profile == AUDIO_PROFILE_MAKOTO_OPNA) {
+        audio_label = "Makoto YM2608";
+    } else if (audio_profile == AUDIO_PROFILE_MSX_AUDIO) {
+        audio_label = "MSX-AUDIO";
     }
     strncpy(out, audio_label, out_size - 1);
     out[out_size - 1] = '\0';

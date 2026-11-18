@@ -42,6 +42,7 @@
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "ff.h"
 #include "pva_internal.h"
@@ -49,30 +50,30 @@
 #include "tjpgd/tjpgd.h"
 
 #define KEY_MAX     260
-#define IMG_MAX     (6u * 1024u)    // a picture from the proxy (80 x 80, quality 80: 2-4 KB)
+#define IMG_MAX     (5u * 1024u)    // a picture from the proxy (80 x 80, quality 80: 2-4 KB)
 #define JOB_MS      20000u          // a lookup and its picture, at most
 
 static pva_cover_t *cv;
 static uint8_t     *work;           // TJpgDec's
-static uint8_t     *out;            // PVA_COVER_SIZE
+static uint8_t     *out;            // PVA_COVER_FULL
 static FIL         *f;
 static uint8_t     *img;            // IMG_MAX (online only)
-static uint8_t     *logo_keep;      // PVA_COVER_SIZE: the station's logo, converted (online only)
+static uint8_t     *logo_keep;      // PVA_COVER_FULL: the station's logo, converted (online only)
 static uint32_t     f_left;         // bytes of the picture still to read
 static const uint8_t *m_src;        // (or from memory)
 static size_t       m_len, m_pos;
 static uint8_t      pal[32];
-static uint16_t     free_mask;
+static uint16_t     free_mask;      // (bit 0: the player sets a palette for every row of cells)
 static bool         set_up;
 static uint8_t      state = PVA_COVER_NONE;
 static uint8_t      gen;
 
 #define WORK_SIZE   (TJPGD_WORKSPACE_SIZE + 64)
 #define A4(n)       (((n) + 3u) & ~3u)
-#define MEM_SIZE    (A4(sizeof(pva_cover_t)) + A4(WORK_SIZE) + A4(PVA_COVER_SIZE) + A4(sizeof(FIL)) + 16u)
+#define MEM_SIZE    (A4(sizeof(pva_cover_t)) + A4(WORK_SIZE) + A4(PVA_COVER_FULL) + A4(sizeof(FIL)) + 16u)
 #define JOB_ROOM    436u
 #define LQ_SIZE     448u
-#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_SIZE) + 2u * JOB_ROOM + LQ_SIZE)    // (+ the jobs, the request)
+#define MEM_ONLINE  (MEM_SIZE + IMG_MAX + A4(PVA_COVER_FULL) + 2u * JOB_ROOM + LQ_SIZE + HEAD)    // (+ the jobs, the request)
 
 static bool    on;                  // covers are made
 static uint8_t *own;                // the arena's, when it gave it (then also online)
@@ -84,7 +85,44 @@ static uint8_t making;              // what the conversion makes
 static uint8_t *conv_to;            // where: out, or logo_keep (a logo made while a song's cover shows)
 static char    conv_path[40];       // its copy on the card ("": none)
 static bool    logo_ok;             // logo_keep has the station's logo
+static bool    lent;                // the pictures have the memory
 static char    key[KEY_MAX];        // a file's picture: where it came from (an album's folder image once)
+
+// where the pictures come from (for a bigger picture of what shows): a file's or a default's; the
+// addresses of the song's cover and the station's logo (the originals, before the proxy)
+// (they are at the start of the arena's block, which stays when the pictures borrow the rest: the
+// firmware's RAM outside the arena is short; without the arena's block, none)
+#define URL_MAX     240
+typedef struct
+{
+    char path[KEY_MAX];
+    char song[URL_MAX], logo[URL_MAX];
+} head_t;
+#define HEAD        A4(sizeof(head_t))
+static head_t  *hd;
+static uint8_t  src_kind;           // PVA_SRC_FILE, PVA_SRC_MEM (src_pos: the default)
+static uint32_t src_pos, src_len;
+static char     no_url[1];          // (no head: nowhere to keep it)
+#define src_path    (hd ? hd->path : no_url)
+#define url_song    (hd ? hd->song : no_url)
+#define url_logo    (hd ? hd->logo : no_url)
+
+static void src_set(uint8_t kind, const char *path, uint32_t pos, uint32_t len)
+{
+    src_kind = kind;
+    if (hd) snprintf(hd->path, sizeof hd->path, "%s", path ? path : "");
+    src_pos = pos;
+    src_len = len;
+}
+
+// a picture's address for a bigger one: iTunes' 100 x 100 cover as 600 x 600
+static void url_keep(char *d, const char *u, bool song)
+{
+    if (d == no_url) return;
+    snprintf(d, URL_MAX, "%s", u);
+    char *p = song ? strstr(d, "/100x100") : NULL;
+    if (p) memcpy(p + 1, "600x600", 7);
+}
 
 // what plays
 enum { I_NONE, I_FILE, I_STREAM };
@@ -95,12 +133,14 @@ static uint8_t  dflt_pick;          // the default picture of this item
 static void online_place(uint8_t *m);
 static void place(uint8_t *m)
 {
+    if (m == own) { hd = (head_t *)m; m += HEAD; }
+    else hd = NULL;
     cv = (pva_cover_t *)m;
     m += A4(sizeof(pva_cover_t));
     work = m;
     m += A4(WORK_SIZE);
     out = m;
-    m += A4(PVA_COVER_SIZE);
+    m += A4(PVA_COVER_FULL);
     f = (FIL *)m;
     m += A4(sizeof(FIL));
     if (own)
@@ -108,7 +148,7 @@ static void place(uint8_t *m)
         img = m;
         m += IMG_MAX;
         logo_keep = m;
-        m += A4(PVA_COVER_SIZE);
+        m += A4(PVA_COVER_FULL);
         online_place(m);
     }
 }
@@ -131,7 +171,7 @@ bool pva_art_init(void)
     else if (MEM_ONLINE <= PVA_ART_KEEP && (own = pva_net_art_block(MEM_ONLINE))) on = true;
     if (!own) pva_log("covers: %u bytes free, online needs %u", (unsigned)pva_arena_free(), (unsigned)(MEM_ONLINE + 512u));
     else if (pva_net_ring_idle(MEM_SIZE)) on = true;
-    if (own) place(own);
+    if (own) { place(own); memset(hd, 0, sizeof *hd); }
     rnd ^= pva_hal_millis() * 2654435761u;
     return on;
 }
@@ -248,6 +288,9 @@ static bool folder_image(const char *track, char *im, size_t size)
     return false;
 }
 
+// a palette for every row of cells: the player asks for it, [cover] rows is not off
+static bool rows_on(void) { return (free_mask & 1) && !cfg_off("cover.rows"); }
+
 // cv->img (a picture of kind p) becomes the cover, in steps; to out (shown), or
 // to logo_keep (a logo kept for later); path: its copy on the card when made
 static void convert(uint8_t p, uint8_t *to, const char *path)
@@ -256,7 +299,8 @@ static void convert(uint8_t p, uint8_t *to, const char *path)
     making = p;
     conv_to = to;
     snprintf(conv_path, sizeof conv_path, "%s", path ? path : "");
-    pva_cover_convert_begin(cv, pal, free_mask, to);
+    if (rows_on()) pva_cover_convert_begin_rows(cv, pal, free_mask, to);
+    else { pva_cover_convert_begin(cv, pal, free_mask, to); memset(to + PVA_COVER_SIZE, 0, PVA_COVER_ROWS_SIZE); }
     if (to == out) { shown = p; set_state(PVA_COVER_MAKING); }
 }
 
@@ -302,20 +346,30 @@ static void show_default(void)
     unsigned nc = card_defaults(0, NULL, 0), n = PVA_ART_DEFAULTS + nc;
     unsigned k = dflt_pick % n;
     bool ok;
-    if (k < PVA_ART_DEFAULTS) ok = decode_mem(pva_art_default[k], pva_art_default_len[k], "a default picture");
+    if (k < PVA_ART_DEFAULTS)
+    {
+        ok = decode_mem(pva_art_default[k], pva_art_default_len[k], "a default picture");
+        src_set(PVA_SRC_MEM, NULL, k, 0);
+    }
     else
     {
         char p[KEY_MAX];
         ok = card_defaults(k - PVA_ART_DEFAULTS, p, sizeof p) > k - PVA_ART_DEFAULTS && decode_file(p, 0, 0);
+        src_set(PVA_SRC_FILE, p, 0, 0);
     }
     if (ok) convert(P_DEFAULT, out, NULL);
     else show_none();
 }
 
 // ---------------------------------------------------------------- the card's copies
-#define LGO_HEAD    12u             // "PVLG", version, kind, 0, 0, u32 the palette's hash
+#define LGO_HEAD    12u             // "PVLG", version, kind, 0, 0, u32 the palette's hash; the cover, the picture's address
+#define LGO_VER     2
 
-static uint32_t pal_hash(void) { return fnv(&free_mask, 2, fnv(pal, 32, 2166136261u)); }
+static uint32_t pal_hash(void)
+{
+    uint16_t m = (uint16_t)(free_mask & ~1u) | (rows_on() ? 1u : 0u);
+    return fnv(&m, 2, fnv(pal, 32, 2166136261u));
+}
 
 static void card_path(char *p, size_t n, bool logo, const char *k)
 {
@@ -323,7 +377,7 @@ static void card_path(char *p, size_t n, bool logo, const char *k)
 }
 
 // what is known of a picture (none: from NULL, or the cover in from)
-static void card_write(const char *path, const uint8_t *from)
+static void card_write(const char *path, const uint8_t *from, const char *url)
 {
     bool have = from != NULL;
     if (!pva_card_writes()) return;
@@ -331,30 +385,47 @@ static void card_write(const char *path, const uint8_t *from)
     f_mkdir("0:/PICOAMP/LOGOS");
     f_mkdir("0:/PICOAMP/COVERS");
     if (f_open(f, path, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
-    uint8_t h[LGO_HEAD] = { 'P', 'V', 'L', 'G', 1, have ? PVA_COVER_READY : PVA_COVER_NONE, 0, 0 };
+    uint8_t h[LGO_HEAD] = { 'P', 'V', 'L', 'G', LGO_VER, have ? PVA_COVER_READY : PVA_COVER_NONE, 0, 0 };
     uint32_t ph = pal_hash();
     memcpy(h + 8, &ph, 4);
     UINT bw;
     bool ok = f_write(f, h, LGO_HEAD, &bw) == FR_OK && bw == LGO_HEAD;
-    if (ok && have) ok = f_write(f, from, PVA_COVER_SIZE, &bw) == FR_OK && bw == PVA_COVER_SIZE;
+    if (ok && have) ok = f_write(f, from, PVA_COVER_FULL, &bw) == FR_OK && bw == PVA_COVER_FULL;
+    if (ok && have)
+    {
+        char u[URL_MAX];
+        memset(u, 0, sizeof u);
+        snprintf(u, sizeof u, "%s", url ? url : "");
+        ok = f_write(f, u, (UINT)strlen(u) + 1u, &bw) == FR_OK;
+    }
     f_close(f);
     if (!ok) f_unlink(path);
     else pva_log("cover: kept %s (%s)", path + 11, have ? "picture" : "none");
 }
 
-// 1: the card has it (into out), 0: it knows there is none, -1: it knows nothing (or for another palette)
-static int card_read(const char *path)
+// 1: the card has it (into out; its address into url), 0: it knows there is none, -1: it knows nothing
+// (or for another palette)
+static int card_read(const char *path, char *url)
 {
     if (f_open(f, path, FA_READ) != FR_OK) return -1;
     uint8_t h[LGO_HEAD];
     UINT br = 0;
     int r = -1;
-    if (f_read(f, h, LGO_HEAD, &br) == FR_OK && br == LGO_HEAD && !memcmp(h, "PVLG", 4) && h[4] == 1)
+    if (f_read(f, h, LGO_HEAD, &br) == FR_OK && br == LGO_HEAD && !memcmp(h, "PVLG", 4) && h[4] == LGO_VER)
     {
         uint32_t ph;
         memcpy(&ph, h + 8, 4);
         if (h[5] != PVA_COVER_READY) r = 0;
-        else if (ph == pal_hash() && f_read(f, out, PVA_COVER_SIZE, &br) == FR_OK && br == PVA_COVER_SIZE) r = 1;
+        else if (ph == pal_hash() && f_read(f, out, PVA_COVER_FULL, &br) == FR_OK && br == PVA_COVER_FULL)
+        {
+            r = 1;
+            if (url != no_url)
+            {
+                url[0] = 0;
+                if (f_read(f, url, URL_MAX - 1, &br) == FR_OK) url[br < URL_MAX ? br : URL_MAX - 1] = 0;
+                url[URL_MAX - 1] = 0;
+            }
+        }
     }
     f_close(f);
     return r;
@@ -509,7 +580,8 @@ static void lk_done(bool ok)
     if (l_state != L_LOOKUP) return;
     if (k_st == 4 && (!strncmp(l_q, "http://", 7) || !strncmp(l_q, "https://", 8)))
     {
-        // the picture, through the proxy
+        // the picture, through the proxy (its address kept, for a bigger one)
+        url_keep(jq[0].kind == J_LOGO ? url_logo : url_song, l_q, jq[0].kind != J_LOGO);
         char e[LQ_SIZE - sizeof PROXY];
         enc(e, sizeof e, l_q);
         snprintf(l_q, LQ_SIZE, PROXY "%s", e);
@@ -523,7 +595,7 @@ static void lk_done(bool ok)
     if (!ok && jq[0].kind == J_LOGO && l_host + 1 < RB_HOSTS) l_host++;   // (that server: the next one, the same question)
     else l_way++;
     if (question()) { l_state = L_ASK; return; }
-    if (l_answered) card_write(jq[0].path, NULL);
+    if (l_answered) card_write(jq[0].path, NULL, NULL);
     pva_log("cover: none online");
     job_next();
 }
@@ -547,7 +619,7 @@ static void img_done(bool ok)
     {
         pva_log("cover: the picture did not come (%u bytes)", (unsigned)img_len);
         uint16_t http = pva_web_http();
-        if ((ok && !img_bad) || (http >= 400 && http < 500)) card_write(j.path, NULL);    // (the proxy answered: no picture there)
+        if ((ok && !img_bad) || (http >= 400 && http < 500)) card_write(j.path, NULL, NULL);    // (the proxy answered: no picture there)
         return;
     }
     // the picture arrived for the item that plays: shown if nothing better shows (a logo
@@ -606,7 +678,7 @@ static bool online_cover(const char *artist, const char *what, bool album)
     char k[200];
     lower(k, sizeof k, j.term);
     card_path(j.path, sizeof j.path, false, k);
-    int c = card_read(j.path);
+    int c = card_read(j.path, url_song);
     if (c == 1) { shown = making = P_ONLINE; set_state(PVA_COVER_READY); return true; }
     if (c == 0) return false;
     // (a song asked for while another is asked: the newer one waits, the older one goes)
@@ -618,13 +690,14 @@ static bool online_cover(const char *artist, const char *what, bool album)
 // back to the station's logo (or a default picture)
 static void station_fallback(void)
 {
-    if (logo_ok) { memcpy(out, logo_keep, PVA_COVER_SIZE); shown = making = P_LOGO; set_state(PVA_COVER_READY); }
+    if (logo_ok) { memcpy(out, logo_keep, PVA_COVER_FULL); shown = making = P_LOGO; set_state(PVA_COVER_READY); }
     else show_default();
 }
 
 // a file starts (fatfs path; its tag's picture: pos, len, len 0 = none; its tags)
 void pva_art_track(const char *path, uint32_t pic_pos, uint32_t pic_len, const char *artist, const char *album, const char *title)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on) return;
     job_drop_all();
     logo_ok = false;
@@ -648,7 +721,7 @@ void pva_art_track(const char *path, uint32_t pic_pos, uint32_t pic_len, const c
     if (again && k[0] && !strcmp(k, key) && shown == P_LOCAL) return;     // the same picture (an album's folder image)
     snprintf(key, sizeof key, "%s", k);
     dflt_pick = (uint8_t)((rnd = rnd * 1103515245u + 12345u) >> 16);
-    if (src && decode_file(src, pos, len)) { convert(P_LOCAL, out, NULL); return; }
+    if (src && decode_file(src, pos, len)) { src_set(PVA_SRC_FILE, src, pos, len); convert(P_LOCAL, out, NULL); return; }
     key[0] = 0;
     // online: by the album (a file of an album), else by the title
     if (online_cover(artist, album[0] ? album : title, album[0] != 0)) return;
@@ -658,6 +731,7 @@ void pva_art_track(const char *path, uint32_t pic_pos, uint32_t pic_len, const c
 // a station starts (its address, its directory uuid or NULL, its name)
 void pva_art_station(const char *url, const char *uuid, const char *name)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on) return;
     job_drop_all();
     item = I_STREAM;
@@ -673,8 +747,8 @@ void pva_art_station(const char *url, const char *uuid, const char *name)
     snprintf(j.uuid, sizeof j.uuid, "%s", uuid ? uuid : "");
     snprintf(j.name, sizeof j.name, "%s", name ? name : "");
     card_path(j.path, sizeof j.path, true, url);
-    int c = card_read(j.path);
-    if (c == 1) { memcpy(logo_keep, out, PVA_COVER_SIZE); logo_ok = true; shown = making = P_LOGO; set_state(PVA_COVER_READY); return; }
+    int c = card_read(j.path, url_logo);
+    if (c == 1) { memcpy(logo_keep, out, PVA_COVER_FULL); logo_ok = true; shown = making = P_LOGO; set_state(PVA_COVER_READY); return; }
     show_default();
     if (c == -1) job_add(&j);
 }
@@ -682,6 +756,7 @@ void pva_art_station(const char *url, const char *uuid, const char *name)
 // the song on a station changes ("" artist: not a song it can look for)
 void pva_art_song(const char *artist, const char *title)
 {
+    if (lent) return;                   // (the pictures have the memory)
     if (!on || item != I_STREAM || !cv) return;
     // (the logo's job stays; a song's job waiting or running goes)
     if (jn && jq[jn - 1].kind == J_SONG)
@@ -692,6 +767,62 @@ void pva_art_song(const char *artist, const char *title)
     }
     if (online_cover(artist, title, false)) return;
     if (shown == P_ONLINE || shown == P_NONE) station_fallback();
+}
+
+// what shows, for a bigger picture of it
+bool pva_art_source(pva_art_src_t *s)
+{
+    memset(s, 0, sizeof *s);
+    if (state == PVA_COVER_NONE || lent) return false;
+    switch (shown)
+    {
+        case P_LOCAL: case P_DEFAULT:
+            s->kind = src_kind;
+            if (src_kind == PVA_SRC_MEM)
+            {
+                if (src_pos >= PVA_ART_DEFAULTS) return false;
+                s->p = pva_art_default_big[src_pos];
+                s->len = pva_art_default_big_len[src_pos];
+                s->pos = src_pos;
+                s->s = "";
+                return true;
+            }
+            s->s = src_path;
+            s->pos = src_pos;
+            s->len = src_len;
+            return src_path[0] != 0;
+        case P_ONLINE: case P_LOGO:
+            s->kind = PVA_SRC_URL;
+            s->s = shown == P_LOGO ? url_logo : url_song;
+            return s->s[0] != 0;
+    }
+    return false;
+}
+
+// the pictures page: the covers' memory (covers stop meanwhile)
+uint8_t *pva_art_borrow(size_t *n)
+{
+    if (lent) return NULL;
+    job_drop_all();
+    show_none();
+    uint8_t *m = own;
+    if (m) { m += HEAD; *n = MEM_ONLINE - HEAD; }       // (the head stays: where the covers came from)
+    else if ((m = pva_net_ring_idle(MEM_SIZE))) *n = pva_net_capacity();
+    if (!m) return NULL;
+    cv = NULL;
+    conv_to = NULL;
+    lent = true;
+    return m;
+}
+
+void pva_art_giveback(void)
+{
+    if (!lent) return;
+    lent = false;
+    item = I_NONE;
+    key[0] = 0;
+    if (own) place(own);
+    pva_cover_redo();
 }
 
 // nothing plays: no cover
@@ -708,14 +839,15 @@ void pva_art_none(void)
 
 void pva_art_poll(void)
 {
+    if (lent) return;
     if (!on) return;
     job_poll();
     bool fg = state == PVA_COVER_MAKING && conv_to == out, bg = conv_to && conv_to == logo_keep;
     if ((fg || bg) && cv && pva_cover_convert_step(cv))
     {
         if (fg) set_state(PVA_COVER_READY);
-        if (making == P_LOGO && logo_keep) { if (fg) memcpy(logo_keep, out, PVA_COVER_SIZE); logo_ok = true; }
-        if (conv_path[0]) card_write(conv_path, conv_to);
+        if (making == P_LOGO && logo_keep) { if (fg) memcpy(logo_keep, out, PVA_COVER_FULL); logo_ok = true; }
+        if (conv_path[0]) card_write(conv_path, conv_to, making == P_LOGO ? url_logo : url_song);
         conv_to = NULL;
         conv_path[0] = 0;
     }
@@ -738,6 +870,10 @@ int pva_art_cmd(uint8_t code, const uint8_t *args)
     // PVA_C_COVER_GET
     if (state == PVA_COVER_MAKING) return PVA_E_BUSY;
     if (state != PVA_COVER_READY || !cv) return PVA_E_NOTFOUND;
-    for (unsigned i = 0; i < PVA_COVER_SIZE; i++) pva_reply_byte(out[i]);
+    // (how many lines before a row the player starts to set its colours: [cover] rowearly, 0-7, as it is now)
+    char v[8];
+    int e = pva_cfg_get("cover.rowearly", v, sizeof v) ? atoi(v) : 2;
+    out[PVA_COVER_SIZE + 1] = (uint8_t)(e < 0 ? 0 : e > 7 ? 7 : e);
+    for (unsigned i = 0; i < PVA_COVER_FULL; i++) pva_reply_byte(out[i]);
     return PVA_OK;
 }

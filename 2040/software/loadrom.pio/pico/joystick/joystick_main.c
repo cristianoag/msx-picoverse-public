@@ -261,16 +261,22 @@ static void io_bus_init(void)
 // Gamepad management helpers
 // -----------------------------------------------------------------------
 
-// Find a free MSX port (0 or 1).  Returns 0xFF if both are taken.
+// True when a HID gamepad owns the given MSX port; shared with the Xbox driver.
+bool hid_gamepad_port_in_use(uint8_t port)
+{
+    for (int i = 0; i < MAX_GAMEPADS; i++) {
+        if (gamepads[i].active && gamepads[i].msx_port == port)
+            return true;
+    }
+    return false;
+}
+
 static uint8_t allocate_msx_port(void)
 {
-    bool port_used[2] = { false, false };
-    for (int i = 0; i < MAX_GAMEPADS; i++) {
-        if (gamepads[i].active && gamepads[i].msx_port < 2)
-            port_used[gamepads[i].msx_port] = true;
+    for (uint8_t port = 0; port < 2; port++) {
+        if (!hid_gamepad_port_in_use(port) && !xinput_port_in_use(port))
+            return port;
     }
-    if (!port_used[0]) return 0;
-    if (!port_used[1]) return 1;
     return 0xFF;
 }
 

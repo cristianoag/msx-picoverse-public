@@ -29,6 +29,8 @@
 #include "esp8266p_rom.h"
 #include "fmpac_bios.h"
 #include "sfg_bios.h"
+#include "yrw801_rom.h"
+#include "msxaudio_bios.h"
 #include "picoamp_rom.h"
 #include "mapper_detect.h"
 
@@ -45,6 +47,8 @@
 #define FMPAC_BIOS_ROM_SIZE     (64 * 1024)     // Hidden FM-PAC BIOS payload used by Explorer MSX-MUSIC support
 #define SFG_BIOS_ROM_SIZE       (64 * 1024)     // Hidden Yamaha SFG ROM payload used by Explorer YM2151/SFG support
 #define NEXTOR_DSK_ROM_SIZE     (128 * 1024)    // Hidden Nextor Sunrise IDE kernel used to boot .DSK images from SD
+#define YRW801_ROM_SIZE         (2048 * 1024)   // Hidden Yamaha YRW801-M wave ROM used by the OPL4 / MoonSound audio profile
+#define MSXAUDIO_BIOS_ROM_SIZE  (48 * 1024)     // Hidden Philips NMS-1205 MSX-AUDIO BIOS served by the MSX-AUDIO audio profile
 #define MAX_FILE_NAME_LENGTH    71              // Maximum length of a ROM name on the 80-column detail screen
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define FIRMWARE_ALIGN          4096u           // Flash sector: the menu ROM starts on the first sector boundary after the firmware
@@ -77,7 +81,7 @@
 #define NEXTOR3_ROM                ___resources_Nextor_3_0_0_SunriseIDE_MasterOnly_ROM
 
 // Menu label of the embedded PicoAmp player; it carries the upstream release.
-#define PICOAMP_LABEL              "PicoAmp 1.4 by Jzzy"
+#define PICOAMP_LABEL              "PicoAmp 1.5 by Jzzy"
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
@@ -441,7 +445,7 @@ int main(int argc, char *argv[])
     FileInfo files[MAX_ROM_FILES]; // Array to track discovered ROM files
     int file_count = 0;
     int file_index = 1;
-    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE; // Visible ROMs start after hidden payloads
+    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + YRW801_ROM_SIZE + MSXAUDIO_BIOS_ROM_SIZE; // Visible ROMs start after hidden payloads
     size_t total_rom_size = 0;
     size_t config_offset = 0;
     uint8_t *config_buffer = (uint8_t *)malloc(CONFIG_AREA_SIZE); // Configuration area buffer
@@ -740,6 +744,21 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    if (sizeof(___resources_YRW801_M_ROM) != YRW801_ROM_SIZE) {
+        printf("Embedded YRW801-M wave ROM must be %u bytes (found %zu)\n",
+               (unsigned)YRW801_ROM_SIZE, sizeof(___resources_YRW801_M_ROM));
+        free(config_buffer);
+        return 1;
+    }
+
+    if (sizeof(___resources_MSXAUDIO_NMS1205_ROM) != MSXAUDIO_BIOS_ROM_SIZE ||
+        ___resources_MSXAUDIO_NMS1205_ROM[0x4000] != 'A' || ___resources_MSXAUDIO_NMS1205_ROM[0x4001] != 'B') {
+        printf("Embedded MSX-AUDIO BIOS must be %u bytes with an AB header at 0x4000 (found %zu)\n",
+               (unsigned)MSXAUDIO_BIOS_ROM_SIZE, sizeof(___resources_MSXAUDIO_NMS1205_ROM));
+        free(config_buffer);
+        return 1;
+    }
+
     if (sizeof(___resources_PICOAMP_ROM) != 65536u ||
         ___resources_PICOAMP_ROM[0] != 'A' || ___resources_PICOAMP_ROM[1] != 'B') {
         printf("Embedded PicoAmp ROM must be a 64 KB cartridge with an AB header\n");
@@ -747,12 +766,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Final flash image layout: [firmware][0xFF pad to 4 KB][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][Nextor ROM + scanned ROM payloads]
+    // Final flash image layout: [firmware][0xFF pad to 4 KB][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][SFG BIOS][DSK Nextor kernel][YRW801-M wave ROM][MSX-AUDIO BIOS][Nextor ROM + scanned ROM payloads]
     // The menu ROM starts on a flash sector boundary, so the config area owns its
     // four sectors and the firmware can rewrite it without erasing the menu ROM or
     // the WiFi setup ROM next to it.
     const size_t firmware_span = (firmware_size + FIRMWARE_ALIGN - 1u) & ~(size_t)(FIRMWARE_ALIGN - 1u);
-    const size_t total_size = firmware_span + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + total_rom_size;
+    const size_t total_size = firmware_span + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + SFG_BIOS_ROM_SIZE + NEXTOR_DSK_ROM_SIZE + YRW801_ROM_SIZE + MSXAUDIO_BIOS_ROM_SIZE + total_rom_size;
     uint8_t *combined_buffer = (uint8_t *)malloc(total_size);
     if (!combined_buffer) {
         printf("Failed to allocate combined buffer\n");
@@ -793,6 +812,14 @@ int main(int argc, char *argv[])
     // Hidden Nextor Sunrise IDE kernel served when a .DSK image is booted from SD.
     memcpy(combined_buffer + offset, NEXTOR_ROM, nextor_rom_size);
     offset += NEXTOR_DSK_ROM_SIZE;
+
+    // Hidden Yamaha YRW801-M wave ROM read by the OPL4 / MoonSound audio profile.
+    memcpy(combined_buffer + offset, ___resources_YRW801_M_ROM, YRW801_ROM_SIZE);
+    offset += YRW801_ROM_SIZE;
+
+    // Hidden MSX-AUDIO (NMS-1205) BIOS served in its own subslot by the MSX-AUDIO profile.
+    memcpy(combined_buffer + offset, ___resources_MSXAUDIO_NMS1205_ROM, MSXAUDIO_BIOS_ROM_SIZE);
+    offset += MSXAUDIO_BIOS_ROM_SIZE;
 
 #ifdef DEBUG
     {

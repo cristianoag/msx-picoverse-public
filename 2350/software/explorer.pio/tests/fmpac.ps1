@@ -31,7 +31,7 @@ $code = "#define __not_in_flash_func(name) name`n"
 $code += "#define __no_inline_not_in_flash_func(name) name`n"
 $code += ([regex]::Matches($firmware, '(?m)^#define (?:AUDIO_PROFILE_|MAPPER_)\w+[^\r\n]*') |
     ForEach-Object { $_.Value }) -join "`n"
-$layoutNames = 'ROM_NAME_MAX|ROM_RECORD_SIZE|MENU_ROM_SIZE|CONFIG_AREA_SIZE|WIFI_(?:CONFIG|BIOS)_(?:FLASH_OFFSET|ROM_SIZE)|(?:FMPAC|SFG)_BIOS_(?:FLASH_OFFSET|ROM_SIZE)|NEXTOR_DSK_(?:FLASH_OFFSET|ROM_SIZE)'
+$layoutNames = 'ROM_NAME_MAX|ROM_RECORD_SIZE|MENU_ROM_SIZE|CONFIG_AREA_SIZE|WIFI_(?:CONFIG|BIOS)_(?:FLASH_OFFSET|ROM_SIZE)|(?:FMPAC|SFG|MSXAUDIO)_BIOS_(?:FLASH_OFFSET|ROM_SIZE)|NEXTOR_DSK_(?:FLASH_OFFSET|ROM_SIZE)|YRW801_(?:FLASH_OFFSET|ROM_SIZE)'
 $code += "`n" + (([regex]::Matches($firmware, "(?m)^#define (?:$layoutNames)\b[^\r\n]*") |
     ForEach-Object { $_.Value }) -join "`n") + "`n"
 $header = Get-Content (Join-Path $root "pico\explorer\explorer.h") -Raw
@@ -44,7 +44,7 @@ $code += (Get-CType "sunrise_mapper_bus_t") + "`n"
 $code += (Get-CType "bank8_ctx_t") + "`n"
 $code += (Get-CType "bank16_ctx_t") + "`n"
 foreach ($name in @("is_system_mapper", "is_megaram_mapper", "is_audio_system_mapper",
-    "mapper_supports_scc_audio", "dsk_audio_mode_supported", "resolve_audio_mode", "mapper_page_from_reg",
+    "mapper_supports_scc_audio", "dsk_audio_mode_supported", "opl4_game_mapper_supported", "opl4_mapper_supported", "makoto_mapper_supported", "msxaudio_mapper_supported", "resolve_audio_mode", "mapper_page_from_reg",
     "fmpac_sram_enabled", "fmpac_handle_write", "fmpac_handle_read",
     "sunrise_fmpac_drain_writes", "sunrise_scc_drain_writes", "sunrise_mapper_drain_writes", "c2_handle_memory_write")) {
     $code += (Get-CFunction $firmware $name) + "`n"
@@ -56,7 +56,7 @@ foreach ($name in @("handle_konamiscc_write", "handle_konami_write", "handle_asc
 }
 foreach ($name in @("record_is_system_rom", "record_is_sunrise_system_rom", "record_disables_psg",
     "record_supports_scc_audio", "record_supports_external_scc_audio",
-    "record_supports_dual_psg", "record_supports_msx_music", "audio_profile_is_supported",
+    "record_supports_dual_psg", "record_supports_msx_music", "record_supports_opl4_game", "record_supports_opl4", "record_supports_makoto", "record_supports_msxaudio", "audio_profile_is_supported",
     "default_audio_profile", "sanitize_audio_profile", "next_audio_profile", "build_audio_text")) {
     $code += (Get-CFunction $menu $name) + "`n"
 }
@@ -72,8 +72,8 @@ if (!$dskCase.Success -or $dskCase.Groups[1].Value -notmatch "if \(external_scc_
 if ($dskCase.Groups[1].Value -notmatch "else if \(audio_mode == AUDIO_MODE_MSX_MUSIC\)\s*loadrom_sunrise_fmpac_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, false\);") {
     throw "MAPPER_DSK does not route MSX-MUSIC to loadrom_sunrise_fmpac_common with the DSK backend"
 }
-if ($dskCase.Groups[1].Value -notmatch "else if \(sfg_audio\)\s*loadrom_sunrise_sfg_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, sfg_variant\);") {
-    throw "MAPPER_DSK does not route YM2151/SFG to loadrom_sunrise_sfg_common with the DSK backend"
+if ($dskCase.Groups[1].Value -notmatch "else if \(sfg_slot\)\s*loadrom_sunrise_sfg_common\(rom_offset, cache_enable, sunrise_dsk_task, sunrise_dsk_set_ide_ctx, false, dsk_mapper, sfg_variant\);") {
+    throw "MAPPER_DSK does not route YM2151/SFG and MSX-AUDIO to loadrom_sunrise_sfg_common with the DSK backend"
 }
 # The DSK Megaram option reuses the Nextor MegaRAM loaders with the DSK backend
 # and keeps the entry's 1MB Mapper choice.
@@ -142,6 +142,7 @@ try {
             & $creator @options --output $uf2
             if ($LASTEXITCODE -ne 0) { throw "Nextor image generation failed: $($case.Name)" }
             $entries = $case.Entries
+            $env:MSXAUDIO_BIOS_PATH = Join-Path $root "resources\MSXAUDIO_NMS1205.ROM"
             & $exe (Join-Path $root "..\loadrom.pio\fmpac\FMPCCMFC.BIN") $uf2 $length.Groups[1].Value `
                 (Join-Path $root "resources\Nextor-2.1.4.SunriseIDE.MasterOnly.ROM") `
                 (Join-Path $root "resources\Nextor-3.0.0.SunriseIDE.MasterOnly.ROM") @entries

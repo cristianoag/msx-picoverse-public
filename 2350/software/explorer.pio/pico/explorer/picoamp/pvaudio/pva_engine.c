@@ -1181,6 +1181,18 @@ static int open_stream(const char *entry)
     return PVA_OK;
 }
 
+// the cover of what plays, again (the pictures gave the covers' memory back)
+void pva_cover_redo(void)
+{
+    if (state == PVA_STATE_STOPPED) { pva_art_none(); return; }
+    if (pva_dec_is_stream())
+    {
+        pva_art_station(pva_net_url(), NULL, given_station);
+        pva_art_song(info.artist, info.title);
+    }
+    else pva_art_track(pva_dec_path(), info.pic_pos, info.pic_len, info.artist, info.album, info.title);
+}
+
 static int open_track(const char *path)
 {
     if (is_url(path)) return open_stream(path);
@@ -1698,6 +1710,9 @@ static int execute(uint8_t code)
             return pva_markets_cmd(code, args);
         case PVA_C_COVER_SETUP: case PVA_C_COVER_GET:
             return pva_art_cmd(code, args);
+        case PVA_C_PIC_DIR: case PVA_C_PIC_NAMES: case PVA_C_PIC_SHOW: case PVA_C_PIC_GET: case PVA_C_PIC_CLOSE: case PVA_C_PIC_COVER:
+            args[PVA_ARGS_SIZE - 1] = 0;
+            return pva_pics_cmd(code, args, strlen((const char *)args));
         case PVA_C_PLAY_INDEX: return cmd_play_index();
         case PVA_C_PLAY_PATH: return cmd_play_path();
         case PVA_C_PLAY_URL:  return cmd_play_url();
@@ -1852,6 +1867,7 @@ static void publish_status(void)
     st8(PVA_ST_BALANCE, balance);
     st8(PVA_ST_COVER_GEN, pva_art_gen());
     st8(PVA_ST_COVER_STATE, pva_art_state());
+    st8(PVA_ST_PIC_SAVER, pva_pics_saver());
     st8(PVA_ST_DIR_STATE, dstate);
     st8(PVA_ST_DIR_ERR, derr);
     // display fields: coarse buffer level and rate, then the generation
@@ -2043,6 +2059,7 @@ bool pva_core1_poll(void)
     {
         uint8_t g = pva_art_gen();
         pva_art_poll();                 // a cover in the making: a step
+        pva_pics_poll();                // a picture in the making: about 2 ms
         if (g != pva_art_gen()) status_dirty = true;
     }
     pva_win[PVA_R_WHERE] = PVA_W_STATUS;

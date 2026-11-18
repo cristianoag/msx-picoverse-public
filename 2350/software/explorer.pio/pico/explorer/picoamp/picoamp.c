@@ -1,6 +1,6 @@
-// PicoAmp integration for Explorer. ROM and engine 0.16 from
-// Jzzy-dev/msx-picoplay-picoamp, main e09debe (PicoAmp 1.4 with the market monitor,
-// covers and station logos; the last tagged release is 1.3, aad845d).
+// PicoAmp integration for Explorer. ROM and engine 0.17 from
+// Jzzy-dev/msx-picoplay-picoamp, release 1.5 (tag 1.5, a1a8c06; the pictures browser,
+// slideshow, screensaver and full-screen covers on top of the market monitor and covers).
 // Licensed under CC BY-NC-SA 4.0, like the upstream PicoVerse Audio Engine.
 
 #include <stdio.h>

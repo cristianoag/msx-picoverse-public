@@ -673,7 +673,7 @@ static void check(const char *uf2, uint32_t firmware_size) {
 
     // An 8 MB ROM lands after the image, over stale data,
     // using 64 KB block erases where aligned.
-    uint32_t big_size = 8u * 1024u * 1024u;
+    uint32_t big_size = 6u * 1024u * 1024u;
     uint8_t *big_rom = make_data(7, big_size);
     prepare_sd_record("Big One", big_rom, big_size);
     records[0].Mapper = SOURCE_SD_FLAG;
@@ -884,7 +884,7 @@ static void check(const char *uf2, uint32_t firmware_size) {
     free(gap_rom);
     free(orig_flash);
     free(sim_flash);
-    printf("PASS: flash store batching/deferred flash detection/menu servicing, 8 MB import/reuse, capacity, failures and compaction "
+    printf("PASS: flash store batching/deferred flash detection/menu servicing, 6 MB import/reuse, capacity, failures and compaction "
            "(%u sector erases, %u block erases, %u pages programmed)\n",
            erase_4k_ops, erase_64k_ops, program_pages);
 }

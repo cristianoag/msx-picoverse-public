@@ -40,7 +40,7 @@
 
 #define PVA_API_VERSION     1
 #define PVA_FW_MAJOR        0
-#define PVA_FW_MINOR        16
+#define PVA_FW_MINOR        17
 
 #define PVA_WIN_BASE        0x4000u
 #define PVA_WIN_SIZE        0x1000u
@@ -193,6 +193,21 @@
 // covers (engine 0.14): a track's picture as SCREEN 4 cells, 10 x 10 (80 x 80 pixels), see pva_cover.h
 #define PVA_C_COVER_SETUP   0x51    // args: the player's palette (16 x 0RRR0BBB, 00000GGG), u16 the entries the cover may
                                     // set (bit n: entry n). The covers are made only after this
+#define PVA_C_PIC_DIR       0x53    // args: a folder (NUL-terminated): its folders and JPEGs, sorted, are listed (engine 0.17);
+                                    // the pictures' memory is the covers' until PIC_CLOSE. reply: u16 entries, u16 of them folders
+                                    // (they come first). E_FULL: no memory
+#define PVA_C_PIC_NAMES     0x54    // args: u16 first, u8 count, u8 width (0: all): reply: per entry 'D' (folder) or 'J'
+                                    // (picture), its name (cut to width), NUL
+#define PVA_C_PIC_SHOW      0x55    // args: u16 entry (a picture): it is made for SCREEN 8 (256 x 192, GGGRRRBB), in steps
+#define PVA_C_PIC_GET       0x56    // args: u8 rows at most (0: 7). reply: u8 0 nothing / 1 making / 2 made (these rows the last) / 3 failed, u8 PVA_PIC_E_xxx,
+                                    // u8 the first row here, u8 rows here (0-7), then the rows (256 bytes each)
+#define PVA_C_PIC_CLOSE     0x57    // the pictures' memory back to the covers
+#define PVA_C_PIC_COVER     0x58    // args: u8 1 = again. The cover that shows, made for SCREEN 8 as PIC_SHOW (its rows: PIC_GET; then PIC_CLOSE).
+                                    // reply: u8 0 it is being made, 1 it is the one made last, 2 there is none
+#define PVA_PIC_E_OPEN       1
+#define PVA_PIC_E_FORMAT     2      // not a JPEG it reads (or broken)
+#define PVA_PIC_E_PROGRESSIVE 3     // a progressive JPEG (TJpgDec reads baseline ones)
+#define PVA_PIC_E_SIZE       4
 #define PVA_C_COVER_GET     0x52    // reply: the cover's palette (32 bytes: the player's, its free entries the cover's), 800
                                     // pattern bytes (the cells row by row, 8 each, bit 7 the left pixel), 800 colour bytes
                                     // (first << 4 | second). PVA_E_BUSY: still in the making, PVA_E_NOTFOUND: none
@@ -297,6 +312,7 @@
 #define PVA_ST_BALANCE      184     // u8  0..100, 50 = centre
 #define PVA_ST_COVER_GEN    185     // u8  +1 when the cover changes (engine 0.14)
 #define PVA_ST_COVER_STATE  186     // u8  PVA_COVER_xxx
+#define PVA_ST_PIC_SAVER    187     // u8  the screensaver after this many minutes ([pictures] saver; 0 off; engine 0.17)
 #define PVA_EQ_BANDS        5
 #define PVA_EQ_MAX_DB       12
 

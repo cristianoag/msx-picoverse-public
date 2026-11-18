@@ -83,9 +83,19 @@ struct JDEC {
 
 
 
+/* In steps (a PicoVerse addition): the state between them */
+typedef struct {
+	unsigned int x, y;		/* The next MCU */
+	uint16_t rst, rsc;		/* Restart interval counters */
+	uint8_t done;			/* All MCUs are out */
+	int (*outfunc)(JDEC*, void*, JRECT*);
+} JSTEP;
+
 /* TJpgDec API functions */
 JRESULT jd_prepare (JDEC* jd, size_t (*infunc)(JDEC*,uint8_t*,size_t), void* pool, size_t sz_pool, void* dev);
 JRESULT jd_decomp (JDEC* jd, int (*outfunc)(JDEC*,void*,JRECT*), uint8_t scale);
+JRESULT jd_step_begin (JDEC* jd, JSTEP* st, int (*outfunc)(JDEC*,void*,JRECT*), uint8_t scale);
+JRESULT jd_step (JDEC* jd, JSTEP* st, unsigned int n);
 
 
 #ifdef __cplusplus

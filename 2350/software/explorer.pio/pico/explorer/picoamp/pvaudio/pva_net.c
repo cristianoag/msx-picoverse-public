@@ -1052,6 +1052,7 @@ const pva_net_stats_t *pva_net_stats(void)
 const char *pva_net_station(void) { return station; }
 const char *pva_net_stream_title(void) { return title ? title : ""; }
 const char *pva_net_host(void) { return host; }
+const char *pva_net_url(void) { return url ? url : ""; }
 
 uint8_t pva_net_conn(void) { return conn; }
 // a web request borrows the stream's TLS connection (on), or gives it back

@@ -1142,9 +1142,15 @@ void loadGame(int index, unsigned char quick_run)
         record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | Peek(CTRL_MAPPER);
     }
     unsigned char mapper = record_mapper_code(record->Mapper);
+    /* ASC16X-FR must always be able to save, so it needs its writable array in
+       PSRAM. MSX-MUSIC and the FM chips (OPL4, Makoto, MSX-AUDIO) take the
+       internal SRAM cache and, for the chips, the top of the PSRAM, which lowers
+       the largest device from 8 MB to 4 MB; the profile screen hides them for
+       larger ROMs and this refuses a stale choice. */
     if (mapper == MAPPER_ASCII16X_FR &&
         (record->Size > 8388608UL ||
-         (record->Size > SD_ROM_MAX_SIZE_KB * 1024UL && Peek(CTRL_AUDIO) == AUDIO_PROFILE_MSX_MUSIC))) {
+         (record->Size > SD_ROM_MAX_SIZE_KB * 1024UL &&
+          (Peek(CTRL_AUDIO) == AUDIO_PROFILE_MSX_MUSIC || Peek(CTRL_AUDIO) >= AUDIO_PROFILE_OPL4_22K)))) {
         menu_ui_wait_key_with_blinking_status(flash_mapper_error);
         menu_ui_clear_last_line();
         return;

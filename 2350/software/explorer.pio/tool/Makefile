@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.63
+VERSION ?= v2.64
 
 # Project files
 SOURCES := explorer.c
@@ -56,6 +56,10 @@ FMPAC_BIOS := ../resources/FMPCCMFC.BIN
 FMPAC_BIOS_H := $(SRCDIR)/fmpac_bios.h
 SFG_BIOS := ../resources/SFG_64K.ROM
 SFG_BIOS_H := $(SRCDIR)/sfg_bios.h
+YRW801 := ../resources/YRW801-M.ROM
+YRW801_H := $(SRCDIR)/yrw801_rom.h
+MSXAUDIO_BIOS := ../resources/MSXAUDIO_NMS1205.ROM
+MSXAUDIO_BIOS_H := $(SRCDIR)/msxaudio_bios.h
 PICOAMP := ../resources/PICOAMP.ROM
 PICOAMP_H := $(SRCDIR)/picoamp_rom.h
 
@@ -70,7 +74,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/explorer.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(NEXTOR3_H) $(NEXTOR3) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS) $(PICOAMP_H) $(PICOAMP)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(NEXTOR3_H) $(NEXTOR3) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS) $(SFG_BIOS_H) $(SFG_BIOS) $(YRW801_H) $(YRW801) $(MSXAUDIO_BIOS_H) $(MSXAUDIO_BIOS) $(PICOAMP_H) $(PICOAMP)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -110,6 +114,14 @@ $(PICOAMP_H): $(PICOAMP)
 	@echo "Embedding PicoAmp ROM into header"
 	$(UTLDIR)/$(XXD) -i "$<" $@
 
+$(YRW801_H): $(YRW801)
+	@echo "Embedding YRW801-M wave ROM into header"
+	$(UTLDIR)/$(XXD) -i "$<" $@
+
+$(MSXAUDIO_BIOS_H): $(MSXAUDIO_BIOS)
+	@echo "Embedding MSX-AUDIO BIOS into header"
+	$(UTLDIR)/$(XXD) -i "$<" $@
+
 $(BINDIR):
 	@mkdir $@
 
@@ -123,5 +135,5 @@ $(DISDIR)/explorer.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 clean:
 	@echo "Cleaning ...."
 	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/nextor3.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(SRCDIR)/sfg_bios.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
-	$(RM) $(PICOAMP_H)
+	$(RM) $(PICOAMP_H) $(YRW801_H) $(MSXAUDIO_BIOS_H)
 	$(RM) $(DISDIR)/*

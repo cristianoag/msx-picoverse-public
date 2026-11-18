@@ -95,10 +95,10 @@ try {
     $firmware = [IO.File]::ReadAllBytes((Join-Path $pico "build\explorer.bin"))
     $menu = [IO.File]::ReadAllBytes((Join-Path $root "msx\dist\menu.rom"))
     $player = [IO.File]::ReadAllBytes($rom)
-    # PICOAMP.ROM of upstream main e09debe (v1.4 with covers, engine 0.16), Jzzy-dev/msx-picoplay-picoamp
-    $releaseSha = "9A46E2DECD7ACA40E35DB03DB495C5D713AB7728D8B64041CCB78BD5BD241A8B"
+    # PICOAMP.ROM of upstream release 1.5 (tag 1.5, a1a8c06), Jzzy-dev/msx-picoplay-picoamp
+    $releaseSha = "BFC17B426EED70788FFC10D53D7EC9DC2125E3AF9A185300BD9ED035D427B40E"
     if ((Get-FileHash -LiteralPath $rom -Algorithm SHA256).Hash -ne $releaseSha) {
-        throw "resources\PICOAMP.ROM is not the PicoAmp 1.4 ROM"
+        throw "resources\PICOAMP.ROM is not the PicoAmp 1.5 ROM"
     }
     $external = New-Object byte[] 8192
     $external[0] = 65; $external[1] = 66; $external[2] = 16; $external[3] = 64; $external[16] = 201
@@ -133,7 +133,7 @@ try {
             $offset = [BitConverter]::ToUInt32($image, $pos + 76)
             if ($mapper -eq 24) {
                 $found++
-                $label = "PicoAmp 1.4 by Jzzy"
+                $label = "PicoAmp 1.5 by Jzzy"
                 if ($size -ne 65536 -or [Text.Encoding]::ASCII.GetString($image, $pos, $label.Length) -ne $label -or $image[$pos + $label.Length] -ne 0) {
                     throw "Invalid PicoAmp record"
                 }

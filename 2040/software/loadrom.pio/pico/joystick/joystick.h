@@ -76,4 +76,12 @@
 // Analog stick deadzone (percentage of full range, 0–100)
 #define DEADZONE_PERCENT  25
 
+#include <stdbool.h>
+#include <stdint.h>
+
+// True when a HID gamepad currently owns the given MSX port (0 or 1).
+// Defined in joystick_main.c; used by the Xbox driver so both drivers share
+// the two MSX ports.
+bool hid_gamepad_port_in_use(uint8_t port);
+
 #endif

@@ -13,7 +13,8 @@
 #define atrace_note_fmpac_ctl(...) ((void)0)
 
 typedef struct { uint8_t segment; } sunrise_ide_t;
-typedef struct { uint8_t Mapper; } ROMRecord;
+typedef struct { uint8_t Mapper; unsigned long Size; } ROMRecord;
+#define SD_ROM_MAX_SIZE_KB 4096
 static uint8_t cur_wifi_enabled, current_wavegame_rom, cur_is_dsk, cur_megaram_enabled;
 static uint16_t fm_writes[16];
 static unsigned fm_count, mapper_count, megaram_count, bank_count, ide_count;
@@ -104,7 +105,7 @@ static void c2_reg_write(c2_state_t *c2, uint16_t addr, uint8_t data) {
 static void SCC_write(int *scc, uint16_t addr, uint8_t data) {
     (void)scc; (void)addr; (void)data; scc_count++;
 }
-static void sfg_write(uint16_t addr, uint8_t data) { (void)addr; (void)data; sfg_count++; }
+static void bios_slot_write(uint16_t addr, uint8_t data) { (void)addr; (void)data; sfg_count++; }
 static void c2_bank_switch_write(c2_state_t *c2, uint16_t addr, uint8_t data) {
     (void)c2; (void)addr; (void)data;
 }
@@ -124,6 +125,18 @@ static jmp_buf game_read_done;
 static unsigned late_write_case, read_captures;
 static uint32_t game_read_token;
 static void fmpac_wait_for_expanded_bootstrap(void) {}
+// ASC16X-FR device seen by the game loops: it records what reaches it.
+typedef struct { uint8_t idle_work; } fr_state_t;
+static fr_state_t fr_state;
+static const char *fr_rom_name = "fr";
+static unsigned fr_writes, fr_reads, fr_services, fr_setups;
+static bool fr_setup_ok = true, fr_last_writable;
+static bool ascii16x_flash_setup(uint32_t offset, const char *name, bool writable) {
+    (void)offset; (void)name; fr_setups++; fr_last_writable = writable; return fr_setup_ok;
+}
+static void fr_game_write(uint16_t addr, uint8_t data) { (void)addr; (void)data; fr_writes++; }
+static bool fr_game_read(uint16_t addr, uint8_t *data) { (void)addr; fr_reads++; *data = 0x6E; return true; }
+static void fr_service(bool bus_busy) { (void)bus_busy; fr_services++; }
 static void msx_pio_bus_init(void) {}
 static void start_msx_music_audio_output(void) {}
 static void tight_loop_contents(void) {}
@@ -216,7 +229,7 @@ static void test_game_services_io_bus(void) {
 static void test_profiles(void) {
     const uint8_t variants[] = {10, 11, 15, 16, 17, 18, 19, 20};
     for (unsigned i = 0; i < sizeof(variants); i++) {
-        ROMRecord record = {variants[i]};
+        ROMRecord record = {variants[i], 0};
         assert(resolve_audio_mode(record.Mapper, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_MSX_MUSIC);
         assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
         record.Mapper |= 0x80u;
@@ -226,7 +239,7 @@ static void test_profiles(void) {
         cur_wifi_enabled = 0;
         assert(resolve_audio_mode(variants[i], AUDIO_PROFILE_NONE) == AUDIO_MODE_NONE);
     }
-    ROMRecord record = {21};
+    ROMRecord record = {21, 0};
     assert(record_disables_psg(&record));
     assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
     assert(resolve_audio_mode(21, AUDIO_PROFILE_MSX_MUSIC) == AUDIO_MODE_NONE);
@@ -236,7 +249,7 @@ static void test_profiles(void) {
     assert(resolve_audio_mode(17, AUDIO_PROFILE_YM2151_SFG05) == AUDIO_MODE_YM2151_SFG05);
     record.Mapper = MAPPER_PICOAMP;
     assert(record_is_system_rom(&record) && record_disables_psg(&record));
-    for (uint8_t profile = 0; profile <= 14; profile++) {
+    for (uint8_t profile = 0; profile <= AUDIO_PROFILE_MAKOTO_OPNA; profile++) {
         assert(audio_profile_is_supported(&record, profile) == (profile == AUDIO_PROFILE_NONE));
         assert(resolve_audio_mode(MAPPER_PICOAMP, profile) == AUDIO_MODE_NONE);
     }
@@ -251,17 +264,63 @@ static void test_profiles(void) {
         assert(!audio_profile_is_supported(&record, 14));
         assert(resolve_audio_mode(mapper, 14) == AUDIO_MODE_NONE);
         assert(sanitize_audio_profile(&record, 14) == default_audio_profile(&record));
+        // OPL4 / MoonSound (22 kHz): the game ROMs of the external game loop
+        // (ASCII16-X FR included), the Nextor Sunrise SYSTEM ROMs and DSKs. Not
+        // Carnivore2 or MegaRAM (no PSRAM left for the 2 MB sample RAM) or PicoAmp.
+        bool opl4_game = (mapper >= 1 && mapper <= 8) || mapper == 12 || mapper == 13 || mapper == 14 || mapper == 22;
+        bool opl4 = opl4_game || mapper == 10 || mapper == 11 || mapper == 15 || mapper == 16 || mapper == MAPPER_DSK;
+        assert(audio_profile_is_supported(&record, AUDIO_PROFILE_OPL4_22K) == opl4);
+        assert((resolve_audio_mode(mapper, AUDIO_PROFILE_OPL4_22K) == AUDIO_MODE_OPL4_22K) == opl4);
+        // The Makoto YM2608 answers plain I/O ports: the OPL4 game ROMs plus
+        // Sunrise/Carnivore2 SYSTEM ROMs and DSKs; never MegaRAM.
+        bool makoto = opl4_game || mapper == 10 || mapper == 11 || (mapper >= 15 && mapper <= 18) || mapper == MAPPER_DSK;
+        assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MAKOTO_OPNA) == makoto);
+        assert((resolve_audio_mode(mapper, AUDIO_PROFILE_MAKOTO_OPNA) == AUDIO_MODE_MAKOTO_OPNA) == makoto);
+        // MSX-AUDIO (Y8950) needs only I/O ports and 256 KB of ADPCM RAM: game
+        // ROMs, Sunrise/Carnivore2 SYSTEM ROMs and DSKs, like the Makoto.
+        assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_AUDIO) == makoto);
+        assert((resolve_audio_mode(mapper, AUDIO_PROFILE_MSX_AUDIO) == AUDIO_MODE_MSX_AUDIO) == makoto);
     }
+    // ASC16X-FR must always save: above 4 MB it is not offered with MSX-MUSIC or
+    // the FM chips (no PSRAM for the array next to their cache/sample RAM); the
+    // SRAM-cached profiles and plain ASC16X, which only presents the flash, keep
+    // every profile.
+    record.Mapper = MAPPER_ASCII16X_FR;
+    record.Size = 4194304UL;
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_OPL4_22K));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_AUDIO));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
+    record.Size = 8388608UL;
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_OPL4_22K));
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MAKOTO_OPNA));
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_AUDIO));
+    assert(!audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_SCC_EXTERNAL));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_YM2151_SFG05));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_SN76489_FRANKY));
+    record.Mapper = 12;
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_OPL4_22K));
+    assert(audio_profile_is_supported(&record, AUDIO_PROFILE_MSX_MUSIC));
+    record.Size = 0;
     record.Mapper = 1;
     unsigned seen = 0;
     uint8_t profile = AUDIO_PROFILE_NONE;
     do {
         profile = next_audio_profile(&record, profile, 1);
         if (profile == AUDIO_PROFILE_SN76489_FRANKY) seen |= 1;
+        if (profile == AUDIO_PROFILE_OPL4_22K) seen |= 2;
+        if (profile == AUDIO_PROFILE_MAKOTO_OPNA) seen |= 4;
+        if (profile == AUDIO_PROFILE_MSX_AUDIO) seen |= 8;
         assert(profile != 14);
     } while (profile != AUDIO_PROFILE_NONE);
-    assert(seen == 1);
+    assert(seen == 15);
     char label[32];
+    build_audio_text(&record, AUDIO_PROFILE_MSX_AUDIO, label, sizeof(label));
+    assert(strcmp(label, "MSX-AUDIO") == 0);
+    build_audio_text(&record, AUDIO_PROFILE_OPL4_22K, label, sizeof(label));
+    assert(strstr(label, "OPL4"));
+    build_audio_text(&record, AUDIO_PROFILE_MAKOTO_OPNA, label, sizeof(label));
+    assert(strstr(label, "Makoto"));
     build_audio_text(&record, AUDIO_PROFILE_SN76489_FRANKY, label, sizeof(label));
     assert(strstr(label, "SN76489 Franky"));
     build_audio_text(&record, 14, label, sizeof(label));
@@ -279,7 +338,7 @@ static void test_profiles(void) {
         AUDIO_PROFILE_SCC, AUDIO_PROFILE_SCC_PLUS, AUDIO_PROFILE_SCC_EXTERNAL, AUDIO_PROFILE_SCC_PLUS_EXTERNAL,
         AUDIO_PROFILE_MEGARAM_SCC, AUDIO_PROFILE_MEGARAM_SCC_PLUS, AUDIO_PROFILE_YM2151_SFG05, AUDIO_PROFILE_YM2151_SFG01,
         AUDIO_PROFILE_YM2151_SFG05_4MHZ, AUDIO_PROFILE_YM2151_SFG01_4MHZ, AUDIO_PROFILE_DUAL_PSG, AUDIO_PROFILE_MSX_MUSIC,
-        AUDIO_PROFILE_SN76489_FRANKY
+        AUDIO_PROFILE_SN76489_FRANKY, AUDIO_PROFILE_OPL4_22K, AUDIO_PROFILE_MSX_AUDIO
     };
     record.Mapper = (uint8_t)(MAPPER_DSK | 0x80u);
     cur_is_dsk = 1;
@@ -563,7 +622,15 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
     const uint32_t records_start = firmware_size + MENU_ROM_SIZE;
     const uint32_t records_size = (selected_count + 1) * ROM_RECORD_SIZE;
     const uint32_t hidden_nextor_start = firmware_size + NEXTOR_DSK_FLASH_OFFSET;
-    const uint32_t nextor_start = hidden_nextor_start + NEXTOR_DSK_ROM_SIZE;
+    const uint32_t nextor_start = hidden_nextor_start + NEXTOR_DSK_ROM_SIZE + YRW801_ROM_SIZE + MSXAUDIO_BIOS_ROM_SIZE;
+    const uint32_t msxaudio_start = firmware_size + MSXAUDIO_BIOS_FLASH_OFFSET;
+    static uint8_t msxaudio_bios[MSXAUDIO_BIOS_ROM_SIZE];
+    const char *msxaudio_path = getenv("MSXAUDIO_BIOS_PATH");
+    assert(msxaudio_path);
+    FILE *msxaudio_file = fopen(msxaudio_path, "rb");
+    assert(msxaudio_file && fread(msxaudio_bios, 1, sizeof(msxaudio_bios), msxaudio_file) == sizeof(msxaudio_bios));
+    assert(fgetc(msxaudio_file) == EOF && fclose(msxaudio_file) == 0);
+    uint32_t msxaudio_bytes = 0;
     const uint32_t nextor_size = selected_count * NEXTOR_DSK_ROM_SIZE;
     uint32_t bios_bytes = 0, record_bytes = 0, blocks = 0, total_blocks = 0;
     uint32_t hidden_nextor_bytes = 0, nextor_bytes = 0;
@@ -585,9 +652,13 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
                 records[offset - records_start] = block[32 + i];
                 record_bytes++;
             }
-            if (offset >= hidden_nextor_start && offset < nextor_start) {
+            if (offset >= hidden_nextor_start && offset < hidden_nextor_start + NEXTOR_DSK_ROM_SIZE) {
                 assert(block[32 + i] == kernels[0][offset - hidden_nextor_start]);
                 hidden_nextor_bytes++;
+            }
+            if (offset >= msxaudio_start && offset < msxaudio_start + sizeof(msxaudio_bios)) {
+                assert(block[32 + i] == msxaudio_bios[offset - msxaudio_start]);
+                msxaudio_bytes++;
             }
             if (offset >= nextor_start && offset < nextor_start + nextor_size) {
                 uint32_t rom_offset = offset - nextor_start;
@@ -602,9 +673,10 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
     assert(!ferror(file) && fclose(file) == 0);
     assert(blocks == total_blocks && bios_bytes == sizeof(bios) && record_bytes == records_size);
     assert(hidden_nextor_bytes == NEXTOR_DSK_ROM_SIZE && nextor_bytes == nextor_size);
+    assert(msxaudio_bytes == sizeof(msxaudio_bios));
     assert(total_blocks == (nextor_start + nextor_size + 255) / 256);
 
-    uint32_t nextor_offset = NEXTOR_DSK_FLASH_OFFSET + NEXTOR_DSK_ROM_SIZE;
+    uint32_t nextor_offset = MSXAUDIO_BIOS_FLASH_OFFSET + MSXAUDIO_BIOS_ROM_SIZE;
     for (unsigned i = 0; i < selected_count; i++) {
         const uint8_t *record = records + i * ROM_RECORD_SIZE;
         assert(memchr(record, '\0', ROM_NAME_MAX));
@@ -618,6 +690,40 @@ static void test_bios_image(const char *bios_path, const char *uf2_path, uint32_
         assert(records[i] == 0xFF);
     printf("PASS: real BIOS AB/PAC2OPLL discovery and all bank bytes; UF2 BIOS payload and %u Nextor records/names/kernel bytes; hidden Nextor 2.1.4 unchanged\n",
            selected_count);
+}
+
+// ASC16X-FR next to MSX-MUSIC: the writable device answers the cartridge and
+// receives the bank/command writes, including one captured late; without room
+// for its array the game runs as read-only ASCII16-X.
+static void test_fr_game(void) {
+    for (unsigned bank = 0; bank < 64; bank++)
+        memset(game_rom + bank * 8192, bank, 8192);
+    late_write_case = 1;
+    write_head = write_tail = read_captures = 0;
+    fr_writes = fr_reads = fr_setups = 0;
+    fr_setup_ok = true;
+    if (setjmp(game_read_done) == 0)
+        loadrom_fmpac(0, true, 22);
+    assert(fr_setups == 1 && fr_writes == 1 && fr_reads == 1 && game_read_token == 0x16E && fr_last_writable);
+
+    // Plain ASCII16-X gets the same device, presented but not writable.
+    late_write_case = 1;
+    write_head = write_tail = read_captures = 0;
+    fr_writes = fr_reads = fr_setups = 0;
+    if (setjmp(game_read_done) == 0)
+        loadrom_fmpac(0, true, 12);
+    assert(fr_setups == 1 && !fr_last_writable && fr_writes == 1 && fr_reads == 1 && game_read_token == 0x16E);
+
+    late_write_case = 1;
+    write_head = write_tail = read_captures = 0;
+    fr_writes = fr_reads = fr_setups = 0;
+    fr_setup_ok = false;
+    if (setjmp(game_read_done) == 0)
+        loadrom_fmpac(0, true, 22);
+    assert(fr_setups == 1 && fr_writes == 0 && fr_reads == 0);
+    assert(game_read_token == 0x106u); // the late bank write (3) selects ROM image bytes 0xC000..., block 6
+    fr_setup_ok = true;
+    puts("PASS: ASC16X-FR device serves the MSX-MUSIC game loop and falls back read-only");
 }
 
 int main(int argc, char **argv) {
@@ -641,6 +747,7 @@ int main(int argc, char **argv) {
     test_sunrise_mapper_bus();
     test_game_read_ordering();
     test_game_services_io_bus();
+    test_fr_game();
     test_bios_image(argv[1], argv[2], (uint32_t)firmware_size, argv[4], argv[5], selected, selected_count);
     puts("PASS: 8 Nextor profiles, WiFi exclusion, FM-PAC banks/SRAM/FM writes, Sunrise/C2 bus dispatch");
     return 0;

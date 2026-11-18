@@ -25,6 +25,16 @@
 #define PVA_COVER_PAL_SIZE  32
 #define PVA_COVER_PAT_SIZE  (PVA_COVER_CELLS * PVA_COVER_CELLS * 8)
 #define PVA_COVER_SIZE      (PVA_COVER_PAL_SIZE + 2 * PVA_COVER_PAT_SIZE)
+// with a palette for every row of cells (pva_cover_convert_begin_rows): after it, a byte (the rows that
+// switch: 0 none, else PVA_COVER_CELLS - 1), a byte for the player (pva_cover_set_early), then for
+// rows 1-9 the free entries' new values, as the VDP takes them: the entry, 90h (R#16), 0RRR0BBB,
+// 00000GGG (PVA_COVER_ROW_ENT of them: fewer free entries repeat the first). The palette at the start
+// is row 0's. A player sets them as the screen comes to each row of cells.
+#define PVA_COVER_ROW_ENT   5
+#define PVA_COVER_ROW_HEAD  2
+#define PVA_COVER_ROW_BYTES (PVA_COVER_ROW_ENT * 4)
+#define PVA_COVER_ROWS_SIZE (PVA_COVER_ROW_HEAD + (PVA_COVER_CELLS - 1) * PVA_COVER_ROW_BYTES)
+#define PVA_COVER_FULL      (PVA_COVER_SIZE + PVA_COVER_ROWS_SIZE)
 
 typedef struct
 {
@@ -41,6 +51,8 @@ typedef struct
     int      rgb[16][3];
     int      fi[16], nf;
     int      it, cell;
+    bool     rows;                      // a palette for every row of cells
+    int      row;                       // (the row whose palette is made: its cells come next)
     uint32_t acc[16][4];
 } pva_cover_t;
 
@@ -60,8 +72,12 @@ void pva_cover_convert(pva_cover_t *c, const uint8_t pal[32], uint16_t free, uin
 // it says done (10 steps of the palette, then 4 cells a step)
 void pva_cover_convert_begin(pva_cover_t *c, const uint8_t pal[32], uint16_t free, uint8_t *out);
 bool pva_cover_convert_step(pva_cover_t *c);
+// the same with a palette for every row of cells: out = PVA_COVER_FULL bytes
+void pva_cover_convert_begin_rows(pva_cover_t *c, const uint8_t pal[32], uint16_t free, uint8_t *out);
 
 // the result back to RGB (for a PC's screen, or a test's picture): 80 x 80 x 3
 void pva_cover_render(const uint8_t *out, uint8_t *rgb);
+// the same for a cover with a palette for every row (PVA_COVER_FULL bytes)
+void pva_cover_render_rows(const uint8_t *out, uint8_t *rgb);
 
 #endif

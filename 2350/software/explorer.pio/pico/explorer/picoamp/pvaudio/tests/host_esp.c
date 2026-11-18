@@ -47,6 +47,7 @@ uint32_t host_esp_logo_gets;                // requests for a logo
 bool     host_esp_logo_stall;               // the image proxy sends its headers, then nothing
 uint32_t host_esp_itunes_asks;              // questions to the iTunes search
 char     host_esp_last_itunes[200];
+char     host_esp_last_wsrv[400];              // the last request to the image proxy
 uint8_t  host_esp_wifi_state = 2;           // NET_STATE answer, 2 = connected
 uint32_t host_esp_uart_bpms = 86;           // 859372 baud / 10 bits / 1000
 uint32_t host_esp_server_bps = 24000;       // server sends this many bytes/s (128 kbit/s = 16000)
@@ -683,6 +684,7 @@ static void serve(conn_t *c)
     {
         // the image proxy
         host_esp_logo_gets++;
+        snprintf(host_esp_last_wsrv, sizeof host_esp_last_wsrv, "%s", path);
         const char *u = strstr(path, "url=");
         char want[300] = "";
         size_t k = 0;

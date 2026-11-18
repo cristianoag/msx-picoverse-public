@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.66
+VERSION ?= v2.67
 
 # Project files
 SOURCES := loadrom.c 

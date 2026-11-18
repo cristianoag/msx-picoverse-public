@@ -1,0 +1,192 @@
+; MSX PICOVERSE PROJECT
+; (c) 2026 Cristiano Goncalves
+; The Retro Hacker
+;
+; msx_opl4.pio - Dedicated PIO programs for the standalone OPL4/MoonSound cartridge
+;
+; Pin mapping (from loadrom.h):
+;   GPIO  0-15  = A0..A15   (address bus, always input)
+;   GPIO 16-23  = D0..D7    (data bus, bidirectional)
+;   GPIO 24     = /RD       (active-low read strobe)
+;   GPIO 25     = /WR       (active-low write strobe)
+;   GPIO 26     = /IORQ     (active-low I/O request)
+;   GPIO 27     = /SLTSL    (unused — OPL4 is a pure I/O device)
+;   GPIO 28     = /WAIT     (active-low, open-drain via PIO pindir)
+;   GPIO 37     = /BUSDIR   (active-low, push-pull via dedicated PIO2 SM)
+;   GPIO 47     = PSRAM select
+;
+; The MSX reads the OPL4/MoonSound status and PCM/FM registers through I/O
+; read cycles on ports 0xC4-0xC7 and 0x7E-0x7F. Without /WAIT, the Z80
+; completes the read in ~840 ns which is not enough time for a push/pull
+; round-trip through the FIFO, so the Z80 would latch the floating bus
+; (0xFF) and detection (MoonTest's IN C4h) would fail. Because this is a
+; standalone cartridge can be inserted alongside another cartridge that also
+; stretches bus cycles.  /WAIT is therefore treated as an open-drain signal:
+; assert = drive low, release = hi-Z.
+;
+; This work is licensed under a "Creative Commons Attribution-NonCommercial-
+; ShareAlike 4.0 International License".
+; https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+; ===================================================================
+; msx_opl4_io_read — I/O read responder WITH in-PIO port decode
+; ===================================================================
+; CRITICAL: /WAIT must only be asserted for the OPL4 read ports, never
+; on every I/O read. Asserting /WAIT on unrelated reads (VDP 0x98/0x99,
+; PSG 0xA0-0xA2, PPI 0xA8-0xAB, RTC 0xB4/0xB5, ...) stalls the Z80 and
+; freezes the MSX, and corrupts chip-ID detection.
+;
+; OPL4 read ports:
+;   0xC4-0xC7  -> A3..A7 == 11000b (0x18), A2 == 1   (FM status/data, wave)
+;   0x7E-0x7F  -> A3..A7 == 01111b (0x0F), A2 == 1, A1 == 1
+;
+; Decode happens BEFORE /WAIT is asserted. For any other port we loop
+; back without touching /WAIT, the FIFO, or the data bus.
+;
+; /BUSDIR (GPIO 37) is driven by a SEPARATE state machine (msx_opl4_busdir
+; below, on PIO2). The RP2350 PIO can only address a 32-pin window (GPIO
+; base 0 or 16); this read SM needs A0..A7 (pins 0-7) so it must stay on
+; base 0 and physically cannot reach pin 37. The dedicated /BUSDIR SM runs
+; on PIO2 with GPIO base 16 (pins 16-47) and tracks this SM's /WAIT + /RD.
+;
+; jmp_pin = /RD (GPIO 24). OUT shift = right (A0 first).
+; set_base = /WAIT (GPIO 28), with output value preloaded LOW.
+
+.program msx_opl4_io_read
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26                ; Wait for /IORQ=0. /WAIT released (hi-Z).
+    jmp pin wait_iorq             ; If /RD=1 (no read), loop back
+    in pins, 8                    ; Capture A0..A7 (no /WAIT yet)
+    mov osr, isr                  ; Copy address for decode (ISR preserved)
+    out null, 2                   ; Discard A0, A1
+    out x, 1                      ; x = A2 (must be 1 for both port groups)
+    jmp !x, wait_iorq             ; A2==0 -> not our port, ignore
+    out x, 5                      ; x = A3..A7
+    set y, 15                     ; Group 0x7C-0x7F pattern (A3..A7==01111b)
+    jmp x!=y, chk_cxx             ; If not 0x7C-0x7F, test 0xC4-0xC7
+    mov osr, isr                  ; Re-read address for A1 test
+    out null, 1                   ; Discard A0
+    out x, 1                      ; x = A1 (exclude 0x7C/0x7D MSX-MUSIC)
+    jmp !x, wait_iorq             ; A1==0 -> 0x7C/0x7D, ignore
+    jmp do_wait                   ; 0x7E/0x7F -> ours
+chk_cxx:
+    set y, 24                     ; Group 0xC4-0xC7 pattern (A3..A7==11000b)
+    jmp x!=y, wait_iorq           ; Not 0xC4-0xC7 -> ignore
+do_wait:
+    set pindirs, 1                ; Assert /WAIT=0 only for OPL4 ports
+    push block                    ; Send port address to CPU via RX FIFO
+    pull block                    ; Stall until CPU responds (Z80 frozen)
+    out pins, 8                   ; Drive D0..D7 with response byte
+    out pindirs, 8                ; Set pindirs (0xFF = output)
+    set pindirs, 0         [1]    ; Release /WAIT as hi-Z; data remains valid
+    wait 1 gpio 24                ; Wait for /RD=1
+    set x, 0                      ; Prepare zero
+    mov osr, x                    ; Load zero into OSR
+    out pindirs, 8                ; Tri-state D0..D7
+.wrap
+
+; ===================================================================
+; msx_opl4_io_write — I/O write captor WITH in-PIO port decode
+; ===================================================================
+; Captures address + data during I/O write cycles (/IORQ + /WR), but only
+; for the OPL4 register/data ports (0xC4-0xC7 and 0x7E-0x7F). Unrelated
+; VDP/PSG/PPI/etc writes must not enter the FIFO: MoonTest prints several
+; lines before the first OPL read, and capturing all screen-output writes can
+; flood the write path just as the read responder asserts /WAIT.
+;
+; No side-set needed (writes don't require bus hold).
+; FIFO join RX for 8-deep buffering.
+;
+; The GPIO snapshot is taken well inside /WR low (where the Z80 write data is
+; already valid), but the FIFO push is held back until /WR rises so the CPU-side
+; handler applies the register/memory write on the trailing edge of the bus
+; cycle, exactly like a real chip latching on /WR high.
+;
+; RX FIFO word format (via mov isr, pins — 32 bits of GPIO state):
+;   bits[7:0]   = A0..A7   (port address)
+;   bits[15:8]  = A8..A15  (upper address, ignored)
+;   bits[23:16] = D0..D7   (data byte)
+;
+; jmp_pin = /WR (GPIO 25)
+
+.program msx_opl4_io_write
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26           ; Wait for /IORQ=0
+    jmp pin wait_iorq         ; If /WR=1, loop back
+    in pins, 8               ; Capture A0..A7 for decode
+    mov osr, isr             ; Copy address for decode (ISR overwritten later)
+    out null, 2              ; Discard A0, A1
+    out x, 1                 ; x = A2 (must be 1 for both port groups)
+    jmp !x, wait_iorq        ; A2==0 -> not our port, ignore
+    out x, 5                 ; x = A3..A7
+    set y, 15                ; Group 0x7C-0x7F pattern (A3..A7==01111b)
+    jmp x!=y, chk_cxx        ; If not 0x7C-0x7F, test 0xC4-0xC7
+    mov osr, isr             ; Re-read address for A1 test
+    out null, 1              ; Discard A0
+    out x, 1                 ; x = A1 (exclude 0x7C/0x7D MSX-MUSIC)
+    jmp !x, wait_iorq        ; A1==0 -> 0x7C/0x7D, ignore
+    jmp capture              ; 0x7E/0x7F -> ours
+chk_cxx:
+    set y, 24                ; Group 0xC4-0xC7 pattern (A3..A7==11000b)
+    jmp x!=y, wait_iorq      ; Not 0xC4-0xC7 -> ignore
+capture:
+    nop              [15]    ; Let data settle inside /WR low
+    nop              [15]    ; Sample later to avoid marginal write data edges
+    nop              [15]
+    mov isr, pins            ; Snapshot all GPIOs into ISR
+    wait 1 gpio 25           ; Commit only once /WR has risen (write completed)
+    push block               ; Send (addr+data) to CPU via RX FIFO
+.wrap
+
+; ===================================================================
+; msx_opl4_busdir — /BUSDIR driver (dedicated SM, runs on PIO2)
+; ===================================================================
+; A real MSX OPL4 cartridge asserts /BUSDIR low whenever it drives the
+; data bus back to the CPU during an I/O read of one of its ports
+; (WozBlaster CPLD: /BUSDIR = /RD & /CS). This flips the MSX main-board
+; data-bus buffer toward the CPU. Without it, our PIO data-drive fights
+; that buffer on every OPL4 read, corrupting the bus - visible as screen
+; flashing / artifacts (no freeze) when another cartridge/game is also
+; driving the slot bus.
+;
+; The read responder SM (msx_opl4_io_read) cannot drive /BUSDIR itself:
+; it needs A0..A7 (pins 0-7), pinning it to GPIO base 0 (pins 0-31), while
+; /BUSDIR is GPIO 37. So /BUSDIR is handled by this separate SM on PIO2
+; with GPIO base 16 (pins 16-47). It does not decode ports; it simply
+; mirrors the read SM's selection: the read SM asserts /WAIT (GPIO 28) low
+; ONLY for OPL4 read ports, so "/WAIT low" == "an OPL4 read is in
+; progress". /BUSDIR is then driven low until /RD (GPIO 24) goes high.
+;
+; /WAIT is a shared open-drain MSX bus signal, so a second cartridge that
+; stretches its own cycles also pulls it low. /IORQ (GPIO 26) is therefore
+; tested before asserting: this firmware is a pure I/O device, so a /WAIT low
+; with /IORQ high can only belong to somebody else's memory cycle and must not
+; flip the main-board data-bus buffer.
+;
+; /BUSDIR is driven PUSH-PULL via the side-set pin VALUE (.side_set 1),
+; matching the real OPL4 cartridge (the WozBlaster CPLD drives /BUSDIR as a
+; continuous push-pull output, `/BUSDIR = /RD & /CS`): side 0 = drive LOW
+; (asserted, OPL4 read in progress), side 1 = drive HIGH (released, every
+; other cycle). The pin is a permanent output. An earlier open-drain version
+; (hi-Z when released) could let the MSX data-bus-buffer DIR input float
+; during writes on machines without a strong /BUSDIR pull-up, corrupting
+; register writes and dropping instruments.
+;
+; IN base = /RD (GPIO 24): pin 0 = /RD (24), pin 4 = /WAIT (28).
+; Using `wait ... pin` (IN-relative) keeps the indices correct under the
+; PIO2 GPIO base of 16. jmp_pin = /IORQ (GPIO 26).
+; sideset_base = /BUSDIR (GPIO 37), preloaded HIGH.
+
+.program msx_opl4_busdir
+.side_set 1
+
+.wrap_target
+released:
+    wait 0 pin 4   side 1    ; /BUSDIR driven HIGH (released); wait /WAIT low
+    jmp pin, released side 1 ; /IORQ high -> another cart's memory cycle, skip
+    wait 1 pin 0   side 0    ; /BUSDIR driven LOW (asserted); hold until /RD high
+.wrap

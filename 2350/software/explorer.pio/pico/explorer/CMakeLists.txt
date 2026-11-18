@@ -68,6 +68,14 @@ set(EXPLORER_SOURCES
     audio/emu2413.c
     audio/emu2151.cpp
     audio/ymfm/ymfm_opm.cpp
+    audio/emu278b.cpp
+    audio/emuy8950.cpp
+    audio/ymfm/ymfm_opl.cpp
+    audio/ymfm/ymfm_pcm.cpp
+    audio/ymfm/ymfm_adpcm.cpp
+    audio/emu2608.cpp
+    audio/ymfm/ymfm_opn.cpp
+    audio/ymfm/ymfm_ssg.cpp
     debug/audio_trace.c
     picoamp/picoamp.c
     picoamp/mp3_alloc_dispatch.c
@@ -89,6 +97,7 @@ set(EXPLORER_SOURCES
     picoamp/pvaudio/pva_markets_cat.c
     picoamp/pvaudio/pva_art.c
     picoamp/pvaudio/pva_art_defaults.c
+    picoamp/pvaudio/pva_pics.c
     picoamp/pvaudio/pva_cover.c
     picoamp/pvaudio/tjpgd/tjpgd.c
     picoamp/pvaudio/pva_hal_pico.c
@@ -102,6 +111,46 @@ endif()
 add_executable(explorer ${EXPLORER_SOURCES})
 
 pico_generate_pio_header(explorer ${CMAKE_CURRENT_SOURCE_DIR}/msx_bus.pio)
+
+# OPL4 / MoonSound profile (22.05 kHz). The YMF278B sources share ymfm_fm.ipp
+# with the YM2151 core, whose behaviour must stay stock: OPL4_OUTPUT_STEP=2
+# makes each generated sample cover two native sample periods (pitch and tempo
+# unchanged, half the work), and the "skip inactive" options only apply here.
+# These units are the hottest path of the profile, so they are built -O3.
+set_source_files_properties(
+    audio/emu278b.cpp
+    audio/ymfm/ymfm_opl.cpp
+    audio/ymfm/ymfm_pcm.cpp
+    audio/ymfm/ymfm_adpcm.cpp
+    PROPERTIES
+        COMPILE_DEFINITIONS "OPL4_OUTPUT_STEP=2;OPL4_SKIP_INACTIVE_FM=1;OPL4_SKIP_INACTIVE_PCM=1;OPL4_OUTPUT_GAIN_NUM=96;OPL4_OUTPUT_GAIN_SHIFT=5"
+        COMPILE_OPTIONS "-O3;-funroll-loops"
+)
+set_source_files_properties(
+    audio/emu2151.cpp
+    audio/ymfm/ymfm_opm.cpp
+    PROPERTIES COMPILE_DEFINITIONS "OPL4_OUTPUT_STEP=1;OPL4_SKIP_INACTIVE_FM=0;OPL4_SKIP_INACTIVE_PCM=0"
+)
+# MSX-AUDIO (Y8950) profile: native 49716 Hz. The Y8950 lives in ymfm_opl.cpp
+# next to the OPL4 and runs at native rate even though that unit is built with
+# OPL4_OUTPUT_STEP=2: the step is selected per register set (fm_output_step in
+# ymfm_fm.h), and only the OPL4 one is reduced.
+set_source_files_properties(
+    audio/emuy8950.cpp
+    PROPERTIES COMPILE_OPTIONS "-O3;-funroll-loops"
+)
+# Makoto YM2608 profile: the FM engine runs at half its native rate (step 2: each
+# generated frame covers two native periods, pitch and tempo unchanged) and is
+# interpolated to 44.1 kHz; released channels are skipped. The OPN core is the
+# other hot path of the profile.
+set_source_files_properties(
+    audio/emu2608.cpp
+    audio/ymfm/ymfm_opn.cpp
+    audio/ymfm/ymfm_ssg.cpp
+    PROPERTIES
+        COMPILE_DEFINITIONS "OPL4_OUTPUT_STEP=2;OPL4_SKIP_INACTIVE_FM=1;OPL4_SKIP_INACTIVE_PCM=0"
+        COMPILE_OPTIONS "-O3;-funroll-loops"
+)
 
 add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
 add_subdirectory(lib/picomp3lib/src picomp3lib_build)

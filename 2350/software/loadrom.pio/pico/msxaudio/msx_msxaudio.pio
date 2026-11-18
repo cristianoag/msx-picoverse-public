@@ -1,0 +1,202 @@
+; MSX PICOVERSE PROJECT
+; (c) 2026 Cristiano Goncalves
+; The Retro Hacker
+;
+; msx_msxaudio.pio - PIO programs for the standalone MSX-AUDIO cartridge
+;
+; This work is licensed under a "Creative Commons Attribution-NonCommercial-
+; ShareAlike 4.0 International License".
+; https://creativecommons.org/licenses/by-nc-sa/4.0/
+;
+; -----------------------------------------------------------------------
+; Pin mapping (from msxaudio.h):
+;   GPIO  0-15  = A0..A15   (address bus, always input)
+;   GPIO 16-23  = D0..D7    (data bus, bidirectional)
+;   GPIO 24     = /RD       (active-low read strobe)
+;   GPIO 25     = /WR       (active-low write strobe)
+;   GPIO 26     = /IORQ     (active-low I/O request)
+;   GPIO 27     = /SLTSL    (active-low slot select)
+;   GPIO 28     = /WAIT     (active-low, OPEN-DRAIN via PIO pindirs)
+;   GPIO 37     = /BUSDIR   (active-low, push-pull)
+;   GPIO 47     = PSRAM select
+;
+; -----------------------------------------------------------------------
+; State machine / PIO allocation
+;
+;   PIO0 SM0 = msxaudio_read       (memory AND Y8950 reads; drives /WAIT + D0-D7)
+;   PIO1 SM0 = msxaudio_mem_write  (memory writes,    input only)
+;   PIO1 SM1 = msxaudio_io_write   (0xC0/0xC1 writes, input only)
+;   PIO1 SM2 = audio_i2s           (pico_audio_i2s, PICO_AUDIO_I2S_PIO=1)
+;   PIO2 SM0 = msxaudio_busdir     (/BUSDIR, GPIO base 16)
+;
+; The MSX-AUDIO cartridge has to answer BOTH memory cycles (its BIOS ROM and
+; work RAM) and I/O cycles (the Y8950 at 0xC0/0xC1), and both answers drive the
+; same two resources: the shared /WAIT line and the D0-D7 data bus. Splitting
+; that across two state machines would make the pin value and direction depend
+; on the PIO's multi-state-machine output priority rules, so instead ONE state
+; machine handles every read cycle and decodes which kind it is. That keeps a
+; single, unambiguous owner of /WAIT and D0-D7.
+;
+; PIO program memory: PIO0 = 25 of 32, PIO1 = 6 + 16 + 8 (I2S) = 30 of 32.
+
+
+; ===================================================================
+; msxaudio_read - unified read responder (memory + Y8950), asserts /WAIT
+; ===================================================================
+; Every Z80 read cycle (/RD low) enters this program, which then classifies it:
+;
+;   /SLTSL low                       -> memory read of this cartridge
+;   /IORQ low and A1..A7 == 1100000b -> Y8950 read (port 0xC0 or 0xC1)
+;   anything else                    -> not ours; loop without ever touching
+;                                       /WAIT, the FIFOs or the data bus
+;
+; Only after a positive match is /WAIT asserted, so unrelated reads (another
+; slot's ROM, VDP 0x98/0x99, PSG 0xA0-0xA2, PPI 0xA8-0xAB, RTC 0xB4/0xB5, ...)
+; are never stalled. /RD can be sampled marginally before /SLTSL or /IORQ has
+; settled; the reject path simply loops and re-tests, resolving that race within
+; a few PIO cycles (~10 ns at 300 MHz), long before the Z80 samples /WAIT at the
+; end of T2.
+;
+; The 0xC0/0xC1 match value 0x60 does not fit in a `set` immediate (max 31), so
+; it is loaded into Y once at start-up from the TX FIFO (the C code primes the
+; FIFO with 0x60 before enabling the state machine). Y is never touched again.
+;
+; /WAIT is treated as an OPEN-DRAIN signal: the pin output value is preloaded
+; LOW and only the direction is toggled by the side-set (side 1 = output =
+; driven low = asserted, side 0 = input = hi-Z = released, and the MSX pull-up
+; takes the line high). That matches the shared, wired-or MSX /WAIT line and
+; lets a second cartridge stretch cycles at the same time.
+;
+; The pushed RX word is either A0..A15 (memory) or A0..A7 (I/O); the firmware
+; tells them apart by reading /SLTSL, which the Z80 still holds asserted while
+; /WAIT freezes the cycle.
+;
+; in_base = A0, out_base = D0, side-set base = /WAIT (pindirs), jmp_pin = /SLTSL
+; IN shift = left, OUT shift = right (so `out` walks the address from A0 up).
+
+.program msxaudio_read
+.side_set 1 pindirs
+
+    pull block            side 0     ; One-shot: fetch the port match value
+    out y, 32             side 0     ; y = 0x60 (A1..A7 pattern for 0xC0/0xC1)
+.wrap_target
+top:
+    wait 0 gpio 24        side 0     ; Wait for /RD=0 (any read cycle)
+    jmp pin, chk_io       side 0     ; /SLTSL=1 -> not our memory, try I/O
+    in pins, 16           side 1     ; Assert /WAIT, capture A0..A15
+    jmp respond           side 1
+chk_io:
+    mov osr, pins         side 0     ; Snapshot GPIO0..31
+    out null, 26          side 0     ; Discard A0..A15, D0..D7, /RD, /WR
+    out x, 1              side 0     ; x = /IORQ
+    jmp !x, chk_port      side 0     ; /IORQ=0 -> I/O cycle
+    jmp top               side 0     ; Neither -> ignore this read
+chk_port:
+    in pins, 8            side 0     ; Capture A0..A7 (no /WAIT yet)
+    mov osr, isr          side 0     ; Copy for decoding (ISR keeps the port)
+    out null, 1           side 0     ; Discard A0 (status vs data port)
+    out x, 7              side 0     ; x = A1..A7
+    jmp x!=y, top         side 0     ; Not 0xC0/0xC1 -> ignore
+    nop                   side 1     ; Assert /WAIT
+respond:
+    push block            side 1     ; Hand the address/port to the CPU
+    pull block            side 1     ; Wait for the response token
+    out pins, 8           side 1     ; Drive D0..D7 with the data byte
+    out pindirs, 8        side 1     ; 0xFF = drive, 0x00 = stay tri-stated
+    nop                   side 0 [1] ; Release /WAIT, data stays valid
+    wait 1 gpio 24        side 0     ; Wait for /RD=1
+    mov osr, null         side 0
+    out pindirs, 8        side 0     ; Tri-state D0..D7
+.wrap
+
+
+; ===================================================================
+; msxaudio_mem_write - memory write captor
+; ===================================================================
+; RX FIFO word format (mov isr, pins - 32 bits of GPIO state):
+;   bits[15:0]  = A0..A15
+;   bits[23:16] = D0..D7
+;
+; jmp_pin = /WR. FIFO join RX for an 8-deep buffer.
+;
+; The GPIO snapshot is taken inside /WR low (data already valid), but the FIFO
+; push is held back until /WR rises so the CPU-side handler applies the write on
+; the trailing edge of the bus cycle, like a real chip latching on /WR high.
+
+.program msxaudio_mem_write
+
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 27            ; Wait for /SLTSL=0
+    jmp pin, wait_sltsl       ; If /WR=1 this is not a write, loop
+    nop              [7]      ; Let address/data settle inside /WR low
+    mov isr, pins             ; Snapshot A0..A15 + D0..D7
+    wait 1 gpio 25            ; Commit only once /WR has risen
+    push block                ; Hand (addr+data) to the CPU
+.wrap
+
+
+; ===================================================================
+; msxaudio_io_write - Y8950 I/O write captor (decoded)
+; ===================================================================
+; Only 0xC0/0xC1 writes are captured; everything else (VDP, PSG, PPI, ...) must
+; stay out of the FIFO so an unrelated I/O burst can never delay or displace a
+; Y8950 register write. Same 0x60 match value as the read responder, loaded into
+; Y once from the TX FIFO at start-up.
+;
+; jmp_pin = /WR. FIFO join RX for an 8-deep buffer.
+
+.program msxaudio_io_write
+
+    pull block               ; One-shot: fetch the port match value
+    out y, 32                ; y = 0x60 (A1..A7 pattern for 0xC0/0xC1)
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26           ; Wait for /IORQ=0
+    jmp pin, wait_iorq       ; If /WR=1 this is not a write, loop
+    in pins, 8               ; Capture A0..A7 for decoding
+    mov osr, isr             ; Copy for decoding (ISR is replaced below)
+    out null, 1              ; Discard A0
+    out x, 7                 ; x = A1..A7
+    jmp x!=y, wait_iorq      ; Not 0xC0/0xC1 -> ignore
+    nop              [15]    ; Sample the data late inside /WR low
+    nop              [15]
+    mov isr, pins            ; Snapshot A0..A15 + D0..D7
+    wait 1 gpio 25           ; Commit only once /WR has risen
+    push block               ; Hand (port+data) to the CPU
+.wrap
+
+
+; ===================================================================
+; msxaudio_busdir - /BUSDIR driver (dedicated SM on PIO2, GPIO base 16)
+; ===================================================================
+; A real cartridge asserts /BUSDIR low while it drives the data bus back to the
+; CPU during an I/O read of one of its own ports, flipping the MSX main-board
+; data-bus buffer towards the CPU. Without it the cartridge's data drive fights
+; that buffer on every I/O read, which shows up as screen flashing / graphics
+; artifacts when another cartridge is also driving the bus.
+;
+; /BUSDIR is GPIO 37, outside the 32-pin window (GPIO base 0) the read/write
+; state machines need for A0-A15, so it gets its own PIO instance with GPIO
+; base 16. It cannot decode ports, but it does not need to: this firmware only
+; asserts /WAIT for its own cycles, so "/WAIT low AND /IORQ low" is exactly "an
+; MSX-AUDIO I/O read is in progress". Memory reads (/IORQ high) are skipped, so
+; there the cartridge behaves like the other PicoVerse memory firmwares, which
+; leave /BUSDIR alone.
+;
+; /BUSDIR is driven PUSH-PULL through the side-set pin VALUE: side 1 = released
+; (driven high), side 0 = asserted (driven low). An open-drain version can let
+; the buffer direction input float on machines without a strong pull-up.
+;
+; in_base = /RD (GPIO 24) => pin 0 = /RD (24), pin 4 = /WAIT (28)
+; jmp_pin = /IORQ (GPIO 26), side-set = /BUSDIR (GPIO 37)
+
+.program msxaudio_busdir
+.side_set 1
+
+.wrap_target
+released:
+    wait 0 pin 4        side 1    ; /BUSDIR released; wait for /WAIT low
+    jmp pin, released   side 1    ; /IORQ high => memory read, not ours
+    wait 1 pin 0        side 0    ; Assert /BUSDIR until /RD goes high
+.wrap

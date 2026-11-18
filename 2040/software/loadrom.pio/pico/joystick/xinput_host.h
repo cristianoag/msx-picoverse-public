@@ -4,13 +4,17 @@
 //
 // xinput_host.h - Xbox controller USB host driver for TinyUSB
 //
-// Supports two Xbox controller families:
-//   1. Xbox 360 (XInput): subclass 0x5D, protocol 0x01
+// Supports three Xbox controller families:
+//   1. Xbox 360 wired (XInput/XUSB): subclass 0x5D, protocol 0x01
 //      - 20-byte fixed reports, no initialisation needed
-//   2. Xbox One / Series X|S (GIP): subclass 0x47, protocol 0xD0
+//   2. Xbox 360 wireless receiver (XUSB): subclass 0x5D, protocol 0x81
+//      - One interface per controller slot (up to 4 per receiver)
+//      - Presence/connection packets plus the 20-byte report behind a
+//        4-byte header
+//   3. Xbox One / Series X|S (GIP): subclass 0x47, protocol 0xD0
 //      - 18-byte reports with 4-byte GIP header, requires init packet
 //
-// Both use vendor-specific USB interfaces (class 0xFF) and are invisible
+// All use vendor-specific USB interfaces (class 0xFF) and are invisible
 // to the standard TinyUSB HID host driver.  This driver registers as a
 // TinyUSB custom class driver to claim these interfaces.
 //
@@ -28,7 +32,8 @@
 // Controller protocol type
 // -----------------------------------------------------------------------
 typedef enum {
-    XBOX_PROTO_360,     // Xbox 360 / XInput
+    XBOX_PROTO_360,     // Xbox 360 / XInput (wired)
+    XBOX_PROTO_360W,    // Xbox 360 wireless receiver
     XBOX_PROTO_ONE,     // Xbox One / Series X|S (GIP)
 } xbox_proto_t;
 
@@ -37,7 +42,8 @@ typedef enum {
 // -----------------------------------------------------------------------
 #define XINPUT_IF_CLASS     0xFFu
 #define XINPUT_IF_SUBCLASS  0x5Du
-#define XINPUT_IF_PROTOCOL  0x01u
+#define XINPUT_IF_PROTOCOL  0x01u   // Wired controller
+#define XINPUT_WL_IF_PROTOCOL 0x81u // Wireless receiver (one interface per pad)
 
 // -----------------------------------------------------------------------
 // Xbox One (GIP) USB interface identifiers
@@ -83,6 +89,25 @@ typedef struct __attribute__((packed)) {
     int16_t  stick_ry;        // Right stick Y (-32768 to 32767)
     uint8_t  reserved[6];
 } xinput_report_t;
+
+// -----------------------------------------------------------------------
+// Xbox 360 wireless receiver packets (IN endpoint)
+//
+//   byte 0 bit 3 set : presence change, byte 1 bit 7 = controller present
+//   byte 1 == 0x01   : pad data; the 20-byte xinput_report_t follows a
+//                      4-byte header (00 01 00 F0)
+//
+// OUT endpoint packets are 12 bytes.
+// -----------------------------------------------------------------------
+#define XINPUT_WL_PRESENCE_FLAG  0x08u
+#define XINPUT_WL_PRESENT_BIT    0x80u
+#define XINPUT_WL_PAD_DATA       0x01u
+#define XINPUT_WL_HEADER_LEN     4
+#define XINPUT_WL_PKT_LEN        12
+
+// Player LED patterns (Xbox 360 ring): LED_BASE + MSX port = quadrant that
+// flashes and then stays lit.
+#define XINPUT_LED_BASE          2u
 
 // -----------------------------------------------------------------------
 // Xbox One / Series X|S (GIP) report format
@@ -142,5 +167,8 @@ typedef struct __attribute__((packed)) {
 // -----------------------------------------------------------------------
 #include "host/usbh_pvt.h"
 extern usbh_class_driver_t const xinput_class_driver;
+
+// True when an Xbox controller currently owns the given MSX port (0 or 1).
+bool xinput_port_in_use(uint8_t port);
 
 #endif /* XINPUT_HOST_H */
